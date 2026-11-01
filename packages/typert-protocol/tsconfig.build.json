@@ -7,9 +7,7 @@
   "compilerOptions": {
     "noEmit": false,
     "declaration": true,
-    "emitDeclarationOnly": false,
-    "declarationDir": "lib/types",
-    "outDir": "lib",
+    "outDir": "lib/types",
     "rootDir": "src"
   },
   "include": ["src"]

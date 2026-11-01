@@ -80,7 +80,7 @@
 ## 6. 本仓库自身的第三方声明
 
 - 除 §2 登记行外，代码为原创；`lib/typert.*.js` 为 typert-generator 生成物（自带 Generated-by 头），不属人工移植登记范围。
-- 依赖项许可随各包自身声明；`packages/typert-protocol/` 是 §2 登记的 dsh MIT 再分发副本（上游文件零改动；另新增我们自己的 ——上游 npm 发布物自带 lib/，本仓库 .gitignore 排除 lib/，全新 checkout 需经它重建  才能通过 typecheck/test，布局与上游构建产物实证一致）。
+- 依赖项许可随各包自身声明；`packages/typert-protocol/` 是 §2 登记的 dsh MIT 再分发副本（上游文件零改动；另新增我们自己的 tsconfig.build.json——上游 npm 发布物自带 lib/，本仓库 .gitignore 排除 lib/，全新 checkout 需经它重建完整 lib/types 产物（*.js + *.d.ts，入口 exports[\".\"] 对齐 lib/types/index.js——上游 lib/index.js 为打包产物、本构建以 tsc 平铺等价替代）。
 
 ## 7. `dsh-gitkit-bundle`（发布薄包，v0.1.0 新增）
 
