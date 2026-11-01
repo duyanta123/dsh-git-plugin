@@ -1,4 +1,5 @@
 # tag 驱动的 npm 自动发布：推送 v* 标签 → 门禁 → 发布 dsh-gitkit + dsh-gitkit-ui
+# workflow_dispatch：手动补发通道，跳过 tag 校验，按 manifest 版本发布
 # 前置：GitHub 仓库 Secrets 配置 NPM_TOKEN（npm automation token，需拥有 dsh-plugin scope/org）
 # git-bundle 不走 npm（file: 相对依赖无法远程解析）——它保持 GitHub/本地分发通道（见 README §2）
 name: release
@@ -30,6 +31,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Assert tag == manifest version
+        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开（$tag/$client 同理谨慎）
@@ -50,6 +52,8 @@ jobs:
         run: pnpm run build
 
       - name: Publish dsh-gitkit + dsh-gitkit-ui
-        run: pnpm -r publish --access public --no-git-checks
+        # 只发两个发布包：pnpm -r publish 会把 workspace 内所有非 private 包一起发，
+        # 包括 vendored 的 @deepseek-ai/dsh-typert-protocol（不属于本仓库）。
+        run: pnpm -r --filter dsh-gitkit --filter dsh-gitkit-ui publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

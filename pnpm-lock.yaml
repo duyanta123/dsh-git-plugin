@@ -56,6 +56,9 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: 0.2.2-alpha.2
         version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: link:../typert-protocol
+        version: link:../typert-protocol
       '@tanstack/react-virtual':
         specifier: 3.14.10
         version: 3.14.10(react-dom@18.2.0(react@18.3.1))(react@18.3.1)

@@ -440,12 +440,15 @@ describe('R4 poll（轮询兜底；嵌套目录编辑的已知限制）', () => 
     // 其触发的重算若读到已写入的嵌套文件会推出 'change' 帧，污染「无 change 帧」的限制断言。
     // 目录先于 watcher 存在后，写嵌套文件是 depth 1，三目标均无任何事件，窗内只剩轮询。
     await mkdir(join(repo, 'nested'))
-    const { watcher } = makeWatcher(repo, { pollIntervalMs: 80 }, chokidarFsFace())
+    const { watcher, warns } = makeWatcher(repo, { pollIntervalMs: 80 }, chokidarFsFace())
     const controller = new AbortController()
     const pump = new FramePump(watcher.follow(controller.signal))
     try {
       expect(await pump.waitFor(frames => frames.length >= 1, 10_000)).toBe(true)
-      expect(await watchTargetsReady(watcher)).toBe(true)
+      expect(
+        await watchTargetsReady(watcher),
+        `openWatcherCount=${watcher.openWatcherCount} degraded=${watcher.degradedToPolling} warns=${JSON.stringify(warns)}`,
+      ).toBe(true)
       const framesBeforeEdit = pump.frames.length
       // 嵌套文件编辑：depth 1 —— 三目标 watch 均无信号（已知限制）。
       await writeFile(join(repo, 'nested', 'file.txt'), 'deep\n', 'utf8')
