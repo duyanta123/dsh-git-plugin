@@ -21,3 +21,6 @@ Thumbs.db
 
 # AI tool local state (personal)
 .claude/
+
+# 本地排查用备份目录（禁止入库）
+node_modules.bak/
