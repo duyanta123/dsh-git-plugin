@@ -1,0 +1,457 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > octopus：三父各占独立 travel lane > octopus 1`] = `
+{
+  "laneCount": 3,
+  "rows": [
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "main",
+          "toRow": 1,
+        },
+        {
+          "fromLane": 1,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 1,
+          "toOid": "b1",
+          "toRow": 2,
+        },
+        {
+          "fromLane": 2,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 2,
+          "toOid": "b2",
+          "toRow": 3,
+        },
+      ],
+      "isHead": true,
+      "lane": 0,
+      "oid": "oct",
+      "passthrough": [],
+      "refs": [],
+      "row": 0,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 1,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 4,
+        },
+      ],
+      "isHead": false,
+      "lane": 0,
+      "oid": "main",
+      "passthrough": [
+        1,
+        2,
+      ],
+      "refs": [],
+      "row": 1,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 1,
+          "fromRow": 2,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 4,
+        },
+      ],
+      "isHead": false,
+      "lane": 1,
+      "oid": "b1",
+      "passthrough": [
+        0,
+        2,
+      ],
+      "refs": [],
+      "row": 2,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 2,
+          "fromRow": 3,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 4,
+        },
+      ],
+      "isHead": false,
+      "lane": 2,
+      "oid": "b2",
+      "passthrough": [
+        0,
+        1,
+      ],
+      "refs": [],
+      "row": 3,
+    },
+    {
+      "edges": [],
+      "isHead": false,
+      "lane": 0,
+      "oid": "base",
+      "passthrough": [],
+      "refs": [],
+      "row": 4,
+    },
+  ],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 分叉：两条并行泳道在 base 收口 > fork 1`] = `
+{
+  "laneCount": 2,
+  "rows": [
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 2,
+        },
+      ],
+      "isHead": true,
+      "lane": 0,
+      "oid": "a",
+      "passthrough": [],
+      "refs": [],
+      "row": 0,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 1,
+          "fromRow": 1,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 2,
+        },
+      ],
+      "isHead": false,
+      "lane": 1,
+      "oid": "b",
+      "passthrough": [
+        0,
+      ],
+      "refs": [],
+      "row": 1,
+    },
+    {
+      "edges": [],
+      "isHead": false,
+      "lane": 0,
+      "oid": "base",
+      "passthrough": [],
+      "refs": [],
+      "row": 2,
+    },
+  ],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 双分叉：两条分叉线全程平行再合流 > double-fork 1`] = `
+{
+  "laneCount": 2,
+  "rows": [
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "l2",
+          "toRow": 1,
+        },
+        {
+          "fromLane": 1,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 1,
+          "toOid": "r2",
+          "toRow": 2,
+        },
+      ],
+      "isHead": true,
+      "lane": 0,
+      "oid": "m2",
+      "passthrough": [],
+      "refs": [],
+      "row": 0,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 1,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "l1",
+          "toRow": 3,
+        },
+      ],
+      "isHead": false,
+      "lane": 0,
+      "oid": "l2",
+      "passthrough": [
+        1,
+      ],
+      "refs": [],
+      "row": 1,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 1,
+          "fromRow": 2,
+          "kind": "parent",
+          "toLane": 1,
+          "toOid": "r1",
+          "toRow": 4,
+        },
+      ],
+      "isHead": false,
+      "lane": 1,
+      "oid": "r2",
+      "passthrough": [
+        0,
+      ],
+      "refs": [],
+      "row": 2,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 3,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 5,
+        },
+      ],
+      "isHead": false,
+      "lane": 0,
+      "oid": "l1",
+      "passthrough": [
+        1,
+      ],
+      "refs": [],
+      "row": 3,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 1,
+          "fromRow": 4,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 5,
+        },
+      ],
+      "isHead": false,
+      "lane": 1,
+      "oid": "r1",
+      "passthrough": [
+        0,
+      ],
+      "refs": [],
+      "row": 4,
+    },
+    {
+      "edges": [],
+      "isHead": false,
+      "lane": 0,
+      "oid": "base",
+      "passthrough": [],
+      "refs": [],
+      "row": 5,
+    },
+  ],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 合并：merge 次父边折返入 lane 1 > merge 1`] = `
+{
+  "laneCount": 2,
+  "rows": [
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "main",
+          "toRow": 1,
+        },
+        {
+          "fromLane": 1,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 1,
+          "toOid": "dev",
+          "toRow": 2,
+        },
+      ],
+      "isHead": true,
+      "lane": 0,
+      "oid": "m",
+      "passthrough": [],
+      "refs": [
+        "main",
+      ],
+      "row": 0,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 1,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 3,
+        },
+      ],
+      "isHead": false,
+      "lane": 0,
+      "oid": "main",
+      "passthrough": [
+        1,
+      ],
+      "refs": [
+        "v1",
+      ],
+      "row": 1,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 1,
+          "fromRow": 2,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 3,
+        },
+      ],
+      "isHead": false,
+      "lane": 1,
+      "oid": "dev",
+      "passthrough": [
+        0,
+      ],
+      "refs": [],
+      "row": 2,
+    },
+    {
+      "edges": [],
+      "isHead": false,
+      "lane": 0,
+      "oid": "base",
+      "passthrough": [],
+      "refs": [],
+      "row": 3,
+    },
+  ],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 根：单提交零边 > root 1`] = `
+{
+  "laneCount": 1,
+  "rows": [
+    {
+      "edges": [],
+      "isHead": true,
+      "lane": 0,
+      "oid": "r",
+      "passthrough": [],
+      "refs": [],
+      "row": 0,
+    },
+  ],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 空集（unborn）：空结果零泳道 > empty 1`] = `
+{
+  "laneCount": 0,
+  "rows": [],
+}
+`;
+
+exports[`M12 快照夹具（线性/分叉/合并/octopus/双分叉/根/空集） > 线性：单泳道直线 > linear 1`] = `
+{
+  "laneCount": 1,
+  "rows": [
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 0,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "c1",
+          "toRow": 1,
+        },
+      ],
+      "isHead": true,
+      "lane": 0,
+      "oid": "c2",
+      "passthrough": [],
+      "refs": [],
+      "row": 0,
+    },
+    {
+      "edges": [
+        {
+          "fromLane": 0,
+          "fromRow": 1,
+          "kind": "parent",
+          "toLane": 0,
+          "toOid": "base",
+          "toRow": 2,
+        },
+      ],
+      "isHead": false,
+      "lane": 0,
+      "oid": "c1",
+      "passthrough": [],
+      "refs": [],
+      "row": 1,
+    },
+    {
+      "edges": [],
+      "isHead": false,
+      "lane": 0,
+      "oid": "base",
+      "passthrough": [],
+      "refs": [],
+      "row": 2,
+    },
+  ],
+}
+`;

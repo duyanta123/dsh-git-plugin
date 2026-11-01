@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // client 半编译面：参照 dsh D:\DeepSeekHarness\tsconfig.base.client.json
+    // （本会话实读）—— React JSX + 浏览器 lib。jsx 预置不影响无 JSX 的骨架源码；
+    // react 类型依赖随最小插件阶段进 devDependencies（见 CONTRACT.md §4）。
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "ESNext.Disposable"]
+  },
+  "include": ["src", "tests"]
+}

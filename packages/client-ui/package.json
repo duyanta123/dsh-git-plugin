@@ -1,0 +1,62 @@
+{
+  "name": "@dsh-plugin/client-ui-git",
+  "version": "0.1.0",
+  "description": "dsh Git 插件 client 半（web 面：header 入口 / 变更审查 tab / 提交图 tab）；接口权威 = research/capability-spec.md §③",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "LICENSE",
+    "NOTICE.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@dsh-plugin/git",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-store"
+      ]
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.6-alpha.1",
+    "@deepseek-ai/dsh-client-locale": "link:D:/DeepSeekHarness/packages/client/locale",
+    "@deepseek-ai/dsh-client-store": "link:D:/DeepSeekHarness/packages/client/store",
+    "@deepseek-ai/dsh-client-ui-conversation": "link:D:/DeepSeekHarness/packages/client/ui-conversation",
+    "@deepseek-ai/dsh-client-ui-primitives": "link:D:/DeepSeekHarness/packages/client/ui-primitives",
+    "@deepseek-ai/dsh-client-ui-renderer": "link:D:/DeepSeekHarness/packages/client/ui-renderer",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "link:D:/DeepSeekHarness/packages/client/ui-sidebar-right",
+    "@deepseek-ai/dsh-client-ui-slots": "link:D:/DeepSeekHarness/packages/client/ui-slots",
+    "@dsh-plugin/git": "workspace:*",
+    "@tanstack/react-virtual": "3.14.10",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "18.2.0",
+    "react": "^18.2.0",
+    "react-dom": "18.2.0",
+    "rolldown": "1.2.7"
+  }
+}

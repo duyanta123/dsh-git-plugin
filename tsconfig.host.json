@@ -1,0 +1,17 @@
+{
+  // Host face aggregate —— typert-generator 的工作区根契约（generator/src/workspace.ts:186-194
+  // findWorkspaceRoot：向上找同时存在 `tsconfig.host.json` 与 `packages/` 的目录；analyzer
+  // 沿 projectReferences 登记根下的包，workspace.ts:533-544）。本仓库只做 host 面：
+  // packages/host 是唯一带 Typert 面（TypertRemoteService + @Remote）的包；client-ui
+  // 无服务，不进 face 程序。形态收敛自 dsh 树根 tsconfig.host.json（同为
+  // `extends base + noEmit + references` 的聚合，dsh 树实读），include 收敛为空。
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "files": [],
+  "references": [
+    { "path": "packages/host" },
+    { "path": "packages/typert-protocol" }
+  ]
+}

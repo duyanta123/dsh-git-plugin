@@ -1,0 +1,35 @@
+{
+  // 参照 dsh 源码树 D:\DeepSeekHarness\tsconfig.base.json（本会话实读），
+  // 保留其编译面（target/module/moduleResolution/strict 系）；
+  // 差异：去掉 monorepo 构建面（composite/incremental/declaration/declarationMap/sourceMap
+  // 与 paths 源平面表）——骨架阶段 typecheck 走 --noEmit，产物构建（tsdown）在最小插件阶段
+  // 才引入，届时按包补 emit 配置。NEVER add include/files here（沿用 dsh base 注释约束，
+  // 避免泄漏进每个 extends 的包工程）。
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["node"],
+    // 源平面：@deepseek-ai/dsh-typert-protocol 解析到 packages/typert-protocol 的
+    // TS 源（而非 lib d.ts）。typert-generator 的 cross-package 引用命名
+    // （analyzer.ts packageExportName → sourcePathForExport）要求登记包的
+    // src/*.ts 存在且在分析程序内；dsh 树 base 的 paths 源平面表同此机制
+    // （本仓库骨架注释曾去掉该表，现为 generator 拓扑补回这一条）。
+    "paths": {
+      "@deepseek-ai/dsh-typert-protocol": ["./packages/typert-protocol/src/index.ts"],
+      "@deepseek-ai/dsh-typert-protocol/*": ["./packages/typert-protocol/src/*"]
+    }
+  }
+}

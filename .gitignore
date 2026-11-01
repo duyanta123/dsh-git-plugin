@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# build products (lib/ appears in the minimal-plugin stage)
+lib/
+dist/
+
+# ts incremental state
+*.tsbuildinfo
+
+# test & coverage
+coverage/
+.vitest/
+
+# logs & OS noise
+*.log
+.DS_Store
+Thumbs.db
+
+# NOTE: pnpm-lock.yaml is intentionally NOT ignored (committed for reproducible installs).
+
+# AI tool local state (personal)
+.claude/

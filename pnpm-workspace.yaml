@@ -1,0 +1,17 @@
+packages:
+  - "packages/*"
+# pnpm 11：overrides 的家在 pnpm-workspace.yaml（package.json 的 pnpm 字段已不被读取）。
+# vite/rolldown 对齐 dsh 树锁定的解析版本（vite 8.2.2 / rolldown 1.2.7，dsh 根
+# package.json 与 pnpm-lock 实读）——两版本已在共享 pnpm store（D:\.pnpm-store）中，
+# 避免 1.2.16 原生 binding 的 registry 下载在本机网络下反复超时。
+overrides:
+  vite: 8.2.2
+  rolldown: 1.2.7
+  "@rolldown/binding-win32-x64-msvc": 1.2.7
+  # typert-generator 的登记包拓扑要求：@deepseek-ai/dsh-typert-protocol 的声明文件必须
+  # 落在本工作区 packages/ 下的已登记包内（generator analyzer.ts:2770-2776
+  # registrationForFile 只认根 packages/ 下的登记包；dsh 树内 protocol 本就是工作区包）。
+  # link 到 packages/typert-protocol 的未改动 npm 副本（0.2.2-alpha.2，与 profile 运行时
+  # 从 registry 装的同版本）。link:-override 形态照抄 dsh 树 pnpm-workspace.yaml 的
+  # '@deepseek-ai/schemastery': 'link:vendor/schemastery' 行。
+  "@deepseek-ai/dsh-typert-protocol": "link:packages/typert-protocol"
