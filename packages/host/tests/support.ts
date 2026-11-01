@@ -9,6 +9,7 @@
 
 import { execFileSync, spawn as nodeSpawn } from 'node:child_process'
 import { once } from 'node:events'
+import { realpathSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -26,7 +27,11 @@ export function git(cwd: string, ...args: string[]): string {
 
 /** A temporary directory removed by the returned cleanup. */
 export async function scratchDir(prefix: string, cleanups: Array<() => Promise<unknown>>): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix))
+  const created = await mkdtemp(join(tmpdir(), prefix))
+  // Windows 的 %TEMP% 可能是 8.3 短名（CI: RUNNER~1）或大小写与磁盘不一致，git 返回
+  // 规范长名——测试里的路径字符串必须与 git 输出同形。JS 版 realpath 不规范化这些
+  // 形态，必须用 .native（GetFinalPathNameByHandle）。
+  const dir = realpathSync.native(created)
   // Windows：git 子进程的瞬态 cwd 句柄/杀软扫描会让 rmdir 撞上 EBUSY——rm 带重试。
   cleanups.push(() => rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }))
   return dir
