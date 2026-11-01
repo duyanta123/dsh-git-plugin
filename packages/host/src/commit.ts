@@ -13,7 +13,7 @@
  */
 
 /**
- * @dsh-plugin/git — 提交引擎（spec §1.4 [清单 11/15/17/19/20/55/64]；权限 C）。
+ * dsh-gitkit — 提交引擎（spec §1.4 [清单 11/15/17/19/20/55/64]；权限 C）。
  *
  * 守卫链（顺序执行，任一失败即抛对应码，不执行 commit——spec §1.4 前置校验）：
  *   0. 仓库发现：`rev-parse --show-toplevel`（"exit 128 + not a git repository" 范式）

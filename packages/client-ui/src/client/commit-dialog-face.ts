@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交对话框的业务面（④-K 提交对话框模块 ask §①；
+ * dsh-gitkit-ui — 提交对话框的业务面（④-K 提交对话框模块 ask §①；
  * spec §3.1 GitCommitDialog 行 + §3.2 GitRpcClient 切片）。
  *
  * 组件只吃这个面（范式：槽组件读 props/inject，map §3.4；GitErrorNotice 同纪律——
@@ -11,7 +11,7 @@
  * （amend 勾选框随之禁用——没有上一笔提交可修订）。
  */
 
-import type { CommitOptions, CommitResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitIdentityResult, PullResult, PushOptions, PushResult } from '@dsh-plugin/git/types'
+import type { CommitOptions, CommitResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitIdentityResult, PullResult, PushOptions, PushResult } from 'dsh-gitkit/types'
 import type { RemoteResult } from './remote/mount.js'
 import type { GitRpcFace } from './remote/mount.js'
 

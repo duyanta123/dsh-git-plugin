@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交图数据缓存 store（本模块 ask §④ createGitGraphStore；
+ * dsh-gitkit-ui — 提交图数据缓存 store（本模块 ask §④ createGitGraphStore；
  * spec §3.2 GitHostReadState 的 log 窗口切片）。
  *
  * **范式 A**：裸 `createSnapshotStore` observable，工厂函数（模块级句柄禁止——map
@@ -22,7 +22,7 @@
 
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { CommitDetail, CommitInfo, LogOptions, LogPage, RefsSnapshot, ShowOptions } from '@dsh-plugin/git/types'
+import type { CommitDetail, CommitInfo, LogOptions, LogPage, RefsSnapshot, ShowOptions } from 'dsh-gitkit/types'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
 import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
 import type { GitStatusSource } from './git-status-source.js'

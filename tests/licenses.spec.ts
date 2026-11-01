@@ -240,7 +240,7 @@ describe('licenses 合规守卫（spec §5.4）', () => {
         expect(manifest.files ?? [], `${pkg} files 缺 ${name}`).toContain(name)
       }
       expect(manifest.license, `${pkg} license 字段应为 Apache-2.0`).toBe('Apache-2.0')
-      expect(manifest.name, '包名面').toMatch(/^(@dsh-plugin\/|dsh-git-plugin$)/u)
+      expect(manifest.name, '包名面').toMatch(/^dsh-gitkit(-ui|-bundle)?$/u)
     }
   })
 })

@@ -1,4 +1,4 @@
-# @dsh-plugin/client-ui-git — `dsh.client` 契约字段对照 map（+ 目标清单样例包）
+# dsh-gitkit-ui — `dsh.client` 契约字段对照 map（+ 目标清单样例包）
 
 > 骨架阶段产出。权威来源：`docs/capability-spec.md` §⑦（下称【spec §⑦】）与
 > `docs/notes/real-host-install-startup-test.md`（下称【runbook】）。凡标「runbook §x」
@@ -14,10 +14,10 @@
 | `main` | `./lib/index.js` | Loader 按 `name` 导入包 main（spec §0.2-1；spec 转引 host-capability-map.md:89）。node 半最小入口（本包 `src/index.ts`，no-op 常量模块） |
 | `exports["."]` | `./lib/index.*` | 同上；types 先行 |
 | `exports["./client"]` | `./lib/client.*` | **声明了 `dsh.client` 就必须有 `./client` 导出**（spec §⑦ 清单注意，spec 转引 host-capability-map.md:76）；缺失时宿主直接报错 `client-modules: <pkg> declares dsh.client but exports no "./client" bundle`（runbook §3.C，实读 `packages/client/modules/src/index.ts:906`）。骨架阶段 lib/ 未产出 —— 只有把包装进宿主才触发该校验；构建产物随最小插件阶段落地 |
-| `exports["./typert"]` | **（不恢复；④-A 落地记录 2026-10-31）** | 骨架阶段预留的 B2 产物位，最小插件阶段实测删除（exports 指向不存在产物会被 typert-loader 拒绝并阻断宿主就绪）。④-A 证实挂载机制存在（结局 A），但**生成产物落在 host 包**（generator 契约：host 面 `./typert` + `./remote`——generator/src/workspace.ts:122,142-148 实读；spec §0.4-1/B2 猜的"client 包 exports ./typert"形状与树内契约不符，按树源为准）：本包 `src/client/index.ts` 改为 `import gitRemote from '@dsh-plugin/git/remote'` 后 `ctx.remote.$mount(gitRemote)`（对照 api-remotes/client 静态挂载形态，packages/api/remotes/src/client/index.ts:14,203 实读），生成描述符内联进本包 bundle（`"git/ping"`/`"git/identity"` 方法键 + package 字段，verify-load 实测 served bundle 含两者） |
+| `exports["./typert"]` | **（不恢复；④-A 落地记录 2026-10-31）** | 骨架阶段预留的 B2 产物位，最小插件阶段实测删除（exports 指向不存在产物会被 typert-loader 拒绝并阻断宿主就绪）。④-A 证实挂载机制存在（结局 A），但**生成产物落在 host 包**（generator 契约：host 面 `./typert` + `./remote`——generator/src/workspace.ts:122,142-148 实读；spec §0.4-1/B2 猜的"client 包 exports ./typert"形状与树内契约不符，按树源为准）：本包 `src/client/index.ts` 改为 `import gitRemote from 'dsh-gitkit/remote'` 后 `ctx.remote.$mount(gitRemote)`（对照 api-remotes/client 静态挂载形态，packages/api/remotes/src/client/index.ts:14,203 实读），生成描述符内联进本包 bundle（`"git/ping"`/`"git/identity"` 方法键 + package 字段，verify-load 实测 served bundle 含两者） |
 | `dsh.bundle.patch` | `./cordis.patch.yml` | `dsh plugin add` 时 reconcile 读该文件并把 insert 行自动追加进 `dsh.profile.bundles`（runbook §3.A 实测；§3.D 层序表） |
 | `dsh.client.platform` | `"web"` | **必需字符串**（runbook §3.C，实读 `client/manifest.ts:179-180`）；client 面恒 web（spec §⑦，spec 转引 host-capability-map.md:66） |
-| `dsh.client.inject` | 6 个包名（见下） | **信息性**（预检/HMR），不决定激活顺序（spec §⑦，spec 转引 host-capability-map.md:248）；可选字符串数组（runbook §3.C，manifest.ts:182-191）。逐项职责：`@dsh-plugin/git`=线路类型（**只 `import type`**，spec §0.2-1）；`dsh-client-ui-slots`=`ctx.slots.inject/register`（spec §3.1）；`dsh-client-ui-sidebar-right`=`sidebarRightTabs.register` + `openResource`（**注意 D8：包名带 `-right`**，spec 转引 host-capability-map.md:451）；`dsh-client-ui-primitives`=浮层/主题；`dsh-client-locale`=`locale.register/bind`（spec §④）；`dsh-client-store`=`defineStore`/`createSnapshotStore`（spec §3.2） |
+| `dsh.client.inject` | 6 个包名（见下） | **信息性**（预检/HMR），不决定激活顺序（spec §⑦，spec 转引 host-capability-map.md:248）；可选字符串数组（runbook §3.C，manifest.ts:182-191）。逐项职责：`dsh-gitkit`=线路类型（**只 `import type`**，spec §0.2-1）；`dsh-client-ui-slots`=`ctx.slots.inject/register`（spec §3.1）；`dsh-client-ui-sidebar-right`=`sidebarRightTabs.register` + `openResource`（**注意 D8：包名带 `-right`**，spec 转引 host-capability-map.md:451）；`dsh-client-ui-primitives`=浮层/主题；`dsh-client-locale`=`locale.register/bind`（spec §④）；`dsh-client-store`=`defineStore`/`createSnapshotStore`（spec §3.2） |
 | `dsh.client.immediately` | （不设） | 可选布尔（runbook §3.C，manifest.ts:182-191）；v1 无需立即装载 |
 | `dsh.client.external` | （不设） | **基线 externals 不要写进来**：react/react-dom/@tanstack/react-virtual/@deepseek-ai/dsh-client-* 属 dsh 预置外部依赖（spec §⑦ 清单注意，spec 转引 host-capability-map.md:78）；`@tanstack/react-virtual` 进 devDependencies 走 npm（spec §3.3.3） |
 | `files` | lib / cordis.patch.yml / LICENSE / NOTICE.md / THIRD_PARTY_NOTICES.md | 封闭覆盖全部运行时产物（spec §⑦，spec 转引 host-capability-map.md:77）；三份合规文件 = spec §5.2 发布要求 |
@@ -37,11 +37,11 @@
 
 | 包 | dsh 树内版本（实读） | npm 最新（实测） | 决策 |
 |---|---|---|---|
-| `@dsh-plugin/git` | workspace 内 | —（本地包） | `workspace:*` 链接，仅 `import type`（现行 devDependencies 已含） |
+| `dsh-gitkit` | workspace 内 | —（本地包） | `workspace:*` 链接，仅 `import type`（现行 devDependencies 已含） |
 | `react` / `@types/react` / `@tanstack/react-virtual` | 未读树内版本 | 未逐一核实 | **最小插件阶段**随 client 代码进 devDependencies（spec §⑦） |
 | `@deepseek-ai/dsh-client-ui-slots` 等 5 个 | 树内 workspace 版 `0.2.2-alpha.2` | `0.0.1-rc.1` | **npm 快照明显落后于树** —— 不足以支撑 spec §③ 的类型面；最小插件阶段按 spec §0.4-2 回填：优先 `link:D:/DeepSeekHarness/packages/client/...`（runbook §4.2.1 方案），registry 快照仅作兜底 |
 
-> 结论（如实）：client 包对 5 个 `dsh-client-*` 的类型依赖**现在不装**（现行 devDependencies 只有 `@dsh-plugin/git`），避免把 0.0.1-rc.1 旧类型面锁进骨架；这是对 spec §0.4-2「npm view 核实后回填」的执行结果，不是遗漏。
+> 结论（如实）：client 包对 5 个 `dsh-client-*` 的类型依赖**现在不装**（现行 devDependencies 只有 `dsh-gitkit`），避免把 0.0.1-rc.1 旧类型面锁进骨架；这是对 spec §0.4-2「npm view 核实后回填」的执行结果，不是遗漏。
 >
 > **client 地基模块更新（2026-10-31）**：按本表 §4 的 link: 方案落地——devDependencies 新增
 > `@deepseek-ai/cordis`（^4.0.6-alpha.1，与 host 对齐）与 5 个 `link:D:/DeepSeekHarness/packages/client/...`
@@ -63,7 +63,7 @@
     "@deepseek-ai/dsh-client-ui-primitives": "link:D:/DeepSeekHarness/packages/client/ui-primitives",
     "@deepseek-ai/dsh-client-locale": "link:D:/DeepSeekHarness/packages/client/locale",
     "@deepseek-ai/dsh-client-store": "link:D:/DeepSeekHarness/packages/client/store",
-    "@dsh-plugin/git": "workspace:*"          // 仅 import type；构建产物零 runtime 依赖
+    "dsh-gitkit": "workspace:*"          // 仅 import type；构建产物零 runtime 依赖
   }
 }
 ```

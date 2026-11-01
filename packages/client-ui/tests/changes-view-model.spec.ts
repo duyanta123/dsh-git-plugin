@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { FileChange, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { FileChange, GitStatusSnapshot } from 'dsh-gitkit/types'
 import { changesViewModel, statusGlyphOf } from '../src/client/changes-view-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
 

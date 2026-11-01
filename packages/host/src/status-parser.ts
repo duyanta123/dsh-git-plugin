@@ -21,7 +21,7 @@
  */
 
 /**
- * @dsh-plugin/git — status 解析纯函数（无 IO、无时钟；spec §1.1 的 porcelain v2 -z 终态
+ * dsh-gitkit — status 解析纯函数（无 IO、无时钟；spec §1.1 的 porcelain v2 -z 终态
  * + §5.1 登记的 v1 回退段 + 并发 numstat 双路的解析与合并视图装配）。
  *
  * 实测依据（本机 git 2.55.0.windows.2，win32 临时仓库，2026-10-31）：

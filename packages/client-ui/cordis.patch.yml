@@ -1,6 +1,6 @@
-# @dsh-plugin/client-ui-git — bundle 自带补丁（runbook §3.A / §3.D：dsh plugin add 时由
+# dsh-gitkit-ui — bundle 自带补丁（runbook §3.A / §3.D：dsh plugin add 时由
 # reconcile 读 dsh.bundle.patch 并把本行自动追加进 dsh.profile.bundles）。
 # name = 包名 → Loader 按包名导入其 package.json 的 main（node 半最小入口）。
 - insert:
     - id: dsh-plugin-client-ui-git
-      name: '@dsh-plugin/client-ui-git'
+      name: 'dsh-gitkit-ui'

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — M13 纯函数：冲突标记行分类器。
+ * dsh-gitkit-ui — M13 纯函数：冲突标记行分类器。
  *
  * [清单 6] 的「标记展示」半边（spec §1.1 v1.1 修订 B4：冲突**文件**检测 = porcelain
  * XY 码在 host；冲突**标记**高亮 = FileDiffView 对 diff 文本行分类——本模块交付分类

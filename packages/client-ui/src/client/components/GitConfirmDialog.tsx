@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C5 GitConfirmDialog：二次确认框架（本模块 ask §④；
+ * dsh-gitkit-ui — C5 GitConfirmDialog：二次确认框架（本模块 ask §④；
  * spec §3.4 [清单 12/44/50]）。
  *
  * - **danger 语义**：`severity='danger'` ⇒ 确认按钮呈危险态（data-git-confirm-danger）

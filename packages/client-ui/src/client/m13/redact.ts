@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — M13 纯函数：显示面脱敏（redact）。
+ * dsh-gitkit-ui — M13 纯函数：显示面脱敏（redact）。
  *
  * 语义与 host 侧 `packages/host/src/error-codes.ts` 的 sanitizeStderr 同族（同仓自有
  * 代码，非第三方移植）：客户端在把 `error.message` / `details.stderr` 渲染进

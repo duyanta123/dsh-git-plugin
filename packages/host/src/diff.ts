@@ -34,7 +34,7 @@
  */
 
 /**
- * @dsh-plugin/git — diff 引擎（spec §1.2 [清单 2/3/59] + §1.8 show 的 patch 半
+ * dsh-gitkit — diff 引擎（spec §1.2 [清单 2/3/59] + §1.8 show 的 patch 半
  * [清单 33]）。权限 A 只读（readonly runner 实例）；幂等；无缓存（每次调用实跑，
  * §1.9 diff 行无失效列要求）。
  *

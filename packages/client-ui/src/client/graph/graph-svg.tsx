@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交图行内 gutter SVG 切片（本模块 ask §③；spec
+ * dsh-gitkit-ui — 提交图行内 gutter SVG 切片（本模块 ask §③；spec
  * §3.3.2「每行一个 <svg> 切片」——虚拟滚动只渲染可见行，每行切片自含）。
  *
  * 常量（workflow ask §③）：行高 24 / 泳道宽 14；泳道色 = lane 取模 8 的 CSS

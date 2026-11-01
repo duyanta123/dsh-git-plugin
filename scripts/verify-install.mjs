@@ -14,7 +14,7 @@
  *      dependencies —— git-bundle 是唯一顶层依赖）；
  *   ③ `dsh --profile <新> --dump-config` 断言 git/ui-git 两行
  *      （`id: dsh-plugin-git` 与 `id: dsh-plugin-client-ui-git`，且都在
- *      `# == @dsh-plugin/git-bundle` 层标签之下）；
+ *      `# == dsh-gitkit-bundle` 层标签之下）；
  *   ④ boot web（`dsh --profile <新> --no-open --port 0`，runbook §2.1 实测命令形态；
  *      profile 需 dsh-web-app bundle 层——install 的 init 只给 dsh-base
  *      （official-bundles/src/bundles.ts:43-44），此为 profile 层用户文件补齐，
@@ -25,7 +25,7 @@
  *      host 引擎内部 StatusAvailability 'ready'（status.ts:50）；本脚本按实形断言
  *      ok:true + born 分支全量字段，语义等价「仓库就绪」，与 verify-load 头注同口径）；
  *   ⑥ client 服务 HTML（认证后的 index）含两个包：__DSH_BOOT__ entries 有
- *      `@dsh-plugin/client-ui-git`（inject 边含 `@dsh-plugin/git`），HTML 文本同时
+ *      `dsh-gitkit-ui`（inject 边含 `dsh-gitkit`），HTML 文本同时
  *      出现两个包名；其 url 服务出的 bundle 带闭包工厂标记；
  *   ⑦ 清理：taskkill 宿主进程树 + 删临时 DSH_HOME 与夹具仓库（runbook §6.9），
  *      退出码 0；任何一步失败退出码 1 并打印诊断。
@@ -163,7 +163,7 @@ async function main() {
   assert(existsSync(hostTypert), `generated host typert artifact missing: ${hostTypert} — run \`pnpm run build\` first`)
   assert(existsSync(clientLib), `client bundle missing: ${clientLib} — run \`pnpm run build\` first`)
   const bundleManifest = JSON.parse(readFileSync(bundleManifestPath, 'utf8'))
-  assert(bundleManifest.name === '@dsh-plugin/git-bundle', `git-bundle manifest name wrong: ${bundleManifest.name}`)
+  assert(bundleManifest.name === 'dsh-gitkit-bundle', `git-bundle manifest name wrong: ${bundleManifest.name}`)
   step(`dsh tree: ${DSH_TREE}; repo: ${REPO}; installing ${bundleManifest.name}@${bundleManifest.version}`)
 
   // status() 夹具：临时真仓库（真 git init + 一笔种子提交 ⇒ ready 快照分支字段可断言；
@@ -200,14 +200,14 @@ async function main() {
     // 安装事实：profile manifest 只记 git-bundle；node_modules（hoisted）里两包齐备。
     const profilePackageJson = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
     const deps = profilePackageJson.dependencies ?? {}
-    assert(deps['@dsh-plugin/git-bundle'] !== undefined,
-      `profile dependencies missing @dsh-plugin/git-bundle: ${JSON.stringify(deps)}`)
-    for (const name of ['@dsh-plugin/git', '@dsh-plugin/client-ui-git']) {
+    assert(deps['dsh-gitkit-bundle'] !== undefined,
+      `profile dependencies missing dsh-gitkit-bundle: ${JSON.stringify(deps)}`)
+    for (const name of ['dsh-gitkit', 'dsh-gitkit-ui']) {
       assert(existsSync(join(profileDir, 'node_modules', ...name.split('/'), 'package.json')),
         `hoisted node_modules missing ${name} — the thin package did not bring the two real packages in`)
     }
     const bundles = profilePackageJson.dsh?.profile?.bundles
-    assert(Array.isArray(bundles) && bundles.includes('@dsh-plugin/git-bundle'),
+    assert(Array.isArray(bundles) && bundles.includes('dsh-gitkit-bundle'),
       `reconcile did not attach the git-bundle layer: ${JSON.stringify(profilePackageJson.dsh)}`)
     step(`profile recorded: dependencies=${JSON.stringify(Object.keys(deps))}, bundles=${JSON.stringify(bundles)}`)
 
@@ -235,14 +235,14 @@ async function main() {
       cwd: DSH_TREE, env, timeoutMs: DUMP_TIMEOUT_MS,
     })
     assert(dump.code === 0, `--dump-config failed (exit ${dump.code}):\n${dump.out.slice(-2000)}`)
-    const layerAt = dump.out.indexOf('# == @dsh-plugin/git-bundle')
-    assert(layerAt >= 0, `dump-config has no @dsh-plugin/git-bundle layer label:\n${dump.out.slice(-1200)}`)
+    const layerAt = dump.out.indexOf('# == dsh-gitkit-bundle')
+    assert(layerAt >= 0, `dump-config has no dsh-gitkit-bundle layer label:\n${dump.out.slice(-1200)}`)
     const layerText = dump.out.slice(layerAt)
-    assert(layerText.includes('id: dsh-plugin-git') && layerText.includes("name: '@dsh-plugin/git'"),
+    assert(layerText.includes('id: dsh-plugin-git') && layerText.includes("name: 'dsh-gitkit'"),
       `dump-config git-bundle layer lacks the git row:\n${layerText}`)
-    assert(layerText.includes('id: dsh-plugin-client-ui-git') && layerText.includes("name: '@dsh-plugin/client-ui-git'"),
+    assert(layerText.includes('id: dsh-plugin-client-ui-git') && layerText.includes("name: 'dsh-gitkit-ui'"),
       `dump-config git-bundle layer lacks the ui-git row:\n${layerText}`)
-    step('dump-config OK: git / ui-git two insert rows under the @dsh-plugin/git-bundle layer')
+    step('dump-config OK: git / ui-git two insert rows under the dsh-gitkit-bundle layer')
 
     // ── 3. boot web ──
     step('starting dsh web host…')
@@ -281,15 +281,15 @@ async function main() {
     const indexResponse = await fetch(base.origin, { headers: { cookie: browserCookie }, redirect: 'manual' })
     assert(indexResponse.status === 200, `authenticated index returned ${indexResponse.status}`)
     const indexHtml = await indexResponse.text()
-    assert(indexHtml.includes('@dsh-plugin/git') && indexHtml.includes('@dsh-plugin/client-ui-git'),
+    assert(indexHtml.includes('dsh-gitkit') && indexHtml.includes('dsh-gitkit-ui'),
       'served index HTML does not contain both package names')
     const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__')
     const entries = boot.entries ?? []
-    const clientEntry = entries.find((entry) => entry.id === '@dsh-plugin/client-ui-git')
+    const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit-ui')
     assert(clientEntry !== undefined,
-      `boot graph has no entry '@dsh-plugin/client-ui-git'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
-    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('@dsh-plugin/git'),
-      `client entry inject edges missing '@dsh-plugin/git': ${JSON.stringify(clientEntry.inject)}`)
+      `boot graph has no entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
+    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('dsh-gitkit'),
+      `client entry inject edges missing 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
     const bundleResponse = await fetch(new URL(clientEntry.url, base.origin), { headers: { cookie: browserCookie } })
     assert(bundleResponse.status === 200, `client bundle fetch ${clientEntry.url} → ${bundleResponse.status}`)
     const bundleBody = await bundleResponse.text()

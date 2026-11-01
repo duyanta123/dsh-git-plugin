@@ -1,11 +1,11 @@
-# @dsh-plugin/git-bundle — 发布薄包自带的 bundle 补丁（一次 file: 安装同时挂两层）。
+# dsh-gitkit-bundle — 发布薄包自带的 bundle 补丁（一次 file: 安装同时挂两层）。
 # git-bundle 是 profile 安装后唯一的顶层依赖（reconcile 只扫顶层 dependencies，
 # packages/boot/plugin-manager/src/operations.ts），因此 host/client 两包的 insert
 # 行由本补丁统一携带；两包各自的 cordis.patch.yml 供单独安装路径（verify-load
 # 双包直装）使用，与本文件内容一致——重复安装两路会以相同 id 覆盖，不产生双行。
 - insert:
     - id: dsh-plugin-git
-      name: '@dsh-plugin/git'
+      name: 'dsh-gitkit'
 - insert:
     - id: dsh-plugin-client-ui-git
-      name: '@dsh-plugin/client-ui-git'
+      name: 'dsh-gitkit-ui'

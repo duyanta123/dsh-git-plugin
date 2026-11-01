@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { CommitDetail, CommitInfo, GitFollowCommand, GitStatusFrame, LogOptions, LogPage, RefsSnapshot, ShowOptions } from '@dsh-plugin/git/types'
+import type { CommitDetail, CommitInfo, GitFollowCommand, GitStatusFrame, LogOptions, LogPage, RefsSnapshot, ShowOptions } from 'dsh-gitkit/types'
 import { createGraphTabStore } from '../src/client/store/graph-tab-store.ts'
 import { createGitGraphStore, GRAPH_PAGE_LIMIT } from '../src/client/store/git-graph-store.ts'
 import type { GitGraphRpcFace } from '../src/client/store/git-graph-store.ts'

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/git — RPC 线路类型（wire types）。spec 权威：research/capability-spec.md §1.0.3
+ * dsh-gitkit — RPC 线路类型（wire types）。spec 权威：research/capability-spec.md §1.0.3
  * （本模块 ⑤ 一次落全；client 包唯一类型依赖面，client 只允许 `import type`——编译期擦除，
  * 不构成 runtime-import，不违反「feature 插件禁止 runtime-import 另一 feature 插件的值」，
  * host-capability-map.md:37）。

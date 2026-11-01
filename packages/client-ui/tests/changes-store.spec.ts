@@ -8,8 +8,8 @@
 import { describe, expect, it } from 'vitest'
 import type {
   DiffResult, DiffScope, DiscardOptions, DiscardResult, GitFollowCommand, GitStatusFrame, StageResult, UnstageResult,
-} from '@dsh-plugin/git/types'
-import type { DiffFile, GitStatusSnapshot } from '@dsh-plugin/git/types'
+} from 'dsh-gitkit/types'
+import type { DiffFile, GitStatusSnapshot } from 'dsh-gitkit/types'
 import { createChangesTabStore } from '../src/client/store/changes-tab-store.ts'
 import { createGitChangesStore, diffCacheKey } from '../src/client/store/git-changes-store.ts'
 import { createGitStatusSource } from '../src/client/store/git-status-source.ts'

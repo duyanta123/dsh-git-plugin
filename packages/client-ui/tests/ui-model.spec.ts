@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import { badgeCount, confirmButtonEnabled, headerMenuItems, headerViewModel } from '../src/client/ui-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
-import type { GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitStatusSnapshot } from 'dsh-gitkit/types'
 
 function mkState(overrides: Partial<GitStatusSourceState> = {}): GitStatusSourceState {
   return {

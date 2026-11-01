@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/git — host 半（node 侧）入口。
+ * dsh-gitkit — host 半（node 侧）入口。
  *
  * 服务形态照 research/host-capability-map.md §2.1（对照 dsh 树 HEAD ce7073d512
  * 实读的同类 class 插件 packages/boot/plugin-manager/src/index.ts:311-378：
@@ -82,7 +82,7 @@ declare module '@deepseek-ai/cordis' {
 export const PLUGIN_ID = 'dsh-plugin-git'
 
 /** npm 包名（host 半）。 */
-export const PLUGIN_NAME = '@dsh-plugin/git'
+export const PLUGIN_NAME = 'dsh-gitkit'
 
 /**
  * serviceKey = Cordis 注册名 = wire namespace（端点 `git/ping` 等）。

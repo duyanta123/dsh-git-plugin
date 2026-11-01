@@ -32,7 +32,7 @@
  */
 
 /**
- * @dsh-plugin/git — AI 提交信息生成（spec §1.7 [清单 16/17]；§6 M7；权限 B）。
+ * dsh-gitkit — AI 提交信息生成（spec §1.7 [清单 16/17]；§6 M7；权限 B）。
  *
  * 流程：nothing-staged 前置（`diff --cached --quiet`，unborn 同命令可用——commit.ts
  * 本机实测）→ staged diff（DiffEngine 'staged' 路：numstat/name-status 双路 +

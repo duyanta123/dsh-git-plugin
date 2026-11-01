@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C4 GitCommitDialog：提交对话框（④-K 提交对话框模块
+ * dsh-gitkit-ui — C4 GitCommitDialog：提交对话框（④-K 提交对话框模块
  * ask §①/②；spec §3.1 GitCommitDialog 行的字段全表 + [清单 11/15/16/17/19/48/55]）。
  *
  * 字段全表（ask §①）：
@@ -32,7 +32,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { GeneratedCommitMessage, GitIdentityResult, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GeneratedCommitMessage, GitIdentityResult, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { GitCommitDialogFace, HeadCommitInfo } from '../commit-dialog-face.js'
 import type { CommitPending } from '../commit-view-model.js'
 import { commitDialogView, commitOptionsOf, pushOptionsOf } from '../commit-view-model.js'

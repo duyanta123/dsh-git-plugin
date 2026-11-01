@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from 'dsh-gitkit/types'
 import { createGitStatusSource, snapshotSignature } from '../src/client/store/git-status-source.ts'
 import type { GitErrorLike, GitRpcFace, GitStreamHandle } from '../src/client/remote/mount.ts'
 import { GATEWAY_UNAVAILABLE } from '../src/client/remote/mount.ts'

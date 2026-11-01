@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C2 变更审查 tab 的槽位 UI 状态 store（本模块 ask §②/⑥；
+ * dsh-gitkit-ui — C2 变更审查 tab 的槽位 UI 状态 store（本模块 ask §②/⑥；
  * spec §3.2 C2 的 ChangesTabState/ChangesTabActions 原样落地）。
  *
  * **范式 B**：`defineStore` draft mutator（map §3.4 槽位 UI 状态；ui-deliverables

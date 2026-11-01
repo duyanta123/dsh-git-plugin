@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交图泳道布局纯函数（spec §3.3.1 契约；workflow M12
+ * dsh-gitkit-ui — 提交图泳道布局纯函数（spec §3.3.1 契约；workflow M12
  * 任务口径文件名 lane-layout.ts、函数名 computeGraphLayout）。
  *
  * **自研声明（PORTING.md F7 行）**：算法思想来自 pvigier 博客教材
@@ -52,7 +52,7 @@
  * 不属于该行节点的边的 travel lane 集）。
  */
 
-import type { CommitInfo, RefInfo } from '@dsh-plugin/git/types'
+import type { CommitInfo, RefInfo } from 'dsh-gitkit/types'
 
 /** spec §3.3.1 GraphLayoutInput。 */
 export interface GraphLayoutInput {

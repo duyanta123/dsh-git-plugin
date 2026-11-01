@@ -5,9 +5,9 @@ dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
-| `packages/host` | `@dsh-plugin/git` | node（宿主插件） | TypertRemoteService `git` 命名空间：16 个 `@Remote` 方法（`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
-| `packages/client-ui` | `@dsh-plugin/client-ui-git` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
-| `git-bundle` | `@dsh-plugin/git-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
+| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：16 个 `@Remote` 方法（`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
+| `packages/client-ui` | `dsh-gitkit-ui` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
+| `git-bundle` | `dsh-gitkit-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
 
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
@@ -42,8 +42,8 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 dsh plugin --profile <你的profile> add file:<repo>/git-bundle
 ```
 
-一条命令完成安装：`@dsh-plugin/git-bundle` 经 `file:` 依赖把 `@dsh-plugin/git` 与
-`@dsh-plugin/client-ui-git` 带进 profile（宿主 profile 用 `nodeLinker: hoisted` 平铺安装），
+一条命令完成安装：`dsh-gitkit-bundle` 经 `file:` 依赖把 `dsh-gitkit` 与
+`dsh-gitkit-ui` 带进 profile（宿主 profile 用 `nodeLinker: hoisted` 平铺安装），
 reconcile 自动把两层服务补丁追加进 `dsh.profile.bundles`。重启 dsh（或 patchReload）即生效，
 无需重建 web 前端。
 
@@ -51,23 +51,23 @@ reconcile 自动把两层服务补丁追加进 `dsh.profile.bundles`。重启 ds
 
 ```bash
 dsh --profile <你的profile> --dump-config | tail -5
-# 期待在 `# == @dsh-plugin/git-bundle` 层下看到两行：
+# 期待在 `# == dsh-gitkit-bundle` 层下看到两行：
 #   - id: dsh-plugin-git
-#     name: '@dsh-plugin/git'
+#     name: 'dsh-gitkit'
 #   - id: dsh-plugin-client-ui-git
-#     name: '@dsh-plugin/client-ui-git'
+#     name: 'dsh-gitkit-ui'
 ```
 
 之后打开 dsh web：会话 header 出现 Git 入口（角标 + 变更审查 tab + 提交图 tab）。
 默认工作区 = 当前 session 的 cwd；可在 profile 层补丁用 `workspaceOverride` 钉死（见 §3）。
 
-### npm 包（@dsh-plugin/git · @dsh-plugin/client-ui-git）
+### npm 包（dsh-gitkit · dsh-gitkit-ui）
 
 两个代码包同时发布到 npm（tag 驱动：推 `v*` 标签 → GitHub Actions 门禁（typecheck/test/build）→
 自动 `pnpm publish`，见 `.github/workflows/release.yml`）。npm 安装形态（适合想自行组装 profile 的用户）：
 
 ```bash
-pnpm add @dsh-plugin/git @dsh-plugin/client-ui-git   # 在 profile 目录内
+pnpm add dsh-gitkit dsh-gitkit-ui   # 在 profile 目录内
 ```
 
 随后需在 profile 的 `cordis.patch.yml` 自行追加两行 insert（内容即 `git-bundle/cordis.patch.yml`）。

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C4 GitCommitDialog 纯视图模型（④-K 提交对话框模块
+ * dsh-gitkit-ui — C4 GitCommitDialog 纯视图模型（④-K 提交对话框模块
  * ask §①；spec §3.1 GitCommitDialog 行的字段全表）。
  *
  * 渲染决策全部收敛为纯函数（组件只做 t/订阅/事件——spec §6 纯函数单测纪律，与
@@ -13,7 +13,7 @@
  * C 级行 + 本模块 C 级登记行；非阻断，只提示不拦截，[清单 17]）。
  */
 
-import type { CommitOptions, FileChange, GitIdentityResult, GitStatusSnapshot, PushOptions } from '@dsh-plugin/git/types'
+import type { CommitOptions, FileChange, GitIdentityResult, GitStatusSnapshot, PushOptions } from 'dsh-gitkit/types'
 import type { HeadCommitInfo } from './commit-dialog-face.js'
 
 /**

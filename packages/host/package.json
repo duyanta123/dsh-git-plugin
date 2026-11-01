@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-plugin/git",
+  "name": "dsh-gitkit",
   "version": "0.1.1",
   "description": "dsh Git 插件 host 半（node 侧 RPC 服务：status/diff/stage/commit/push/log/...）；接口权威 = research/capability-spec.md §①",
   "type": "module",

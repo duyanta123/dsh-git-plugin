@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交图 tab 的槽位 UI 状态 store（本模块 ask §④；spec
+ * dsh-gitkit-ui — 提交图 tab 的槽位 UI 状态 store（本模块 ask §④；spec
  * §3.2 C3 的 GraphTabState/GraphTabActions 原样落地）。
  *
  * **范式 B**：`defineStore` draft mutator（map §3.4 槽位 UI 状态；changes-tab-store

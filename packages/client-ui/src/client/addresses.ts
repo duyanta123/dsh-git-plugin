@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 右栏 tab 资源地址（本模块 ask §①；spec §3.1）。
+ * dsh-gitkit-ui — 右栏 tab 资源地址（本模块 ask §①；spec §3.1）。
  *
  * **变更审查 tab = 会话域地址**：`dsh-resource://git-changes/session/{sessionId}`——
  * 铸造与严格解析照 ui-deliverables changes.ts:143-165 范本（changesReviewAddress /

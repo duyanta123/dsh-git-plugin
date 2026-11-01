@@ -25,7 +25,7 @@
  */
 
 /**
- * @dsh-plugin/git — 远端同步引擎（spec §1.5 push / §1.6 pull·fetch；[清单 25/26/67]；
+ * dsh-gitkit — 远端同步引擎（spec §1.5 push / §1.6 pull·fetch；[清单 25/26/67]；
  * 权限 push/pull C、fetch B）。执行一律走 network runner 实例（WRITE_PREFIX +
  * networkTimeoutMs，spec §1.0.2/§1.9）；守卫与预检走 readonly runner + StatusEngine
  * fresh 扫描（绕 TTL 缓存——Tier C 动作用此刻的世界，MutationEngine 同款纪律）。

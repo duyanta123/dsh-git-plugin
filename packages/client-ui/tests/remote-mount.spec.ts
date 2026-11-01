@@ -1,12 +1,12 @@
 /**
  * remote/mount 适配层单测（spec §3.2 RPC 注入口的生产半）：
  * $mount 接线、ready 门（挂载完成前调用等待）、错误折叠（gateway/service-unavailable）。
- * 生成产物 `@dsh-plugin/git/remote` 的运行期面以最小假体注入（bundle 构建产物含真实
+ * 生成产物 `dsh-gitkit/remote` 的运行期面以最小假体注入（bundle 构建产物含真实
  * 生成物，verify:load 在真宿主断言）。
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { GitStatusFrame, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitStatusFrame, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import { GATEWAY_UNAVAILABLE, createGitRpcClient, mountGitRemote } from '../src/client/remote/mount.ts'
 
@@ -28,12 +28,12 @@ function fakeRemote(recorder: MountRecorder, git: Record<string, unknown> | null
 }
 
 describe('mountGitRemote — 挂 ④-A 生成产物', () => {
-  it('$mount 收到生成贡献（package 字段 = @dsh-plugin/git）', async () => {
+  it('$mount 收到生成贡献（package 字段 = dsh-gitkit）', async () => {
     const recorder: MountRecorder = { mounted: [], calls: 0 }
     const disposer = await mountGitRemote({ remote: fakeRemote(recorder, null) })
     expect(recorder.calls).toBe(1)
     const contribution = recorder.mounted[0] as { package?: string }
-    expect(contribution?.package).toBe('@dsh-plugin/git')
+    expect(contribution?.package).toBe('dsh-gitkit')
     await disposer()
   })
 })

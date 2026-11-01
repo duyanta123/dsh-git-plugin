@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — FileDiffView：单文件 diff 渲染（本模块 ask §④；
+ * dsh-gitkit-ui — FileDiffView：单文件 diff 渲染（本模块 ask §④；
  * C2 变更审查 tab 与 C3 提交图 tab 共用）。
  *
  * 输入 = host `DiffFile`（patch 为 unified diff 文本）。渲染链：parsePatch →
@@ -18,7 +18,7 @@ import type { ReactNode } from 'react'
 import { languageForPath, useCodeHighlighter } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { HighlightSpan } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { DiffFile } from '@dsh-plugin/git/types'
+import type { DiffFile } from 'dsh-gitkit/types'
 import {
   MAX_RENDERED_LINES, hunkHeader, hunkRows, markConflictRows, parsePatch, renderedHunks,
 } from '../diff/patch-hunks.js'

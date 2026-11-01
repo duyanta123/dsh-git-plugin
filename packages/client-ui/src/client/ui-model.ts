@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — UI 纯视图模型（tests/ui-model.spec 的被测面）。
+ * dsh-gitkit-ui — UI 纯视图模型（tests/ui-model.spec 的被测面）。
  *
  * C1 GitHeaderButton 的渲染决策全部收敛为纯函数（组件只做 t/订阅/事件）——
  * spec §6 的纯函数单测纪律：分支名/角标/detached/unborn/禁用态不依赖 DOM 即可断言。

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 变更面板数据缓存 store（本模块 ask §⑤；spec §3.2 C2）。
+ * dsh-gitkit-ui — 变更面板数据缓存 store（本模块 ask §⑤；spec §3.2 C2）。
  *
  * **范式 A**：裸 `createSnapshotStore` observable，工厂函数（模块级句柄禁止——
  * map §3.4；ui-deliverables HostReadStore 的 generation/reset 语义同构）。root 作用域
@@ -21,7 +21,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type {
   DiffFile, DiffResult, DiffScope, DiscardOptions, DiscardResult, StageResult, UnstageResult,
-} from '@dsh-plugin/git/types'
+} from 'dsh-gitkit/types'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
 import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
 import type { GitStatusSource } from './git-status-source.js'

@@ -1,8 +1,8 @@
 /**
- * @dsh-plugin/client-ui-git — 域错误码 → 文案/动作表（本模块 ask §④；spec §3.4）。
+ * dsh-gitkit-ui — 域错误码 → 文案/动作表（本模块 ask §④；spec §3.4）。
  *
  * **Record 穷尽约束**：`ERROR_MAP` 的键域 = `GitErrorCode`（host 包
- * `@dsh-plugin/git/errors`（types-only 导出，lib/error-codes.d.ts）里 declare module
+ * `dsh-gitkit/errors`（types-only 导出，lib/error-codes.d.ts）里 declare module
  * 合并进 `RemoteErrorDetailsMap` 的 `git/*` 子集）——host 侧新增/删减域码时本文件
  * 编译期即报错，词典与映射不漏项。client 只 `import type`（编译期擦除，bundle 零
  * runtime 依赖 host 包——map §1.2 的 feature 插件值依赖红线）。
@@ -15,7 +15,7 @@
  * map §2.4）。
  */
 
-import type {} from '@dsh-plugin/git/errors'
+import type {} from 'dsh-gitkit/errors'
 import type { RemoteErrorCode } from '@deepseek-ai/dsh-typert-protocol'
 import type { GitLocaleKey } from './locales.js'
 import { redact } from './m13/redact.js'

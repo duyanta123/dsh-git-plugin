@@ -50,7 +50,7 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: link:D:/DeepSeekHarness/packages/client/ui-slots
         version: link:../../../../DeepSeekHarness/packages/client/ui-slots
-      '@dsh-plugin/git':
+      'dsh-gitkit':
         specifier: workspace:*
         version: link:../host
       '@tanstack/react-virtual':

@@ -5,7 +5,7 @@
 > 工作流通用约定提到的 PORTING.md 自 ⑤ status 引擎模块（2026-10-31）起建立于本目录
 > （A/B/C 级定义与本模块登记行）；历史登记仍以本文件 §2 为准，两表互为镜像索引。
 > **当前状态（v0.1.0 发布定稿，2026-11-01）**：v1 全部模块（④-A–④-L）落地并过门禁；
-> 新增 `git-bundle/`（`@dsh-plugin/git-bundle` 单一 file: 安装薄包，见 §7）；
+> 新增 `git-bundle/`（`dsh-gitkit-bundle` 单一 file: 安装薄包，见 §7）；
 > 本项目许可自 MIT 改定为 Apache-2.0（发布 ask 决议，见 §4 与 THIRD_PARTY_NOTICES.md §1）。
 > 此前状态（F7 提交图全链模块后）：host `graph.ts`（log/refs/getCommitDetail，ZCode A 级 + GitLens C 级对照）与 client `graph/lane-layout.ts`（自研 G1–G5）+ `graph/graph-svg.tsx` + `graph-view-model.ts` + `store/git-graph-store.ts`/`graph-tab-store.ts` + `components/git-graph-tab.tsx`/`commit-detail-panel.tsx` 已落地；此前状态（F 变更面板模块后）：git-runner（四实例扩展）/ status-parser（v2 终态 +
 > v1 回退 + numstat）/ status（编排引擎）/ diff（diff 引擎）/ watcher（三目标 watch + 防抖 +
@@ -82,11 +82,11 @@
 - 除 §2 登记行外，代码为原创；`lib/typert.*.js` 为 typert-generator 生成物（自带 Generated-by 头），不属人工移植登记范围。
 - 依赖项许可随各包自身声明；`packages/typert-protocol/` 是 §2 登记的 dsh MIT 再分发副本。
 
-## 7. `@dsh-plugin/git-bundle`（发布薄包，v0.1.0 新增）
+## 7. `dsh-gitkit-bundle`（发布薄包，v0.1.0 新增）
 
 - 落点 `git-bundle/`（workspace `packages/*` 之外——发布产物，不入 workspace 拓扑）：**零代码**薄包——只有 `package.json`（`dsh.bundle.patch` 指向自带
-  `cordis.patch.yml`）、`cordis.patch.yml`（insert 两行：`dsh-plugin-git` → `@dsh-plugin/git`、
-  `dsh-plugin-client-ui-git` → `@dsh-plugin/client-ui-git`）与三件套副本；无 src/lib。
+  `cordis.patch.yml`）、`cordis.patch.yml`（insert 两行：`dsh-plugin-git` → `dsh-gitkit`、
+  `dsh-plugin-client-ui-git` → `dsh-gitkit-ui`）与三件套副本；无 src/lib。
 - 作用：`dsh plugin --profile <p> add file:<repo>/packages/git-bundle` 一次安装即把 host/client
   两包经 `file:` 依赖带入 profile（宿主 profile 用 `nodeLinker: hoisted`，`app-boot/src/profile.ts`
   `PROFILE_PNPM_WORKSPACE`），reconcile 按 git-bundle 的 `dsh.bundle` 把两行 insert 追加进

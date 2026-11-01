@@ -15,7 +15,7 @@
  */
 
 /**
- * @dsh-plugin/git — 写操作引擎（spec §1.3 [清单 9/12]；权限 stage/unstage B、discard C）。
+ * dsh-gitkit — 写操作引擎（spec §1.3 [清单 9/12]；权限 stage/unstage B、discard C）。
  *
  * 命令一律走 write runner 实例（WRITE_PREFIX：仅 safe.bareRepository——无
  * --no-optional-locks / hooksPath 禁用，保留正常锁；spec §1.0.7），超时 fastTimeoutMs

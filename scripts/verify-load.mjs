@@ -154,7 +154,7 @@ async function main() {
   assert(existsSync(hostLib), `host lib missing: ${hostLib} — run \`pnpm build\` first`)
   assert(existsSync(hostTypert), `generated host typert artifact missing: ${hostTypert} — run \`pnpm build\` first`)
   assert(existsSync(hostRemoteClient), `generated remote-client artifact missing: ${hostRemoteClient} — run \`pnpm build\` first`)
-  assert(readFileSync(hostPatch, 'utf8').includes("name: '@dsh-plugin/git'"), 'host cordis.patch.yml mismatch')
+  assert(readFileSync(hostPatch, 'utf8').includes("name: 'dsh-gitkit'"), 'host cordis.patch.yml mismatch')
   step(`dsh tree: ${DSH_TREE}; repo: ${REPO}`)
 
   // status/commit 往返夹具：临时真仓库 + 本地身份 + 一笔种子提交（M11 全断言：
@@ -181,7 +181,7 @@ async function main() {
   let hostOutput = ''
   try {
     // ── 1. 通道 A 安装（runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）──
-    for (const [label, dir] of [['host @dsh-plugin/git', hostPkgDir], ['client @dsh-plugin/client-ui-git', clientPkg]]) {
+    for (const [label, dir] of [['host dsh-gitkit', hostPkgDir], ['client dsh-gitkit-ui', clientPkg]]) {
       step(`installing ${label}: dsh plugin --profile ${PROFILE} add file:${dir.replaceAll('\\', '/')}`)
       const spec = `file:${dir.replaceAll('\\', '/')}`
       const install = await run(cli, [...cliArgs, 'plugin', '--profile', PROFILE, 'add', spec], {
@@ -192,8 +192,8 @@ async function main() {
     }
     const profilePackageJson = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
     const deps = profilePackageJson.dependencies ?? {}
-    assert(deps['@dsh-plugin/git'] !== undefined, `profile dependencies missing @dsh-plugin/git: ${JSON.stringify(deps)}`)
-    assert(deps['@dsh-plugin/client-ui-git'] !== undefined, `profile dependencies missing @dsh-plugin/client-ui-git: ${JSON.stringify(deps)}`)
+    assert(deps['dsh-gitkit'] !== undefined, `profile dependencies missing dsh-gitkit: ${JSON.stringify(deps)}`)
+    assert(deps['dsh-gitkit-ui'] !== undefined, `profile dependencies missing dsh-gitkit-ui: ${JSON.stringify(deps)}`)
     // dsh plugin add 的 init 只给 DEFAULT_PROFILE_BUNDLES = [dsh-base]
     // （packages/util/official-bundles/src/bundles.ts:43-44 实读）；web 宿主需要 shipped
     // web 模板的 [dsh-base, dsh-web-app]（bundles.ts:18-21）。profile manifest 是用户层文件
@@ -282,11 +282,11 @@ async function main() {
     const indexHtml = await indexResponse.text()
     const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__')
     const entries = boot.entries ?? []
-    const clientEntry = entries.find((entry) => entry.id === '@dsh-plugin/client-ui-git')
+    const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit-ui')
     assert(clientEntry !== undefined,
-      `boot graph has no entry '@dsh-plugin/client-ui-git'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
-    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('@dsh-plugin/git'),
-      `client entry inject edges missing '@dsh-plugin/git': ${JSON.stringify(clientEntry.inject)}`)
+      `boot graph has no entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
+    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('dsh-gitkit'),
+      `client entry inject edges missing 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
     step(`boot graph: client entry present (rev ${clientEntry.rev}), inject edges: ${JSON.stringify(clientEntry.inject)}`)
     const bundleResponse = await fetch(new URL(clientEntry.url, base.origin), { headers: { cookie: browserCookie } })
     assert(bundleResponse.status === 200, `client bundle fetch ${clientEntry.url} → ${bundleResponse.status}`)
@@ -296,7 +296,7 @@ async function main() {
     // 生成产物内联判据（remote 地基模块）：client 半挂的是 typert-generator 生成的
     // 描述符（生成物里 package 字段与 `"git/<method>"` 方法键分立，id 由
     // createTypertRemoteInfo 在运行时以 `${package}#${endpoint}` 拼出）。
-    assert(bundleBody.includes('"@dsh-plugin/git"'), 'client bundle lacks the generated remote package field')
+    assert(bundleBody.includes('"dsh-gitkit"'), 'client bundle lacks the generated remote package field')
     assert(bundleBody.includes('"git/ping"'), 'client bundle lacks the generated git/ping method descriptor')
     assert(bundleBody.includes('"git/identity"'), 'client bundle lacks the generated git/identity method descriptor')
     // client 地基模块断言：装配骨架 + 状态源数据面 + 词典。

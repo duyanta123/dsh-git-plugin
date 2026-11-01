@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交图纯视图模型（本模块 ask §③/④；spec §6 纯函数
+ * dsh-gitkit-ui — 提交图纯视图模型（本模块 ask §③/④；spec §6 纯函数
  * 单测纪律——行 chips 合成与详情装配不依赖 DOM 即可断言；ui-model.ts 同款收敛）。
  *
  * 行 ref chips 的 'HEAD -> main' 形态在此合成（spec §3.3.1：「HEAD→分支用
@@ -8,7 +8,7 @@
  * ⇒ 前置 `HEAD` chip。
  */
 
-import type { CommitDetail, DiffFile } from '@dsh-plugin/git/types'
+import type { CommitDetail, DiffFile } from 'dsh-gitkit/types'
 
 /** 行 ref chip 的输入投影（GraphRowLayout 的 isHead/refs 切片）。 */
 export interface RowChipSource {

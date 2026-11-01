@@ -8,7 +8,7 @@
 > - `docs/prior-session-conclusions.md`（六条改进意见 `:15-30`；F7 提交图可行性与复用边界 `:46-64`）（下称【前次】）
 > - `docs/ported-sources/SOURCES.md`（移植源登记与许可，下称【SRC】，引用格式 `SOURCES.md:行号`）
 >
-> **用户决议（本 spec 的硬前提）**：host 包名 `@dsh-plugin/git`，client 包名 `@dsh-plugin/client-ui-git`，**pnpm workspace 双包**，本地发布就绪（`file:`/`link:` 安装 + npm publish 均可直接进行）。
+> **用户决议（本 spec 的硬前提）**：host 包名 `dsh-gitkit`，client 包名 `dsh-gitkit-ui`，**pnpm workspace 双包**，本地发布就绪（`file:`/`link:` 安装 + npm publish 均可直接进行）。
 >
 > **修订记录**：v1.1（2026-10-30）按评审修订六项阻断问题——B1 untracked diff 命令修正 + exit 1 白名单（本机实测 exit 129/1）；B2 client 包预留 remote-client 产物位并写明两种 spike 结局；B3 push 改显式 refspec（裸 `git push` 在 `push.default=matching` 下实测一次推多分支）；B4 status 摘除 `git diff --check` 步（冲突标记展示移交 FileDiffView）；B5 watcher `ignored` 改函数谓词（chokidar@5 内置 matcher 对字符串做整串相等比较，实读其 dist 证实）；B6 refs 取 peeled oid（annotated tag 实测 `objectname`≠`*objectname`）。
 >
@@ -64,7 +64,7 @@
 
 ### 0.2 决议记录
 
-1. **双包**（用户决议）：`@dsh-plugin/git`（host）+ `@dsh-plugin/client-ui-git`（client）。与【map】§1.2 的"单包双导出"建议（`host-capability-map.md:33-39`）不同——用户已定，按双包执行。后果：
+1. **双包**（用户决议）：`dsh-gitkit`（host）+ `dsh-gitkit-ui`（client）。与【map】§1.2 的"单包双导出"建议（`host-capability-map.md:33-39`）不同——用户已定，按双包执行。后果：
    - 线路类型放 host 包 `src/types.ts`，经 `exports["./types"]` 暴露；client **只 `import type`**（编译期擦除，不构成 runtime-import，不违反"feature 插件禁止 runtime-import 另一 feature 插件的值"，`host-capability-map.md:37`）。**边界澄清（B2）**：type-only 擦除只解决"对 host 包的值依赖"；client 运行期调用 RPC 还需要**自己包的 strict 描述符产物**（输入/输出 codec——client 只认 strict，`requireStrictInputs`，`host-capability-map.md:149`），该产物位与两种 spike 结局见 §7 与 §0.4-1；
    - 两个包各自携带 `cordis.patch.yml`（各插一行 `insert`），经 `dsh plugin add` 安装时由 reconcile 自动追加进 `dsh.profile.bundles`（`host-capability-map.md:107`）；
    - client 包需要最小 node 入口（Loader 按 `name` 导入 main，`host-capability-map.md:89`），apply 主体在 `./client` 导出。
@@ -102,7 +102,7 @@
 #### 1.0.1 服务骨架
 
 ```ts
-// @dsh-plugin/git src/index.ts —— 形态依据【map】§2.1（host-capability-map.md:124-144）
+// dsh-gitkit src/index.ts —— 形态依据【map】§2.1（host-capability-map.md:124-144）
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol' // 包名待核实（§0.4-2）
 import z from '@deepseek-ai/schemastery'
@@ -136,7 +136,7 @@ export default class GitService extends TypertRemoteService {
 #### 1.0.2 Host Config（schemastery；client 半 Config 不生效——`host-capability-map.md:114`，所以全部运行期配置在 host）
 
 ```ts
-// @dsh-plugin/git src/types.ts
+// dsh-gitkit src/types.ts
 export interface GitPluginConfig {
   /** 仓库根。空串 = 自动发现：对宿主进程 cwd 跑 `rev-parse --show-toplevel`（【map】§4.1 禁用 locateGitWorkspace，host-capability-map.md:287） */
   repoRoot: string
@@ -190,7 +190,7 @@ export const GitConfigSchema: z<GitPluginConfig> = z.object({
 
 默认值合并发生在 schema 校验时（`host-capability-map.md:113`）。v1 不用 `.volatile()`（config 变更走 fiber 重载即可，`host-capability-map.md:187`）。
 
-#### 1.0.3 共享线路类型（`@dsh-plugin/git` `src/types.ts` 全量；client 仅 `import type`）
+#### 1.0.3 共享线路类型（`dsh-gitkit` `src/types.ts` 全量；client 仅 `import type`）
 
 序列化边界硬规则（【map】§2.3，`host-capability-map.md:154-167`）：**RPC 出入参只允许 null/string/boolean/有限 number/plain object/array**；`Date` 出参自动转 ISO（所以类型里直接写 ISO string）；**出参禁 `Map`/`Set`**（静默拷成 `{}` 丢数据，`host-capability-map.md:162`）；入参可选字段由调用方**省略**而非传显式 `undefined`（`host-capability-map.md:158`）；strict codec 会丢弃编译类型未声明的对象字段（`host-capability-map.md:158`）。二进制不走 RPC 体（Uint8Array 会摘成 attachments，本插件不用，diff 一律文本/占位）。
 
@@ -747,8 +747,8 @@ export interface GraphTabActions {
 #### 3.3.1 lane 布局纯函数（可快照单测；算法教材 = pvigier 博客，SOURCES.md:140；GitLens MIT 区只提供数据层类型与契约——MIT 区无 lane 实现，`SOURCES.md:112-118`）
 
 ```ts
-// @dsh-plugin/client-ui-git src/client/graph/computeGraphLayout.ts（纯函数，~200–400 行，不依赖 React/DOM）
-import type { CommitInfo, RefInfo } from '@dsh-plugin/git/types'   // 仅 type
+// dsh-gitkit-ui src/client/graph/computeGraphLayout.ts（纯函数，~200–400 行，不依赖 React/DOM）
+import type { CommitInfo, RefInfo } from 'dsh-gitkit/types'   // 仅 type
 
 export interface GraphLayoutInput {
   commits: readonly CommitInfo[]   // children-first（git log --topo-order 输出序）；函数内部按 committedAt
@@ -917,9 +917,9 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
 ├── tsconfig.base.json
 ├── LICENSE  NOTICE.md  THIRD_PARTY_NOTICES.md   # §5；两包 files 里再含一份（npm 发布合规）
 ├── packages/
-│   ├── git/                             # @dsh-plugin/git —— host（node 半）
+│   ├── git/                             # dsh-gitkit —— host（node 半）
 │   │   ├── package.json                 # 见下
-│   │   ├── cordis.patch.yml             # - insert: [{ id: 'dsh-plugin-git', name: '@dsh-plugin/git' }]
+│   │   ├── cordis.patch.yml             # - insert: [{ id: 'dsh-plugin-git', name: 'dsh-gitkit' }]
 │   │   ├── tsdown.config.ts             # 自写（树外不能 import dsh 的预设，host-capability-map.md:77）
 │   │   ├── locale/en.json  locale/zh.json
 │   │   ├── src/
@@ -939,9 +939,9 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
 │   │   │   └── watcher.ts               # chokidar@5 递归 + 防抖 + 轮询兜底（§2.3）
 │   │   ├── lib/                         # 构建产物（gitignore）
 │   │   └── tests/                       # host 侧 7 个 spec + support.ts + fixtures/
-│   └── client-ui-git/                   # @dsh-plugin/client-ui-git —— client（web 面）
+│   └── client-ui-git/                   # dsh-gitkit-ui —— client（web 面）
 │       ├── package.json                 # 见下
-│       ├── cordis.patch.yml             # - insert: [{ id: 'dsh-plugin-client-ui-git', name: '@dsh-plugin/client-ui-git' }]
+│       ├── cordis.patch.yml             # - insert: [{ id: 'dsh-plugin-client-ui-git', name: 'dsh-gitkit-ui' }]
 │       ├── tsdown.client.config.ts      # 闭包工厂格式：window.__ModuleLoader__.load({id, factory})，external 经注入 require（host-capability-map.md:77）
 │       ├── src/typert.ts                # client 半 strict 描述符源（typert-generator 输入；结局 A 才生成产物，见 §0.4-1）
 │       ├── src/
@@ -972,7 +972,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
 
 ```jsonc
 {
-  "name": "@dsh-plugin/git",
+  "name": "dsh-gitkit",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -1003,7 +1003,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
 
 ```jsonc
 {
-  "name": "@dsh-plugin/client-ui-git",
+  "name": "dsh-gitkit-ui",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -1019,7 +1019,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
       "platform": "web",                             // 恒 web（host-capability-map.md:66）
-      "inject": ["@dsh-plugin/git", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-sidebar-right",
+      "inject": ["dsh-gitkit", "@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-sidebar-right",
                   "@deepseek-ai/dsh-client-ui-primitives", "@deepseek-ai/dsh-client-locale",
                   "@deepseek-ai/dsh-client-store"]   // 信息性（预检/HMR），不决定激活顺序（host-capability-map.md:248）
     }
@@ -1033,7 +1033,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
     "@deepseek-ai/dsh-client-ui-primitives": "<真实 range>",
     "@deepseek-ai/dsh-client-locale": "<真实 range>",
     "@deepseek-ai/dsh-client-store": "<真实 range>",
-    "@dsh-plugin/git": "workspace:*"                 // 仅 import type；构建产物零 runtime 依赖
+    "dsh-gitkit": "workspace:*"                 // 仅 import type；构建产物零 runtime 依赖
   }
 }
 ```

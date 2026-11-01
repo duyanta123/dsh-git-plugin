@@ -20,7 +20,7 @@
  */
 
 /**
- * @dsh-plugin/git — 提交图数据层引擎（spec §1.8 [清单 31/32/33] + workflow M8 任务口径）。
+ * dsh-gitkit — 提交图数据层引擎（spec §1.8 [清单 31/32/33] + workflow M8 任务口径）。
  *
  * 三个只读 RPC 的引擎半（权限 A、fastTimeoutMs、幂等、host 无缓存——spec §1.9
  * log/refs/show 行无失效列，缓存语义由 client store 承担）：

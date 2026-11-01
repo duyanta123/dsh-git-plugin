@@ -12,7 +12,7 @@
  */
 
 /**
- * @dsh-plugin/git — 工作区解析（session → cwd）。
+ * dsh-gitkit — 工作区解析（session → cwd）。
  *
  * 解析服务面（§⑧-1 核实结论，dsh 树 workspace-changes 实读）：宿主把"当前目录"
  * 挂在会话头上——`session.header.cwd`（可 undefined），且子代理会话与被委托回合

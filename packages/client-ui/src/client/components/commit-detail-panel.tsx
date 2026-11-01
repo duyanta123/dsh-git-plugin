@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 提交详情面板（本模块 ask §④；spec §3.1/§3.3
+ * dsh-gitkit-ui — 提交详情面板（本模块 ask §④；spec §3.1/§3.3
  * [清单 32/33]「点击提交行 → 行内详情 → 文件点击 → FileDiffView」）。
  *
  * 数据流：选中行（graph-tab-store.select）→ GitGraphTab 调 inject 面

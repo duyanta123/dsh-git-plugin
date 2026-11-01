@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C2 ChangeCard：单文件变更卡片（本模块 ask §③）。
+ * dsh-gitkit-ui — C2 ChangeCard：单文件变更卡片（本模块 ask §③）。
  *
  * **结构对照 ZCode GitPaneChangeCard**（research/ported-sources/zcode/packages/ui/src
  * /GitPaneChangeCard.tsx，Apache-2.0——PORTING.md B 级登记）：行按钮（文件名区 +

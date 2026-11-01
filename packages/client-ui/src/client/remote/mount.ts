@@ -1,7 +1,7 @@
 /**
- * @dsh-plugin/client-ui-git — remote 命名空间挂载与 RPC 面（spec §3.1/§3.2）。
+ * dsh-gitkit-ui — remote 命名空间挂载与 RPC 面（spec §3.1/§3.2）。
  *
- * 挂载对象 = ④-A 的 typert-generator 生成产物 `@dsh-plugin/git/remote`
+ * 挂载对象 = ④-A 的 typert-generator 生成产物 `dsh-gitkit/remote`
  * （TypertRemoteInfo：package + descriptors + strict codec；勿手编）。挂载机制 =
  * gateway client 的 `ctx.remote.$mount(contribution)`（packages/api/gateway/src/client
  * /index.ts:210-222 实读——$mount 在调用方 fiber 的 effect 内注册 contribution，
@@ -30,14 +30,14 @@
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
-import gitRemote from '@dsh-plugin/git/remote'
+import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope, DiscardOptions, DiscardResult,
   FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult,
   GitIdentityScope, GitPingResult, GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult,
   PushOptions, PushResult, RefsSnapshot, ShowOptions, StageResult, UnstageResult,
-} from '@dsh-plugin/git/types'
+} from 'dsh-gitkit/types'
 
 /**
  * 挂载前可用的最小 remote 服务结构。生产 = cordis Context 的 `ctx.remote`

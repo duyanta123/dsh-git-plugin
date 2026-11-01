@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — client 半（web 面）装配骨架（spec §3.1 组件清单与插槽映射）。
+ * dsh-gitkit-ui — client 半（web 面）装配骨架（spec §3.1 组件清单与插槽映射）。
  *
  * 注册形态照 research/host-capability-map.md §3.2/§3.3 + dsh 树 HEAD ce7073d512
  * 实读的活例：

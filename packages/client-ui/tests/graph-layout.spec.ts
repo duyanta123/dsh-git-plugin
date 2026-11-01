@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { CommitInfo, RefInfo } from '@dsh-plugin/git/types'
+import type { CommitInfo, RefInfo } from 'dsh-gitkit/types'
 import { computeGraphLayout } from '../src/client/graph/lane-layout.ts'
 import type { GraphLayoutResult } from '../src/client/graph/lane-layout.ts'
 

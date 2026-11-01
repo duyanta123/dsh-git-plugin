@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 工作区状态源（spec §3.2 范式 A + 本模块 ask §②）。
+ * dsh-gitkit-ui — 工作区状态源（spec §3.2 范式 A + 本模块 ask §②）。
  *
  * 数据缓存用裸 observable：`createSnapshotStore`（@deepseek-ai/dsh-client-store 引擎，
  * zustand vanilla + immer —— map §3.4 范式 A，ui-deliverables HostReadStore 同构），
@@ -27,7 +27,7 @@
 
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { GitErrorLike, GitRpcFace, GitStreamHandle } from '../remote/mount.js'
 import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
 

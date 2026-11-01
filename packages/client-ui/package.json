@@ -1,5 +1,5 @@
 {
-  "name": "@dsh-plugin/client-ui-git",
+  "name": "dsh-gitkit-ui",
   "version": "0.1.1",
   "description": "dsh Git 插件 client 半（web 面：header 入口 / 变更审查 tab / 提交图 tab）；接口权威 = research/capability-spec.md §③",
   "type": "module",
@@ -30,7 +30,7 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@dsh-plugin/git",
+        "dsh-gitkit",
         "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-sidebar-right",
         "@deepseek-ai/dsh-client-ui-primitives",
@@ -51,7 +51,7 @@
     "@deepseek-ai/dsh-client-ui-renderer": "link:D:/DeepSeekHarness/packages/client/ui-renderer",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "link:D:/DeepSeekHarness/packages/client/ui-sidebar-right",
     "@deepseek-ai/dsh-client-ui-slots": "link:D:/DeepSeekHarness/packages/client/ui-slots",
-    "@dsh-plugin/git": "workspace:*",
+    "dsh-gitkit": "workspace:*",
     "@tanstack/react-virtual": "3.14.10",
     "@types/react": "^18.2.0",
     "@types/react-dom": "18.2.0",

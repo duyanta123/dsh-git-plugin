@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — client bundle 构建（闭包工厂产物）。
+ * dsh-gitkit-ui — client bundle 构建（闭包工厂产物）。
  *
  * 产物协议（实读 dsh 树两份样板）：
  *   - `packages/extensions/ui-cordis/lib/client.js`（tsdown 预设产物头部/尾部形状）；
@@ -23,7 +23,7 @@ const pkgDir = join(here, '..', 'packages', 'client-ui')
 const { rolldown } = createRequire(join(pkgDir, 'package.json'))('rolldown')
 const input = join(pkgDir, 'src', 'client', 'index.ts')
 const outFile = join(pkgDir, 'lib', 'client.js')
-const PACKAGE_ID = '@dsh-plugin/client-ui-git'
+const PACKAGE_ID = 'dsh-gitkit-ui'
 
 /** dsh 基线 externals（packages/client/web/src/platform.ts:8-15）：经注入 require 解析，不打进 bundle。 */
 const EXTERNALS = [
@@ -92,13 +92,13 @@ if (bundlePkg === null || bundlePatchRaw === null) {
   throw new Error('git-bundle thin package missing: expected git-bundle/package.json + cordis.patch.yml at the repo root')
 }
 const bundleManifest = JSON.parse(bundlePkg)
-if (bundleManifest.name !== '@dsh-plugin/git-bundle') throw new Error(`git-bundle manifest name mismatch: ${bundleManifest.name}`)
+if (bundleManifest.name !== 'dsh-gitkit-bundle') throw new Error(`git-bundle manifest name mismatch: ${bundleManifest.name}`)
 if (bundleManifest.version !== JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8')).version) {
   throw new Error('git-bundle version drifted from the repo root version')
 }
 if (bundleManifest.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('git-bundle manifest lacks dsh.bundle.patch: ./cordis.patch.yml')
-if (bundleManifest.dependencies?.['@dsh-plugin/git'] !== 'file:../packages/host'
-  || bundleManifest.dependencies?.['@dsh-plugin/client-ui-git'] !== 'file:../packages/client-ui') {
+if (bundleManifest.dependencies?.['dsh-gitkit'] !== 'file:../packages/host'
+  || bundleManifest.dependencies?.['dsh-gitkit-ui'] !== 'file:../packages/client-ui') {
   throw new Error(`git-bundle dependencies must be the two file: package specs, got ${JSON.stringify(bundleManifest.dependencies)}`)
 }
 for (const [id, name] of [['dsh-plugin-git', hostName], ['dsh-plugin-client-ui-git', clientName]]) {

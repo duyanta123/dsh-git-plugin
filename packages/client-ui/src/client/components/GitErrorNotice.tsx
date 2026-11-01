@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C6 GitErrorNotice（spec §3.4 [清单 49/54]）。
+ * dsh-gitkit-ui — C6 GitErrorNotice（spec §3.4 [清单 49/54]）。
  *
  * `code` → error-map 条目 → 词典文案（`{name}` 插值吃 details）；`error.message` 与
  * `details.stderr` 过 M13 redact 后折叠进 `<details>`（stderr 原样展示的口径 =

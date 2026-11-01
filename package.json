@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "dsh Git 插件 monorepo v0.1.0（@dsh-plugin/git host + @dsh-plugin/client-ui-git client + @dsh-plugin/git-bundle 发布薄包），接口权威见 docs/capability-spec.md",
+  "description": "dsh Git 插件 monorepo v0.1.0（dsh-gitkit host + dsh-gitkit-ui client + dsh-gitkit-bundle 发布薄包），接口权威见 docs/capability-spec.md",
   "scripts": {
     "typecheck": "pnpm run build:host && tsc -p tsconfig.json && tsc -p packages/host/tsconfig.json && tsc -p packages/client-ui/tsconfig.json",
     "build": "pnpm run build:host && node scripts/build-client.mjs",

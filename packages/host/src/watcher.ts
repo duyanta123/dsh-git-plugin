@@ -25,7 +25,7 @@
  */
 
 /**
- * @dsh-plugin/git — 状态监听与流式广播引擎（spec §2.3 host 侧刷新契约的 v1 落地面）。
+ * dsh-gitkit — 状态监听与流式广播引擎（spec §2.3 host 侧刷新契约的 v1 落地面）。
  *
  * 事件广播不可用（spec §2.1：API_REMOTE_FORWARDED_EVENTS 静态收口无 git/*），v1 的
  * 「推送」落为 `followStatus` 流方法（typert stream 模式）：client 打开一条逻辑流，

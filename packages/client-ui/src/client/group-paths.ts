@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — 变更列表的目录分组纯函数（本模块 ask §②；[清单 4]
+ * dsh-gitkit-ui — 变更列表的目录分组纯函数（本模块 ask §②；[清单 4]
  * 「文件/目录树分组」）。GitChangesTab 对每个变更组（staged/changes/untracked/…）
  * 的路径清单调 {@link groupPaths} 得到树节点，目录节点可折叠（展开态在 tab store
  * 的 expandedDirs，键 = 组 id + 目录路径）。纯函数：无 IO、无全局态、同输入同输出

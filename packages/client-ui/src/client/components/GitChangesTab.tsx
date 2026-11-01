@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C2 GitChangesTab：变更审查 tab body（本模块 ask §②/⑥；
+ * dsh-gitkit-ui — C2 GitChangesTab：变更审查 tab body（本模块 ask §②/⑥；
  * spec §3.1 [清单 1/2/3/4/9/12/59]）。
  *
  * 注册于 keyed `sidebar.right.pane.tab`（key = 'dsh-plugin.git.changes'——两段注册

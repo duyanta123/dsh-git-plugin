@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/git — host 半构建（tsdown + typertPlugin）。
+ * dsh-gitkit — host 半构建（tsdown + typertPlugin）。
  *
  * 照 dsh 树内范本：根 tsdown.config.ts 对 host 构建统一挂 generator 的插件面
  * （实读 dsh 树 HEAD ce7073d512：`packages/typert/generator/src/tsdown-plugin.ts:97-155`
@@ -12,7 +12,7 @@
  *     自动 import 并注册进 ctx.typert（loader/src/index.ts:41 TYPERT_HOST_EXPORT、
  *     :411 动态 import；§⑧-2 动态安装链路的 host 半）。
  *   - typert.remote-client.js / typert.remote-client.d.ts —— client 面 codec 贡献，
- *     client 包经 `@dsh-plugin/git/remote` 引入并 `ctx.remote.$mount`（对照 dsh
+ *     client 包经 `dsh-gitkit/remote` 引入并 `ctx.remote.$mount`（对照 dsh
  *     api-remotes/client 的静态挂载形态：`import llmRemote from '@deepseek-ai/dsh-llm/remote'`）。
  *   - index.js / types.js —— 本包 lib（ESM bundle；npm 依赖按 tsdown 默认外置，
  *     运行时由 profile node_modules 解析）。

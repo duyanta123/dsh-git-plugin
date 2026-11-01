@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — GitGraphTab：提交图 tab body（本模块 ask §③/④；
+ * dsh-gitkit-ui — GitGraphTab：提交图 tab body（本模块 ask §③/④；
  * spec §3.1/§3.3 [清单 31/32/33]，注册 key = 'dsh-plugin.git.graph'、定义侧
  * keepMounted: true——图重算昂贵，隐藏不卸载，map §3.3）。
  *

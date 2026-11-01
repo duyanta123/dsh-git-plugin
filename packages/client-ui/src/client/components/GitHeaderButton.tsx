@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C1 GitHeaderButton（spec §3.1 [清单 47/48/54/65]）。
+ * dsh-gitkit-ui — C1 GitHeaderButton（spec §3.1 [清单 47/48/54/65]）。
  *
  * 注册于 `conversation.session.header.utilities`（list/session——ui-open-in-app 范本）；
  * **不碰 `conversation.session.header.corner`**（AppFrame header 自留席位，map §3.2）。

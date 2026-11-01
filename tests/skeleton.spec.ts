@@ -18,11 +18,11 @@ function flattenKeys(obj: Record<string, unknown>): string[] {
 }
 
 describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）', () => {
-  it('双包名与 workspace 成员符合决议（spec §0.1 用户决议：@dsh-plugin/git + @dsh-plugin/client-ui-git）', async () => {
+  it('双包名与 workspace 成员符合决议（spec §0.1 用户决议：dsh-gitkit + dsh-gitkit-ui）', async () => {
     const host = await readJson('packages/host/package.json')
     const client = await readJson('packages/client-ui/package.json')
-    expect(host['name']).toBe('@dsh-plugin/git')
-    expect(client['name']).toBe('@dsh-plugin/client-ui-git')
+    expect(host['name']).toBe('dsh-gitkit')
+    expect(client['name']).toBe('dsh-gitkit-ui')
     const ws = await readText('pnpm-workspace.yaml')
     expect(ws).toContain('packages/*')
   })
@@ -51,7 +51,7 @@ describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）'
     expect(dshClient['platform']).toBe('web')
     expect(exportsMap['./client']).toBeDefined()
     const inject = dshClient['inject'] as string[]
-    expect(inject).toContain('@dsh-plugin/git')
+    expect(inject).toContain('dsh-gitkit')
     expect(inject).toContain('@deepseek-ai/dsh-client-ui-slots')
     // D8：包名带 -right（spec 转引 host-capability-map.md:451）
     expect(inject).toContain('@deepseek-ai/dsh-client-ui-sidebar-right')
@@ -61,11 +61,11 @@ describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）'
     const hostPatch = await readText('packages/host/cordis.patch.yml')
     expect(hostPatch).toContain('- insert:')
     expect(hostPatch).toContain('id: dsh-plugin-git')
-    expect(hostPatch).toContain("name: '@dsh-plugin/git'")
+    expect(hostPatch).toContain("name: 'dsh-gitkit'")
     const clientPatch = await readText('packages/client-ui/cordis.patch.yml')
     expect(clientPatch).toContain('- insert:')
     expect(clientPatch).toContain('id: dsh-plugin-client-ui-git')
-    expect(clientPatch).toContain("name: '@dsh-plugin/client-ui-git'")
+    expect(clientPatch).toContain("name: 'dsh-gitkit-ui'")
   })
 
   it('locale 骨架：zh/en 键集一致（spec §④ 规则：新增键必须 zh/en 同步）', async () => {

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — locale 词典（spec §4；M14 首批键组）。
+ * dsh-gitkit-ui — locale 词典（spec §4；M14 首批键组）。
  *
  * 机制（map §4.4）：apply 层 `ctx.locale.register(NS, { zh, en })`，zh+en 双语齐备强制；
  * 槽注册传 `locale: NS` 组件获得类型化 `t`；词典扁平 `Record<string, string>` + `{name}`

@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/client-ui-git — C2 GitChangesTab 纯视图模型（本模块 ask §②/③）。
+ * dsh-gitkit-ui — C2 GitChangesTab 纯视图模型（本模块 ask §②/③）。
  *
  * 渲染决策全部收敛为纯函数（组件只做 t/订阅/事件——spec §6 纯函数单测纪律，与
  * ui-model.ts 的 header 视图模型同纪律）：三组 + 冲突置顶的分组装配（[清单 1]）、
@@ -7,7 +7,7 @@
  * stage 与 discard）、状态字母与 +N −M 的展示形状。不依赖 DOM/React 即可断言。
  */
 
-import type { DiffScope, FileChange, GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { DiffScope, FileChange, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { GitLocaleKey } from './locales.js'
 import type { GitStatusSourceState } from './store/git-status-source.js'
 

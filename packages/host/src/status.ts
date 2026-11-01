@@ -18,7 +18,7 @@
  */
 
 /**
- * @dsh-plugin/git — status 编排引擎（spec §1.1 [清单 1/5/6/24/64/65] + §2.3 host 侧刷新）。
+ * dsh-gitkit — status 编排引擎（spec §1.1 [清单 1/5/6/24/64/65] + §2.3 host 侧刷新）。
  *
  * 职责：工作区解析 → 仓库发现 → `status --porcelain=v2 …-z` 与两路 numstat 并发 →
  * 解析合并为 GitStatusSnapshot。快照缓存 TTL < 2s（任务口径；§2.3 的 150ms 防抖与

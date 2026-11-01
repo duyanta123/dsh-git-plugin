@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitStatusSnapshot } from 'dsh-gitkit/types'
 import { headCommitOf } from '../src/client/commit-dialog-face.ts'
 import type { HeadCommitInfo } from '../src/client/commit-dialog-face.ts'
 import {

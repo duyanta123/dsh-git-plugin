@@ -1,5 +1,5 @@
 /**
- * @dsh-plugin/git — 域错误码注册、RemoteError 工厂、stderr 处理与 logger 约定。
+ * dsh-gitkit — 域错误码注册、RemoteError 工厂、stderr 处理与 logger 约定。
  *
  * 错误码与分类规则：research/capability-spec.md §1.0.5（域码 = `git/<name>`，
  * 经 RemoteError 过线，client 按 code 判别不按 instanceof——map §2.4）。

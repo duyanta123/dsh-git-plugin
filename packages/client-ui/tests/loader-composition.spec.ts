@@ -4,7 +4,7 @@
  *
  * **模块表三方对账，断言无未加载行**（composition table = 提交链路的装载面）：
  *   1. host `REMOTE_METHODS`（src/index.ts 源面权威）——16 个 @Remote 方法；
- *   2. typert-generator 生成产物 `@dsh-plugin/git/remote` 的 `methods` 键——生成描述符；
+ *   2. typert-generator 生成产物 `dsh-gitkit/remote` 的 `methods` 键——生成描述符；
  *   3. client `GIT_NAMESPACE_METHODS` + `createGitRpcClient()` 产物的函数键——client 面。
  * 三层键集必须两两相等：host 声明了而生成产物没有 = 生成器漏行；生成产物有而 client
  * 面没有 = client 落后（调用在方法缺席处 TypeError）；多出的行 = 幽灵面。
@@ -13,7 +13,7 @@
  * openCommitDialog no-op 占位，两个拉起方（header 菜单 / 变更面板底部按钮）引用
  * GitCommitDialog，快捷键 aria-keyshortcuts 四组锚在位（ask §②）。
  *
- * 位置注记：放在 client-ui/tests（包编译面解析 `@dsh-plugin/*` workspace link 与
+ * 位置注记：放在 client-ui/tests（包编译面解析 `dsh-gitkit*` workspace link 与
  * dsh-client-* 类型面；根 tsconfig 无 paths 表，locales.ts 的 declare module 增补也
  * 只在包程序内合法——包级组合测试是对账层的自然归属）。
  */
@@ -22,12 +22,12 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import gitRemote from '@dsh-plugin/git/remote'
+import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import { GIT_NAMESPACE_METHODS, createGitRpcClient } from '../src/client/remote/mount.ts'
 import { headerMenuItems, headerViewModel } from '../src/client/ui-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
-import type { GitStatusSnapshot } from '@dsh-plugin/git/types'
+import type { GitStatusSnapshot } from 'dsh-gitkit/types'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const clientSrc = (rel: string): string => path.join(repoRoot, 'packages', 'client-ui', 'src', 'client', rel)
@@ -68,9 +68,9 @@ describe('M10 模块表三方对账（host REMOTE_METHODS ⇄ 生成描述符 �
     expect(produced).toEqual([...GIT_NAMESPACE_METHODS].sort())
   })
 
-  it('生成描述符的 package 字段 = @dsh-plugin/git（装载身份；spec 面是运行期形状，类型面只有 methods）', () => {
+  it('生成描述符的 package 字段 = dsh-gitkit（装载身份；spec 面是运行期形状，类型面只有 methods）', () => {
     const spec = (gitRemote as unknown as { spec: { package: string; methods: Record<string, unknown> } }).spec
-    expect(spec.package).toBe('@dsh-plugin/git')
+    expect(spec.package).toBe('dsh-gitkit')
     expect(Object.keys(spec.methods).every((key) => key.startsWith('git/'))).toBe(true)
   })
 })
