@@ -97,8 +97,20 @@ export function localSubprocess(record?: SpawnRecord[]): SubprocessFace {
         child.stdin?.on('error', () => {})
         child.stdin?.end(stdinSpec.data)
       }
+      let exited = false
+      let abort: (() => void) | undefined
+      const onExit = (): void => {
+        exited = true
+        if (abort !== undefined && spec.signal !== undefined) spec.signal.removeEventListener('abort', abort)
+      }
+      child.on('exit', onExit)
+      child.on('error', onExit)
       if (spec.signal !== undefined) {
-        const abort = () => {
+        abort = () => {
+          // AbortSignal.timeout 在命令**正常结束之后**仍会触发；对早已退出的 PID 执行
+          // taskkill /T /F 会命中被系统复用的无关进程——CI 上 vitest worker 随机消失
+          //（"Worker exited unexpectedly"）的根因。
+          if (exited || child.exitCode !== null) return
           // runbook §6.9：Windows 终止一律 taskkill /PID /T /F。
           const killer = nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
           killer.on('error', () => {})
