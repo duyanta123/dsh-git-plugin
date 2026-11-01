@@ -32,11 +32,12 @@ jobs:
       - name: Assert tag == manifest version
         shell: pwsh
         run: |
-          $tag = ${env:GITHUB_REF_NAME} -replace '^v', ''
-          $host = (Get-Content packages/host/package.json | ConvertFrom-Json).version
-          $client = (Get-Content packages/client-ui/package.json | ConvertFrom-Json).version
-          if ($tag -ne $host -or $tag -ne $client) {
-            throw "tag v$tag 与清单版本不一致：host=$host client=$client（应同升四个 manifest 后再打 tag）"
+          # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开（$tag/$client 同理谨慎）
+          $tagVersion = ${env:GITHUB_REF_NAME} -replace '^v', ''
+          $hostVersion = (Get-Content packages/host/package.json | ConvertFrom-Json).version
+          $clientVersion = (Get-Content packages/client-ui/package.json | ConvertFrom-Json).version
+          if ($tagVersion -ne $hostVersion -or $tagVersion -ne $clientVersion) {
+            throw "tag v$tagVersion 与清单版本不一致：host=$hostVersion client=$clientVersion（应同升四个 manifest 后再打 tag）"
           }
 
       - name: Typecheck
