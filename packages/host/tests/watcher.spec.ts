@@ -210,7 +210,9 @@ function m9it(name: string, fn: () => Promise<void>): void {
  * （生产态由 R4 轮询兜底，测试窗内等不到）。
  */
 async function watchTargetsReady(watcher: StatusWatcher, count = 3): Promise<boolean> {
-  return waitForCondition(() => watcher.openWatcherCount >= count, 5_000)
+  // 5s 在 6-worker 全量门禁下会被 chokidar 的 ready 顶穿（2026-11-01 实测：
+  // 同文件单跑恒绿、全量偶发 false）；这是测试前置条件，不是被测行为。
+  return waitForCondition(() => watcher.openWatcherCount >= count, 15_000)
 }
 
 // ─────────────────────────────── R1 initial ───────────────────────────────

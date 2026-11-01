@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { availableParallelism } from 'node:os'
 import ts from 'typescript'
 import { defineConfig } from 'vitest/config'
 
@@ -57,6 +58,8 @@ export default defineConfig({
     // 子进程）后，重负载轮次（同机并行施工的外部负载）偶发把既有 30s 用例顶到
     // 超时——处置是把各集成 spec 的 testTimeout/hookTimeout 提到 60s（纯上限放宽，
     // 断言面零改动；6 worker 维持——4 worker 对照轮未见收益）。
-    maxWorkers: 6,
+    // 按可用核数收敛：16 核本机仍是 6（既有调优）；GitHub public 的
+    // windows-latest 是 4 vCPU，固定 6 worker 会超订并把 spawn 密集型用例顶穿。
+    maxWorkers: Math.max(1, Math.min(6, availableParallelism() - 1)),
   },
 })

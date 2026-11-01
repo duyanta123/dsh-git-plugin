@@ -13,7 +13,7 @@
  * 断言纪律：验证世界而非自述——每个场景用独立 execFileSync git 重读外部状态对照。
  */
 
-import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
@@ -66,9 +66,9 @@ function worldTopoOids(repo: string): string[] {
   return git(repo, 'log', '--topo-order', '--format=%H').trim().split('\n').filter((line) => line !== '')
 }
 
-/** 写文件 + 提交的同步小步进（execFileSync 权威，验证世界而非自述）。 */
+/** 写文件 + 提交的同步小步进（文件写入同进程，git 世界用真实进程重读）。 */
 function step(repo: string, message: string, file: string, content: string): string {
-  execFileSync('node', ['-e', `require('node:fs').writeFileSync(process.argv[1], process.argv[2])`, join(repo, file), content], { stdio: 'ignore' })
+  writeFileSync(join(repo, file), content)
   git(repo, 'add', '--', file)
   git(repo, 'commit', '-m', message)
   return git(repo, 'rev-parse', 'HEAD').trim()
@@ -175,7 +175,7 @@ describe('log — 分页与钳制（已知 DAG）', () => {
     const harness = await makeEngine(3)
     const engine = harness.engine
     for (const index of ['1', '2', '3', '4']) {
-      execFileSync('node', ['-e', `require('node:fs').writeFileSync(process.argv[1], process.argv[2])`, join(harness.repo, `f${index}.txt`), index], { stdio: 'ignore' })
+      writeFileSync(join(harness.repo, `f${index}.txt`), index)
       git(harness.repo, 'add', '--', `f${index}.txt`)
       git(harness.repo, 'commit', '-m', `c${index}`)
     }
@@ -195,7 +195,7 @@ describe('log — 分页与钳制（已知 DAG）', () => {
 
   it('format 解析：多行 body 完整捕获、subject/body 分离（world 重读 %B 对照）', async () => {
     const { engine, repo } = await makeEngine()
-    execFileSync('node', ['-e', `require('node:fs').writeFileSync(process.argv[1], 'x')`, join(repo, 'f.txt')], { stdio: 'ignore' })
+    writeFileSync(join(repo, 'f.txt'), 'x')
     git(repo, 'add', '--', 'f.txt')
     git(repo, 'commit', '-m', 'the subject', '-m', 'body line one\nbody line two')
     const page = await engine.log({ limit: 5, skip: 0 })

@@ -22,6 +22,11 @@
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+// Events['connection/reset'] 官方增强（dsh-client-connection/src/client/index.ts:26-31）——
+// npm 发布面需显式引入该模块，声明合并才会进编译程序。
+import type {} from '@deepseek-ai/dsh-client-connection/client'
+// Context.remote 官方增强（gateway client installNamespace 的类型面，挂载见 remote/mount.ts）。
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
 // 会话头工具槽的 SlotMap 合并面（'conversation.session.header.utilities' 的声明处，
 // ui-conversation/src/client/contract/slots.ts:235-239）。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'

@@ -1,0 +1,38 @@
+# push/PR 门禁：与 release.yml 的门禁步保持一致（不发布）。
+# 目的：main 的坏状态在 push 时就暴露，而不是等推 v* 标签才发现。
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable pnpm (corepack, 版本钉在根 package.json packageManager)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test（真实临时 git 仓库集成测试）
+        run: pnpm run test
+
+      - name: Build（host typert 产物 + client bundle + git-bundle 一致性）
+        run: pnpm run build

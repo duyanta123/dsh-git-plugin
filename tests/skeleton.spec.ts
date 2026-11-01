@@ -108,4 +108,23 @@ describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）'
     expect(src).toContain("SERVICE_KEY = 'git'")
     expect('git').toMatch(/^[A-Za-z0-9_$.-]+$/)
   })
+
+  it('清单与锁文件不得出现机器绝对路径的依赖（干净 checkout 可解析）', async () => {
+    // 2026-11-01 CI 根因守门：初始快照曾提交 link:D:/DeepSeekHarness/... 本机路径——
+    // pnpm 对悬空 link 不报错，远端 typecheck 才全线 TS2307。
+    const manifests = [
+      'package.json',
+      'packages/host/package.json',
+      'packages/client-ui/package.json',
+      'git-bundle/package.json',
+      'pnpm-workspace.yaml',
+      'pnpm-lock.yaml',
+    ]
+    for (const manifest of manifests) {
+      const text = await readText(manifest)
+      expect(text, `${manifest} 含机器绝对路径的 link:/file: 依赖`).not.toMatch(
+        /(?:link|file):(?:[A-Za-z]:[\\/]|[\\/])/,
+      )
+    }
+  })
 })
