@@ -1,0 +1,12 @@
+{
+  // typert-generator 的工作区登记工程（根 tsconfig.host.json 的 projectReference）。
+  // 本包是 npm 发布物 @deepseek-ai/dsh-typert-protocol@0.2.2-alpha.2 的未改动副本
+  // （generator 的 isTypeMetaSymbol 要求 Remote/TypertRemoteService 的声明文件
+  // 落在根 packages/ 下的已登记包内——analyzer.ts:2770-2776 registrationForFile；
+  // dsh 树内同拓扑：protocol 是 packages/ 下的工作区包）。无源码面，无编译产物。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src"]
+}
