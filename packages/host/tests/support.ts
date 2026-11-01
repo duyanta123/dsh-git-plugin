@@ -89,13 +89,19 @@ export function localSubprocess(record?: SpawnRecord[]): SubprocessFace {
       let stderrBytes = 0
       child.stdout?.on('data', (chunk: Buffer) => { stdout.push(chunk); stdoutBytes += chunk.length })
       child.stderr?.on('data', (chunk: Buffer) => { stderr.push(chunk); stderrBytes += chunk.length })
+      // 强杀与管道读取竞态时，Windows 上流会发 ECONNRESET/EPIPE；无 error 监听会变成
+      // 未捕获异常，直接带走 vitest worker（CI 的 "Worker exited unexpectedly"）。
+      child.stdout?.on('error', () => {})
+      child.stderr?.on('error', () => {})
       if (stdinSpec !== 'ignore') {
+        child.stdin?.on('error', () => {})
         child.stdin?.end(stdinSpec.data)
       }
       if (spec.signal !== undefined) {
         const abort = () => {
           // runbook §6.9：Windows 终止一律 taskkill /PID /T /F。
-          nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+          const killer = nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+          killer.on('error', () => {})
         }
         if (spec.signal.aborted) abort()
         else spec.signal.addEventListener('abort', abort, { once: true })

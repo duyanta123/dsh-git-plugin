@@ -133,13 +133,18 @@ describe('status 场景矩阵（spec §⑥ 集成行）', () => {
     git(repo, 'checkout', '-q', 'main')
     await writeFile(join(repo, 'tracked.txt'), 'main-side\n', 'utf8')
     git(repo, 'commit', '-qam', 'main')
+    let mergeStatus: number | undefined
     try {
-      execFileSync('git', ['merge', 'other'], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] })
-      expect.fail('merge should conflict')
+      // 必须走 git() 辅助函数：它带 -c user.name/email，不依赖 runner 的全局身份
+      // 配置。CI runner 没有全局 identity，裸 execFileSync 会让 merge 在合并前就报
+      // "Committer identity unknown"（exit 128），冲突根本不会发生。
+      git(repo, 'merge', 'other')
+      mergeStatus = 0
     } catch (error) {
-      // merge 的非零退出是本场景预期（冲突）。
-      expect((error as { status?: number }).status).not.toBe(0)
+      mergeStatus = (error as { status?: number }).status
     }
+    // 内容冲突的 git merge 退出码恒为 1；0 表示没冲突，128 等表示环境问题。
+    expect(mergeStatus).toBe(1)
     const { service } = makeService(repo)
     const snapshot = await service.status()
     const conflicted = snapshot.conflicted.find(change => change.path === 'tracked.txt')
