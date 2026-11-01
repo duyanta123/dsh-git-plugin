@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugin/client-ui-git",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh Git 插件 client 半（web 面：header 入口 / 变更审查 tab / 提交图 tab）；接口权威 = research/capability-spec.md §③",
   "type": "module",
   "license": "Apache-2.0",
@@ -58,5 +58,18 @@
     "react": "^18.2.0",
     "react-dom": "18.2.0",
     "rolldown": "1.2.7"
-  }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duyanta123/dsh-git-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/duyanta123/dsh-git-plugin/issues"
+  },
+  "homepage": "https://github.com/duyanta123/dsh-git-plugin#readme",
+  "prepack": "pnpm -w run build"
 }

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugin/git",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "dsh Git 插件 host 半（node 侧 RPC 服务：status/diff/stage/commit/push/log/...）；接口权威 = research/capability-spec.md §①",
   "type": "module",
   "license": "Apache-2.0",
@@ -68,5 +68,18 @@
     "@deepseek-ai/dsh-typert-generator": "0.2.2-alpha.2",
     "@deepseek-ai/dsh-typert-protocol": "0.2.2-alpha.2",
     "tsdown": "^0.22.2"
-  }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duyanta123/dsh-git-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/duyanta123/dsh-git-plugin/issues"
+  },
+  "homepage": "https://github.com/duyanta123/dsh-git-plugin#readme",
+  "prepack": "pnpm -w run build"
 }

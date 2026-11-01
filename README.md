@@ -1,7 +1,7 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-发布版本 **v0.1.0**，由三部分组成（pnpm workspace）：
+发布版本 **v0.1.1**，由三部分组成（pnpm workspace）：
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
@@ -60,6 +60,19 @@ dsh --profile <你的profile> --dump-config | tail -5
 
 之后打开 dsh web：会话 header 出现 Git 入口（角标 + 变更审查 tab + 提交图 tab）。
 默认工作区 = 当前 session 的 cwd；可在 profile 层补丁用 `workspaceOverride` 钉死（见 §3）。
+
+### npm 包（@dsh-plugin/git · @dsh-plugin/client-ui-git）
+
+两个代码包同时发布到 npm（tag 驱动：推 `v*` 标签 → GitHub Actions 门禁（typecheck/test/build）→
+自动 `pnpm publish`，见 `.github/workflows/release.yml`）。npm 安装形态（适合想自行组装 profile 的用户）：
+
+```bash
+pnpm add @dsh-plugin/git @dsh-plugin/client-ui-git   # 在 profile 目录内
+```
+
+随后需在 profile 的 `cordis.patch.yml` 自行追加两行 insert（内容即 `git-bundle/cordis.patch.yml`）。
+**推荐大多数用户走上面的 git-bundle 一条命令安装**——它同时完成依赖带入与补丁挂载。
+`git-bundle` 本身不发 npm（其 `file:` 相对依赖无法远程解析），保持 GitHub/本地分发。
 
 ## 3. 配置（可选）
 

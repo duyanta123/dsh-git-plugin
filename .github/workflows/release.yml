@@ -1,0 +1,54 @@
+# tag 驱动的 npm 自动发布：推送 v* 标签 → 门禁 → 发布 @dsh-plugin/{git,client-ui-git}
+# 前置：GitHub 仓库 Secrets 配置 NPM_TOKEN（npm automation token，需拥有 dsh-plugin scope/org）
+# git-bundle 不走 npm（file: 相对依赖无法远程解析）——它保持 GitHub/本地分发通道（见 README §2）
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Enable pnpm (corepack, 版本钉在根 package.json packageManager)
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Assert tag == manifest version
+        shell: pwsh
+        run: |
+          $tag = ${env:GITHUB_REF_NAME} -replace '^v', ''
+          $host = (Get-Content packages/host/package.json | ConvertFrom-Json).version
+          $client = (Get-Content packages/client-ui/package.json | ConvertFrom-Json).version
+          if ($tag -ne $host -or $tag -ne $client) {
+            throw "tag v$tag 与清单版本不一致：host=$host client=$client（应同升四个 manifest 后再打 tag）"
+          }
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test（真实临时 git 仓库集成测试）
+        run: pnpm run test
+
+      - name: Build（host typert 产物 + client bundle + git-bundle 一致性）
+        run: pnpm run build
+
+      - name: Publish @dsh-plugin/git + @dsh-plugin/client-ui-git
+        run: pnpm -r publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
