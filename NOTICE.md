@@ -1,6 +1,6 @@
 # NOTICE — dsh-git-plugin 署名与移植合规策略
 
-> 依据 `research/capability-spec.md` 第⑤节起草（下称【spec §⑤】）。登记表的行级权威在
+> 依据 `docs/capability-spec.md` 第⑤节起草（下称【spec §⑤】）。登记表的行级权威在
 > spec §5.1；本文件是仓库内随施工维护的工作副本。
 > 工作流通用约定提到的 PORTING.md 自 ⑤ status 引擎模块（2026-10-31）起建立于本目录
 > （A/B/C 级定义与本模块登记行）；历史登记仍以本文件 §2 为准，两表互为镜像索引。
@@ -16,7 +16,7 @@
 ## 1. 总底线（spec §5.1 首段）
 
 - Apache-2.0（ZCode / Codex / Cline）与 MIT（opencode / GitLens MIT 区 / dsh）材料**可移植，但必须保留版权与许可声明**（文件级登记 + 文件头，见 §3）。
-- **一行代码不进仓库**的来源：GitLens `packages/plus/**`（LICENSE.plus 约束）、mhutchie/vscode-git-graph、gitamine（均 GPL-3.0）。GitLens `LICENSE.plus` 文本只留在 `research/ported-sources/` 作合规证据；THIRD_PARTY_NOTICES 中不得出现对 mhutchie 代码的引用式搬运，NOTICE 里仅允许"阅读参考、未使用代码"一行说明（spec §5.2）。
+- **一行代码不进仓库**的来源：GitLens `packages/plus/**`（LICENSE.plus 约束）、mhutchie/vscode-git-graph、gitamine（均 GPL-3.0）。GitLens `LICENSE.plus` 文本只留在 `docs/ported-sources/` 作合规证据；THIRD_PARTY_NOTICES 中不得出现对 mhutchie 代码的引用式搬运，NOTICE 里仅允许"阅读参考、未使用代码"一行说明（spec §5.2）。
 - lane 布局算法：以 pvigier 博客为教材**自研实现**（文章可自由学习）；gitamine（GPL-3.0）代码一行不搬。
 
 ## 2. 文件级移植登记表（随施工推进维护；每行都要落 §3 的文件头）
@@ -52,7 +52,7 @@
 | `packages/host/src/commit.ts`（语义） | aider `repo.py` | `5dc9490b` | Apache-2.0 | 只学语义，Python 不移植 | 计划中 |
 | lane 布局算法 | pvigier 博客（教材） | 网页 | 文章可自由学习 | 自研实现（spec §5.5 声明行——PORTING.md F7 C 级：temporal 修复路径 + 活跃 lane 表 + 最小空闲位；gitamine/mhutchie 零代码） | 已实现（F7——`client-ui/src/client/graph/lane-layout.ts`） |
 
-来源许可与版本细节以 `research/ported-sources/SOURCES.md` 为准。
+来源许可与版本细节以 `docs/ported-sources/SOURCES.md` 为准。
 
 ## 3. 移植文件头模板（每个登记文件必须带；spec §5.3 原文）
 

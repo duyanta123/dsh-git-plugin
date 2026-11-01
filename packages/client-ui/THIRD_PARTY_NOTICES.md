@@ -1,9 +1,9 @@
 # THIRD_PARTY_NOTICES — dsh-git-plugin
 
-本文件按 `research/capability-spec.md` §5.2 落地（2026-11-01 定稿；§0.4-8 的 dsh LICENSE
+本文件按 `docs/capability-spec.md` §5.2 落地（2026-11-01 定稿；§0.4-8 的 dsh LICENSE
 版权行原文已核实——`packages/typert-protocol/LICENSE` 副本 `Copyright (c) 2026 DeepSeek`）。
 行级移植登记的权威 = `NOTICE.md` §2 与 `PORTING.md`；来源版本、抓取凭证与逐文件字节校验 =
-`research/ported-sources/SOURCES.md`。本文件不携带任何第三方代码文本，只附许可全文与署名行。
+`docs/ported-sources/SOURCES.md`。本文件不携带任何第三方代码文本，只附许可全文与署名行。
 
 ## 1. 本项目
 

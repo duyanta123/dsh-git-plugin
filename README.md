@@ -3,13 +3,13 @@
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
 发布版本 **v0.1.0**，由三部分组成（pnpm workspace）：
 
-| 落点 | npm 名 | 半 | 内容（接口权威 = `../research/capability-spec.md`） |
+| 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
 | `packages/host` | `@dsh-plugin/git` | node（宿主插件） | TypertRemoteService `git` 命名空间：16 个 `@Remote` 方法（`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
 | `packages/client-ui` | `@dsh-plugin/client-ui-git` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
 | `git-bundle` | `@dsh-plugin/git-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
 
-v1 范围 = `../research/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
+v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
 
 ## 1. 功能清单（v1）

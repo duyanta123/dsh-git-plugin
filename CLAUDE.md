@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two scope constraints shape the code: v1 is one session = one repository; dsh exposes no event broadcast to out-of-tree plugins, so host→client updates use a `followStatus` typert stream plus write-invalidation rather than events.
 
-The authoritative interface spec lives outside this repo at `../research/capability-spec.md` (also `feature-checklist.md`, `host-capability-map.md`, `ported-sources/SOURCES.md`). The dsh source tree is read-only reference at `D:\DeepSeekHarness` (override with `DSH_TREE`).
+The authoritative interface spec lives outside this repo at `docs/capability-spec.md` (also `feature-checklist.md`, `host-capability-map.md`, `ported-sources/SOURCES.md`). The dsh source tree is read-only reference at `D:\DeepSeekHarness` (override with `DSH_TREE`).
 
 ## Commands
 

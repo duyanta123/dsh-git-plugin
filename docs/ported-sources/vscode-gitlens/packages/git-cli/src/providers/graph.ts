@@ -1,0 +1,2561 @@
+import type { Cache } from '@gitlens/git/cache.js';
+import type { GitServiceContext } from '@gitlens/git/context.js';
+import { GitSearchError } from '@gitlens/git/errors.js';
+import type { GitBranch } from '@gitlens/git/models/branch.js';
+import type { GitStashCommit } from '@gitlens/git/models/commit.js';
+import type {
+	GitGraph,
+	GitGraphRow,
+	GitGraphRowHead,
+	GitGraphRowRemoteHead,
+	GitGraphRowsStats,
+	GitGraphRowStats,
+	GitGraphRowTag,
+	GraphContext,
+	GraphIncrementalSeed,
+	GraphReachabilityTable,
+	GraphRowProcessor,
+	IncrementalGraphFallbackReason,
+	IncrementalGraphOutcome,
+} from '@gitlens/git/models/graph.js';
+import type {
+	GitGraphSearch,
+	GitGraphSearchCursor,
+	GitGraphSearchProgress,
+	GitGraphSearchResultData,
+	GitGraphSearchResults,
+} from '@gitlens/git/models/graphSearch.js';
+import type {
+	GitGraphSession,
+	GitGraphSessionChangedChannels,
+	GitGraphSessionMoreResult,
+	GitGraphSessionRefreshOptions,
+	GitGraphSessionRefreshResult,
+} from '@gitlens/git/models/graphSession.js';
+import { GraphSessionWriteQueue } from '@gitlens/git/models/graphSession.js';
+import type { GitRemote } from '@gitlens/git/models/remote.js';
+import type { SearchQuery } from '@gitlens/git/models/search.js';
+import type { GitWorktree } from '@gitlens/git/models/worktree.js';
+import type { GitCommitReachability } from '@gitlens/git/providers/commits.js';
+import type { GitGraphSubProvider } from '@gitlens/git/providers/graph.js';
+import { splitRemoteBranchName } from '@gitlens/git/utils/branch.utils.js';
+import { appendRowsAtCursor, mergeAvatarsForward, restampGraphRowIds } from '@gitlens/git/utils/graph.utils.js';
+import { computeGraphRowContextFlags, createReachabilityTableBuilder } from '@gitlens/git/utils/reachability.utils.js';
+import { isUncommitted } from '@gitlens/git/utils/revision.utils.js';
+import { getSearchQueryComparisonKey, parseSearchQueryGitCommand } from '@gitlens/git/utils/search.utils.js';
+import { getTagId } from '@gitlens/git/utils/tag.utils.js';
+import { isUserMatch } from '@gitlens/git/utils/user.utils.js';
+import { getWorktreeId, groupWorktreesByBranch } from '@gitlens/git/utils/worktree.utils.js';
+import { CancellationError, isCancellationError } from '@gitlens/utils/cancellation.js';
+import { debug } from '@gitlens/utils/decorators/log.js';
+import { createDisposable } from '@gitlens/utils/disposable.js';
+import { getBranchId, getBranchNameWithoutRemote } from '@gitlens/utils/gitRefs.js';
+import { fnv1aHash64 } from '@gitlens/utils/hash.js';
+import { find, first, join, last } from '@gitlens/utils/iterable.js';
+import { getScopedLogger } from '@gitlens/utils/logger.scoped.js';
+import { getSettledValue } from '@gitlens/utils/promise.js';
+import type { CliGitProviderInternal } from '../cliGitProvider.js';
+import type { Git } from '../exec/git.js';
+import { classifySearchError, gitConfigsLog } from '../exec/git.js';
+import {
+	getGraphParser,
+	getShaAndDatesLogParser,
+	getShaAndDatesWithFilesLogParser,
+	getShaAndStatsLogParser,
+	getShaLogParser,
+} from '../parsers/logParser.js';
+import { convertStashesToStdin } from './stash.js';
+
+const progressiveSearchResultsBatchTimeMs = 500; // Send updates every 500ms (2 updates/second)
+
+type ReachableRef = GitCommitReachability['refs'][number];
+
+/**
+ * Whether a ref participates in graph row decoration (a branch/remote/tag badge) and so must be diffed by
+ * the R6b tip gate. Excludes `refs/stash` (handled by the stash gate) and symbolic `…/HEAD` refs (they
+ * mirror another ref and produce no badge of their own).
+ */
+function isMoveableGraphRef(refname: string): boolean {
+	if (refname === 'refs/stash' || refname === 'HEAD' || refname.endsWith('/HEAD')) return false;
+
+	return refname.startsWith('refs/heads/') || refname.startsWith('refs/remotes/') || refname.startsWith('refs/tags/');
+}
+
+/**
+ * Fingerprints the GLOBAL side inputs row construction embeds into row decorations — the default branch
+ * (and whether a local branch shadows it), HEAD's upstream, remote urls/providers, secondary-worktree
+ * assignments, and the current user. These can all change WITHOUT moving any ref tip (`git remote
+ * set-head`, remote/user config edits, `git worktree add`), and the R6b fast path reuses prior rows
+ * wholesale (only flags/reachability are re-derived) — so it compares this against the seed's and falls
+ * back to the full walk (which rebuilds every decoration) on ANY change. Deliberately EXCLUDES what other
+ * gates already own — ref existence/tips (tip gate), the default worktree's checkout (HEAD gate), and
+ * per-branch upstream mappings (checked row-by-row against the seed's embedded pills, so tracking-branch
+ * CREATES stay fast) — keeping the high-frequency events (commits, branch/tag creates, fetches,
+ * checkouts) on the fast path. Sorted so map/list iteration order can't produce spurious mismatches.
+ */
+function computeDecorationFingerprint(
+	repoPath: string,
+	defaultBranchName: string | undefined,
+	defaultLocalName: string | undefined,
+	headRefUpstreamName: string | undefined,
+	headRefUpstreamLocal: boolean,
+	branches: readonly GitBranch[] | undefined,
+	remotes: readonly GitRemote[] | undefined,
+	worktrees: readonly GitWorktree[],
+	currentUser: { name: string | undefined; email: string | undefined } | undefined,
+): string {
+	// Remote-head default markers read `!localBranchMap.has(defaultLocalName)` — a local branch appearing at (or
+	// vanishing from) the default's local name flips them even though the DEFAULT ref itself didn't move.
+	const localShadowsDefault =
+		defaultLocalName != null && (branches?.some(b => !b.remote && b.name === defaultLocalName) ?? false);
+	const parts: string[] = [
+		`d:${defaultBranchName ?? ''}|${localShadowsDefault ? 's' : ''}`,
+		`h:${headRefUpstreamLocal ? 'l:' : ''}${headRefUpstreamName ?? ''}`,
+		`u:${currentUser?.name ?? ''}|${currentUser?.email ?? ''}`,
+	];
+	if (branches != null) {
+		for (const b of branches) {
+			// `+starred` is baked into branch pills' serialized contexts (local AND remote heads); a
+			// disposition change moves no ref tip, so it must bust the fingerprint. Star/unstar is rare —
+			// one full walk per transition is fine.
+			if (b.starred) {
+				parts.push(`s:${b.remote ? 'r:' : ''}${b.name}`);
+			}
+		}
+	}
+	if (remotes != null) {
+		for (const r of remotes) {
+			parts.push(`r:${r.name}|${r.url}|${r.provider?.gkProviderId ?? ''}`);
+		}
+	}
+	let defaultWorktreeBranch: string | undefined;
+	let defaultWorktreePath: string | undefined;
+	for (const w of worktrees) {
+		if (w.isDefault) {
+			defaultWorktreeBranch = w.branch?.name;
+			defaultWorktreePath = w.path;
+			continue;
+		}
+		// Only branch-attached SECONDARY worktrees decorate rows: bare/detached ones are excluded from
+		// `worktreesByBranch` (no pill). NOTE: `w.name` is deliberately avoided; it embeds the checked-out
+		// branch (and a detached sha), which would bust this on every checkout.
+		if (w.type !== 'branch') continue;
+
+		parts.push(`w:${w.branch?.name ?? ''}|${w.path}`);
+	}
+	// The DEFAULT worktree's checkout flips `+checkedout` / the main-path worktree recovery on two branch
+	// pills. When the graph IS the default worktree, that's the ordinary HEAD move (the HEAD gate refetches
+	// both endpoint rows) — but a graph on a SECONDARY worktree sees no HEAD move when the MAIN worktree
+	// checks out, so the assignment must fingerprint there. (`w.path` for the default worktree equals the
+	// main repo path in this provider's normalization — pinned by a WorktreesSubProvider test.)
+	if (defaultWorktreePath != null && defaultWorktreePath !== repoPath) {
+		parts.push(`wd:${defaultWorktreeBranch ?? ''}`);
+	}
+	parts.sort();
+	return fnv1aHash64(parts.join('\x00'));
+}
+
+/**
+ * Whether the shared reachability TABLE changed between two refresh generations. The table is append-only
+ * within a generation (`id`), so a new `id` or a grown dictionary/sets length is an EXACT signal — a per-row
+ * index that re-points to an already-present set doesn't grow the table (that change rides the rows channel).
+ */
+function reachabilityTableChanged(
+	prior: GraphReachabilityTable | undefined,
+	next: GraphReachabilityTable | undefined,
+): boolean {
+	if (prior == null || next == null) return prior !== next;
+
+	return (
+		prior.id !== next.id ||
+		prior.dictionary.length !== next.dictionary.length ||
+		prior.sets.length !== next.sets.length
+	);
+}
+
+/**
+ * Whether the downstreams map (upstream name → tracking branch names) changed between two refresh
+ * generations. Order-sensitive on the arrays: a mere reorder reports "changed" and re-ships the full map,
+ * which is harmless — a false negative would silently drop a real upstream change, so err toward "changed".
+ */
+function downstreamsChanged(prior: ReadonlyMap<string, string[]>, next: ReadonlyMap<string, string[]>): boolean {
+	if (prior.size !== next.size) return true;
+
+	for (const [key, priorNames] of prior) {
+		const nextNames = next.get(key);
+		if (nextNames == null || nextNames.length !== priorNames.length) return true;
+
+		for (let i = 0; i < priorNames.length; i++) {
+			if (priorNames[i] !== nextNames[i]) return true;
+		}
+	}
+	return false;
+}
+
+/** The walk-shape key (`ordering|onlyFollowFirstParent`) an incremental seed is gated on — one builder so the
+ *  refresh/rebuild sites can't drift in how they stringify it. */
+function buildShapeKey(shape: { ordering: string; onlyFollowFirstParent: boolean }): string {
+	return `${shape.ordering}|${shape.onlyFollowFirstParent}`;
+}
+
+/** The graph log parser's per-record shape (see `graphMapping`), narrowed to the fields the row builder reads. */
+type GraphCommitRecord = {
+	sha: string;
+	author: string;
+	authorEmail: string;
+	authorDate: string;
+	committerDate: string;
+	parents: string;
+	tips: string;
+	message: string;
+	stats?: GitGraphRowStats;
+};
+
+/** Compare the inputs that can rewrite existing commits without moving branch tips. */
+function getAncestryChange(
+	prior: Pick<GitGraph, 'shallowBoundary' | 'refTips'>,
+	current: Pick<GitGraph, 'shallowBoundary' | 'refTips'>,
+): IncrementalGraphFallbackReason | undefined {
+	if (
+		prior.shallowBoundary == null ||
+		current.shallowBoundary == null ||
+		prior.shallowBoundary !== current.shallowBoundary
+	) {
+		return 'shallow-changed';
+	}
+
+	if (prior.refTips == null || current.refTips == null) return 'replace-refs-changed';
+
+	for (const [ref, sha] of prior.refTips) {
+		if (ref.startsWith('refs/replace/') && current.refTips.get(ref) !== sha) return 'replace-refs-changed';
+	}
+
+	for (const ref of current.refTips.keys()) {
+		if (ref.startsWith('refs/replace/') && !prior.refTips.has(ref)) return 'replace-refs-changed';
+	}
+
+	return undefined;
+}
+
+export class GraphGitSubProvider implements GitGraphSubProvider {
+	constructor(
+		private readonly context: GitServiceContext,
+		private readonly git: Git,
+		private readonly cache: Cache,
+		private readonly provider: CliGitProviderInternal,
+	) {}
+
+	/**
+	 * Current ref tips (canonical refname → PEELED commit sha), for the R6b fast path's gate. Peeled so an
+	 * annotated tag maps to the commit its badge sits on — the same convention {@link GraphIncrementalSeed.tips}
+	 * uses — and so the seed↔current diff is by commit identity. Covers heads/remotes/tags/replace (all the
+	 * namespaces the gate consumers read); the caller filters to the ref classes it cares about.
+	 */
+	private async getCurrentRefTips(repoPath: string, cancellation?: AbortSignal): Promise<Map<string, string>> {
+		const tips = new Map<string, string>();
+		try {
+			// `force: true` invalidates the shared refs cache so this spawns fresh (this gate needs a
+			// point-in-time read, not a possibly-stale cached one) while ALSO repopulating that cache —
+			// one `for-each-ref` serves both this gate and any sibling `getRefs`/`getBranches`/`getTags`
+			// call racing it (they attach to the same in-flight spawn).
+			const records = await this.provider.refs.getRefs(repoPath, cancellation, { force: true });
+			for (const record of records) {
+				if (!record.name) continue;
+
+				// Peeled objectname is set only for annotated tags; everything else uses objectname.
+				tips.set(record.name, record.peeledObjectname || record.objectname);
+			}
+		} catch (ex) {
+			// A genuine cancellation must propagate, not degrade to an empty map: `force: true` above means a
+			// racing caller's cancellation of the SHARED refs cache can kill OUR spawn too, and an empty map
+			// here is indistinguishable from "every ref tip vanished" to the incremental gate's diff.
+			if (isCancellationError(ex) || cancellation?.aborted) throw ex;
+
+			// Any other failure (a per-caller race through the shared cache, a transient git error)
+			// degrades to no tips, same as the direct `errors: 'ignore'` spawn this replaced.
+		}
+		return tips;
+	}
+
+	/** Read the actual boundary from the common git directory, including linked worktrees and bare repos. */
+	private async getShallowBoundary(repoPath: string, cancellation?: AbortSignal): Promise<string | undefined> {
+		const scope = getScopedLogger();
+		try {
+			const result = await this.git.run(
+				{ cwd: repoPath, configs: gitConfigsLog, cancellation: cancellation, errors: 'throw' },
+				'rev-parse',
+				'--git-path',
+				'shallow',
+			);
+			const path = result.stdout.trim();
+			if (!path) return undefined;
+
+			const contents = await this.context.fs
+				.readFile(this.provider.getAbsoluteUri(path, repoPath))
+				.catch((ex: unknown) => {
+					const code = (ex as { code?: unknown }).code;
+					if (code === 'ENOENT' || code === 'FileNotFound') return undefined;
+
+					throw ex;
+				});
+			if (cancellation?.aborted) throw new CancellationError();
+
+			return contents == null ? '' : new TextDecoder().decode(contents).trim().split(/\s+/).sort().join('\n');
+		} catch (ex) {
+			if (cancellation?.aborted) throw new CancellationError();
+			if (isCancellationError(ex)) throw ex;
+
+			// Unknown must never compare equal to a prior boundary and license stale row/stat reuse.
+			scope?.warn(`Unable to read shallow boundary for '${repoPath}': ${String(ex)}`);
+			return undefined;
+		}
+	}
+
+	/** Whether `oldSha` is an ancestor of `newSha` (i.e. the ref moved fast-forward). */
+	private async isFastForward(
+		repoPath: string,
+		oldSha: string,
+		newSha: string,
+		cancellation?: AbortSignal,
+	): Promise<boolean> {
+		const result = await this.git.run(
+			{ cwd: repoPath, cancellation: cancellation, errors: 'ignore' },
+			'merge-base',
+			'--is-ancestor',
+			oldSha,
+			newSha,
+		);
+		return result.exitCode === 0;
+	}
+
+	async openGraphSession(
+		repoPath: string,
+		options?: {
+			rowProcessor?: GraphRowProcessor;
+			rev?: string;
+			limit?: number;
+			include?: { stats?: boolean };
+		},
+		cancellation?: AbortSignal,
+	): Promise<GitGraphSession> {
+		// The session computes the walk shape (`ordering|onlyFollowFirstParent`) the SAME way `getGraph`
+		// derives it, so it can gate its incremental seed on a shape change (which reshapes every row's
+		// parents/order) exactly as the host's former `_graphBuildShape` gate did.
+		const getWalkShape = (): { ordering: 'date' | 'author-date' | 'topo'; onlyFollowFirstParent: boolean } => {
+			const cfg = this.context.config;
+			return {
+				ordering: cfg?.graph?.commitOrdering ?? cfg?.commits.ordering ?? 'date',
+				onlyFollowFirstParent: cfg?.graph?.onlyFollowFirstParent ?? false,
+			};
+		};
+		const session = new GraphSession(this, repoPath, options?.rowProcessor, getWalkShape);
+
+		await session.initialize(options, cancellation);
+		return session;
+	}
+
+	@debug({
+		quiet: true,
+		// The seed params (`incrementalSeed`, `reachabilitySeed`, `rowsStatsSeed`) hold cached rows/stats
+		// for potentially thousands of commits — logging them via the default formatting would dump
+		// megabytes per call, so only log their presence (and key summary fields).
+		args: (repoPath, rev, options) => ({
+			repoPath: repoPath,
+			rev: rev,
+			limit: options?.limit,
+			stats: options?.include?.stats,
+			incrementalSeed: options?.incrementalSeed && {
+				rows: options.incrementalSeed.rows.length,
+				tips: options.incrementalSeed.tips.size,
+				ordering: options.incrementalSeed.ordering,
+			},
+			reachabilitySeed: options?.reachabilitySeed != null,
+			rowsStatsSeed: options?.rowsStatsSeed != null,
+			rebindFrom: options?.rebindFromRepoPath,
+		}),
+	})
+	async getGraph(
+		repoPath: string,
+		rev: string | undefined,
+		options?: {
+			include?: { stats?: boolean };
+			limit?: number;
+			rowProcessor?: GraphRowProcessor;
+			reachabilitySeed?: GraphReachabilityTable;
+			rowsStatsSeed?: GitGraphRowsStats;
+			/** Ancestry under which the stats were computed, independent of incremental row eligibility. */
+			ancestrySeed?: Pick<GitGraph, 'shallowBoundary' | 'refTips'>;
+			// R6b incremental head-walk seed. When present (and the gate holds), walk only the new head
+			// region, stitch the seed's cached tail, and re-derive flags/reachability in memory instead of
+			// re-walking every loaded row; any structural change degrades to the full walk. See
+			// `GraphIncrementalSeed` and the R6 plan section.
+			incrementalSeed?: GraphIncrementalSeed;
+			// Observational: reports whether the seeded call took the fast path or fell back (with the reason).
+			onIncrementalResult?: (outcome: IncrementalGraphOutcome) => void;
+			// Set only by `GitGraphSession.rebind`: the path the session was bound to BEFORE this call.
+			// Re-perspectives the decoration gate's fingerprint comparison and every reused row's ref ids
+			// onto `repoPath` (same repo family) — see `restampGraphRowIds` and the metadata gate below.
+			rebindFromRepoPath?: string;
+			// Fires the FIRST time the fast path is about to mutate a REUSED row in place (aliased with the
+			// caller's own window array, not a freshly built one). Lets `rebindCore` tell "cancelled before
+			// any row was touched" from "cancelled partway through, window may be torn" — see the fast
+			// path's per-row loop below.
+			onMutationStart?: () => void;
+		},
+		cancellation?: AbortSignal,
+	): Promise<GitGraph> {
+		const scope = getScopedLogger();
+
+		const cfg = this.context.config;
+		const defaultLimit = options?.limit ?? 5000;
+		const ordering: 'date' | 'author-date' | 'topo' = cfg?.graph?.commitOrdering ?? cfg?.commits.ordering ?? 'date';
+		const onlyFollowFirstParent = cfg?.graph?.onlyFollowFirstParent ?? false;
+
+		const deferStats = options?.include?.stats;
+		// Cleared when the ancestry proof fails, independently of incremental row eligibility.
+		let rowsStatsSeed = options?.rowsStatsSeed;
+
+		const parser = getGraphParser(options?.include?.stats && !deferStats);
+		const shaParser = getShaLogParser();
+		const statsParser = getShaAndStatsLogParser();
+
+		const stashPromise = this.provider.stash?.getStash(repoPath, { includeFiles: false }, cancellation);
+
+		// Pre-BUILD the first walk's stream as soon as the stash list (the spawn's only argv/stdin
+		// input) resolves. NOTE: `git.stream` is a lazy async generator — the process does NOT spawn
+		// until the walk loop's first iteration, so this achieves argv/stdin PREPARATION overlap only,
+		// not the git-startup overlap the original design intended (make the spawn eager — priming the
+		// generator — or delete this seam; tracked as a follow-up). Consumed exactly once by the first
+		// `getCommitsForGraphCore` call; never iterated = never spawned, so an unconsumed pre-build
+		// (fast-path win, error fallback) leaks nothing.
+		const prespawnAborter = new AbortController();
+		const onPrespawnCancel = () => prespawnAborter.abort();
+		cancellation?.addEventListener('abort', onPrespawnCancel, { once: true });
+		// An ALREADY-aborted signal never fires listeners added after the fact — propagate it by hand.
+		if (cancellation?.aborted) {
+			onPrespawnCancel();
+		}
+		let prespawn: Promise<{ stream: AsyncGenerator<string> } | undefined> | undefined = (async () => {
+			try {
+				const gitStash = await stashPromise;
+				const { stdin } = convertStashesToStdin(gitStash?.stashes);
+				const args = ['log', ...parser.arguments, `--${ordering}-order`, '--all'];
+				if (stdin) {
+					args.push('--stdin');
+				}
+				if (onlyFollowFirstParent) {
+					args.push('--first-parent');
+				}
+				const stream = this.git.stream(
+					{
+						cwd: repoPath,
+						configs: gitConfigsLog,
+						cancellation: prespawnAborter.signal,
+						stdin: stdin,
+						// See the walk spawn below for why GIT_FLUSH=0.
+						env: { GIT_FLUSH: '0' },
+					},
+					...args,
+					'--',
+				);
+				return { stream: stream };
+			} catch {
+				return undefined;
+			}
+		})();
+
+		// Current ref tips (peeled), captured ONCE at walk entry, overlapped with the rest of the prelude (a
+		// single `for-each-ref`, off the rows-walk critical path). Attached to the returned graph as `refTips`
+		// so the host can seed the NEXT rebuild's tip diff; the R6b fast path also reuses this same map for its
+		// own tip-diff gate (so there's exactly one `for-each-ref` per call whether it goes fast or full).
+		// ALWAYS forced, including on a cold build. It's tempting to skip the force when there's no seed to
+		// diff against — the cold build only records these tips for the NEXT build — but the tips it records
+		// must describe the same repo state the rows walk observed, and the rows walk always reads live git.
+		// A cached (stale) enumeration breaks that pairing in a way a later build can't detect: if a ref moves
+		// A→B before the cold load and is then reverted B→A, the seed says A, the next forced read says A, the
+		// tip diff sees no change and takes the fast path — while the cached rows were built at B and still
+		// carry the discarded commit. Staleness here is not "more work, never wrong"; only the seed side can
+		// be stale, so a move-and-revert admits a genuinely wrong fast path.
+		//
+		// Folded into the `allSettled` below rather than awaited later, so a cancellation in the gap is always
+		// observed there — ancestry reads propagate cancellation rather than treating it as missing state.
+		const refTipsPromise = this.getCurrentRefTips(repoPath, cancellation);
+
+		// Read alongside refs so every walk records the ancestry its next refresh must validate.
+		const shallowBoundaryPromise = this.getShallowBoundary(repoPath, cancellation);
+
+		const [
+			shaResult,
+			stashResult,
+			branchesResult,
+			remotesResult,
+			currentUserResult,
+			worktreesResult,
+			defaultBranchResult,
+			refTipsResult,
+			shallowBoundaryResult,
+		] = await Promise.allSettled([
+			!isUncommitted(rev, true)
+				? this.git.run(
+						{ cwd: repoPath, configs: gitConfigsLog },
+						'log',
+						...shaParser.arguments,
+						'-n1',
+						rev ?? 'HEAD',
+						'--',
+					)
+				: undefined,
+			stashPromise,
+			this.provider.branches.getBranches(repoPath, undefined, cancellation),
+			this.provider.remotes.getRemotes(repoPath, undefined, cancellation),
+			this.provider.config.getCurrentUser(repoPath),
+			this.provider.worktrees
+				?.getWorktrees(repoPath, undefined, cancellation)
+				.then((w): [GitWorktree[], Map<string, GitWorktree>] => [
+					w,
+					groupWorktreesByBranch(w, { includeDefault: true }),
+				]),
+			// Local-only: never contact the remote on the graph's hot fetch path. `isDefault` is additive,
+			// so it's simply absent until a background networked caller resolves origin/HEAD.
+			this.provider.branches.getDefaultBranchName(repoPath, undefined, { local: true }, cancellation),
+			refTipsPromise,
+			shallowBoundaryPromise,
+		]);
+
+		const branches = getSettledValue(branchesResult)?.values;
+		// `branchMap` is keyed by short name, so a local branch and a remote-tracking ref of the same name share a key;
+		// row building and every other local-only or remote-only lookup goes through the split maps. The local branch
+		// wins the shared key, as the host looks up each row's local heads (and the current branch) in it
+		const branchMap = new Map<string, GitBranch>();
+		const localBranchMap = new Map<string, GitBranch>();
+		const remoteBranchMap = new Map<string, GitBranch>();
+		if (branches != null) {
+			for (const b of branches) {
+				if (b.remote) {
+					remoteBranchMap.set(b.name, b);
+					if (!localBranchMap.has(b.name)) {
+						branchMap.set(b.name, b);
+					}
+				} else {
+					localBranchMap.set(b.name, b);
+					branchMap.set(b.name, b);
+				}
+			}
+		}
+		const headBranch = branches?.find(b => b.current);
+		const headRefUpstreamName = headBranch?.upstream?.name;
+		// A local upstream has no remote-tracking ref to mark as HEAD's
+		const headRefUpstreamLocal = headBranch?.upstream?.local === true;
+		const headRemoteUpstreamName = headRefUpstreamLocal ? undefined : headRefUpstreamName;
+		const [worktrees, worktreesByBranch] = getSettledValue(worktreesResult) ?? [[], new Map<string, GitWorktree>()];
+
+		const remotes = getSettledValue(remotesResult);
+		const remoteMap = remotes != null ? new Map(remotes.map(r => [r.name, r])) : new Map<string, GitRemote>();
+		// A remote whose own name contains a `/` can't be found by splitting a tip at its first `/`
+		const slashRemoteNames = [...remoteMap.keys()].filter(n => n.includes('/'));
+
+		// The repo's default branch (e.g. `origin/main`) reduced to its local branch name (`main`) so it
+		// can be matched against each local head's `tip` to flag the default-branch head additively.
+		const defaultBranchName = getSettledValue(defaultBranchResult);
+		const defaultLocalName =
+			defaultBranchName != null
+				? ((slashRemoteNames.length
+						? splitRemoteBranchName(defaultBranchName, slashRemoteNames)?.[1]
+						: undefined) ?? getBranchNameWithoutRemote(defaultBranchName))
+				: undefined;
+
+		let branchIdOfMainWorktree: string | undefined;
+		let mainWorktree: GitWorktree | undefined;
+		if (worktreesByBranch != null) {
+			const defaultEntry = find(worktreesByBranch, ([, wt]) => wt.isDefault);
+			if (defaultEntry != null) {
+				[branchIdOfMainWorktree, mainWorktree] = defaultEntry;
+				// Remove the main/default worktree so the branch-row decoration shows `+checkedout`
+				// (not `+worktree`) for the main checkout. `mainWorktree` is retained below purely so
+				// Undo Commit can still reach the main worktree's HEAD from a secondary worktree's graph.
+				worktreesByBranch.delete(branchIdOfMainWorktree);
+			}
+		}
+
+		const currentUser = getSettledValue(currentUserResult);
+
+		// Decoration side inputs, fingerprinted for the NEXT rebuild's metadata gate (and compared against
+		// the seed's by this call's fast path). Computed from the prelude's fresh queries — the same values
+		// row construction below embeds into row decorations.
+		const decorationFingerprint = computeDecorationFingerprint(
+			repoPath,
+			defaultBranchName,
+			defaultLocalName,
+			headRefUpstreamName,
+			headRefUpstreamLocal,
+			branches,
+			remotes,
+			worktrees,
+			currentUser,
+		);
+		const shas = getSettledValue(shaResult)?.stdout;
+		const selectSha = shas != null ? first(shaParser.parse(shas)) : undefined;
+
+		// Resolved off the critical path (started in the prelude, observed by the `allSettled` above so its
+		// rejection is never left dangling). Same map for the full walk's `refTips`, the fast path's tip-diff
+		// gate, and the fast path's `refTips`. Never rejects except on cancellation (see `getCurrentRefTips`),
+		// so a 'rejected' settlement here can only be that: rethrow it before either walk spawns a process.
+		let refTips: Map<string, string>;
+		if (refTipsResult.status === 'rejected') {
+			throw refTipsResult.reason as Error;
+		} else {
+			refTips = refTipsResult.value;
+		}
+
+		if (shallowBoundaryResult.status === 'rejected') throw shallowBoundaryResult.reason;
+
+		const shallowBoundary = shallowBoundaryResult.value;
+		const ancestrySeed =
+			options?.ancestrySeed ??
+			(options?.incrementalSeed != null
+				? { shallowBoundary: options.incrementalSeed.shallowBoundary, refTips: options.incrementalSeed.tips }
+				: undefined);
+		const ancestryChange =
+			ancestrySeed != null
+				? getAncestryChange(ancestrySeed, { shallowBoundary: shallowBoundary, refTips: refTips })
+				: undefined;
+		// Stats need the same ancestry proof even when ordering, first-parent, or a forced rebuild
+		// prevents incremental row reuse. A naked per-sha stats map carries no such proof.
+		if (ancestryChange != null || ancestrySeed == null) {
+			rowsStatsSeed = undefined;
+		}
+
+		const downstreamMap = new Map<string, string[]>();
+
+		// Appends `localName` to `upstreamName`'s downstream list, skipping it if it's already present so
+		// seeding from `branchMap` and the in-walk push below can't produce duplicate entries.
+		const addDownstream = (upstreamName: string, localName: string): void => {
+			let downstreams = downstreamMap.get(upstreamName);
+			if (downstreams == null) {
+				downstreams = [];
+				downstreamMap.set(upstreamName, downstreams);
+			}
+
+			if (!downstreams.includes(localName)) {
+				downstreams.push(localName);
+			}
+		};
+
+		// Seeds `downstreamMap` from every local branch with a remote upstream, so a branch is known to be
+		// tracked even when its tip falls outside the walked row window. Safe to call more than once (e.g. again
+		// after the incremental-walk fallback clears the map) since `addDownstream` dedupes. Its keys are read as
+		// remote refs (`owner/name`), so a local upstream, which can share that name, is left out.
+		const seedDownstreamMapFromBranches = (): void => {
+			for (const branch of localBranchMap.values()) {
+				if (branch.upstream?.name != null && !branch.upstream.local) {
+					addDownstream(branch.upstream.name, branch.name);
+				}
+			}
+		};
+
+		seedDownstreamMapFromBranches();
+
+		// There *HAS* to be a better way to get git log to return stashes, but this is the best we've found
+		const gitStash = getSettledValue(stashResult);
+		const { stdin, remappedIds } = convertStashesToStdin(gitStash?.stashes);
+
+		const avatars = new Map<string, string>();
+		const ids = new Set<string>();
+		const reachableFromHEAD = new Set<string>();
+		// SHAs on the first-parent chain from HEAD up to (excluding) the first merge commit — the only
+		// commits a plain (non-`--rebase-merges`) interactive rebase can safely rewrite. `headSha` seeds
+		// the chain; `rewriteableNextSha` tracks the next sha expected on it. Outer scope so they persist
+		// across `more()` pagination, like `reachableFromHEAD`.
+		const rewriteableFromHEAD = new Set<string>();
+		let headSha: string | undefined;
+		let rewriteableNextSha: string | undefined;
+		// Undo Commit is offered only on a worktree HEAD that is a LEAF (nothing is built on it) —
+		// undoing a commit other work is stacked on is unsafe. The leaf check is only needed for the
+		// undo-eligible tips (the active HEAD + each worktree's HEAD), so track just those shas rather
+		// than every commit, keeping this O(#worktrees) instead of O(#commits).
+		const undoableTipShas = new Set<string>();
+		if (headBranch?.sha != null) {
+			undoableTipShas.add(headBranch.sha);
+		}
+		for (const wt of worktrees) {
+			if (wt.sha != null) {
+				undoableTipShas.add(wt.sha);
+			}
+		}
+		// The subset of `undoableTipShas` that turn out to have a child (are an ancestor of another
+		// commit) — i.e. NOT leaves. Built newest-first during the walk, so by the time a tip's row is
+		// processed every newer commit (its only possible children) has been seen. Undo is withheld for
+		// shas recorded here. Stash rows are excluded (a stash sitting on a tip must not block undoing it).
+		const tipShasWithChildren = new Set<string>();
+		// SHAs reachable from HEAD's tracking upstream tip. Combined with `reachableFromHEAD`,
+		// this lets us mark commits as unpushed (reachable from HEAD but not from HEAD's upstream).
+		const reachableFromHeadUpstream = new Set<string>();
+
+		// Map<sha, Map<refKey, ref>> — inner map deduplicates refs during propagation
+		const reachableRefs = new Map<string, Map<string, ReachableRef>>();
+
+		// Stable, append-only reachability table built as we walk — the PRIMARY representation shipped to
+		// consumers. Lives in the outer scope so it accumulates across `more()` pagination; indices
+		// already assigned never change, since git reachability only propagates to older (later-walked)
+		// commits. Per-row ref arrays are NOT retained — each row keeps only its set index
+		// (`contexts.reachabilityIndex`), and the working `reachableRefs` entry is dropped once emitted.
+		// The encoder lives next to its decoder in `reachability.utils` so the wire format can't drift.
+		// A caller-supplied seed CONTINUES the prior generation's table (same id, stable indices) so
+		// rows retained across a rebuild keep valid `reachabilityIndex` values.
+		const reachabilityBuilder = createReachabilityTableBuilder(options?.reachabilitySeed);
+
+		// Set-index cache keyed by the working ref-map INSTANCE: the propagation below transfers a
+		// row's map wholesale to its (first) parent, so an entire chain interns the same object —
+		// one real intern per chain instead of one per row. Maps only ever GROW (ref seeding adds
+		// entries), so an unchanged size proves the cached index is still exact.
+		const internCache = new WeakMap<Map<string, ReachableRef>, { size: number; index: number | undefined }>();
+
+		function finalizeRowReachability(
+			row: GitGraphRow,
+			sha: string,
+			refs: Map<string, ReachableRef> | undefined,
+		): void {
+			let setIndex;
+			const cached = refs != null ? internCache.get(refs) : undefined;
+			if (cached != null && cached.size === refs!.size) {
+				setIndex = cached.index;
+			} else {
+				setIndex = reachabilityBuilder.intern(refs?.values());
+				if (refs != null) {
+					internCache.set(refs, { size: refs.size, index: setIndex });
+				}
+			}
+			if (setIndex != null) {
+				(row.contexts ??= {}).reachabilityIndex = setIndex;
+			}
+			// Drop the transient per-row arrays so emitted rows don't retain reachability, and release the
+			// working entry — once a commit is emitted its children are all walked and its parents already
+			// seeded, so nothing reads `reachableRefs.get(sha)` again (orderings keep parents after children).
+			row.reachability = undefined;
+			reachableRefs.delete(sha);
+		}
+
+		const rowStats: GitGraphRowsStats = new Map<string, GitGraphRowStats>();
+		let pendingRowsStatsCount = 0;
+		let iterations = 0;
+		let total = 0;
+
+		// Hoisted so the ordered walk AND the R6b incremental fast path share one context. It holds the
+		// outer accumulator sets BY REFERENCE (they mutate in place across `more()` pagination / replay), so
+		// building it once is equivalent to the prior per-call construction.
+		const rowProcessor = options?.rowProcessor;
+		const graphCtx: GraphContext | undefined =
+			rowProcessor != null
+				? {
+						repoPath: repoPath,
+						useAvatars: cfg?.graph?.avatars ?? true,
+						branches: branchMap,
+						remotes: remoteMap,
+						worktreesByBranch: worktreesByBranch,
+						branchIdOfMainWorktree: branchIdOfMainWorktree,
+						stashes: gitStash?.stashes,
+						reachableFromHEAD: reachableFromHEAD,
+						rewriteableFromHEAD: rewriteableFromHEAD,
+						tipShasWithChildren: tipShasWithChildren,
+						// `undefined` when HEAD has no upstream, so the processor flags nothing as
+						// unpublished; otherwise the live set (mutated during the walk, read by ref).
+						reachableFromHeadUpstream:
+							headRemoteUpstreamName != null ? reachableFromHeadUpstream : undefined,
+						avatars: avatars,
+					}
+				: undefined;
+
+		// Parses one commit record into a row (ref badges, parents, stash vs commit) but performs NO
+		// reachability/HEAD/downstream accumulation — that half lives in `accumulateRowState`, so the ordered
+		// walk and the fast path (which replays accumulation over reused rows, deriving ref lists from their
+		// own decoration) share one propagation implementation. Returns `undefined` when the record dedups to
+		// an already-seen remapped-stash sha. Faithful extraction of the walk's former inline body — must stay
+		// byte-identical to it (the equivalence harness pins this).
+		function buildRowFromCommit(commit: GraphCommitRecord):
+			| {
+					row: GitGraphRow;
+					refHeads: GitGraphRowHead[];
+					refRemoteHeads: GitGraphRowRemoteHead[];
+					refTags: GitGraphRowTag[];
+					head: boolean;
+					parents: string[];
+			  }
+			| undefined {
+			total++;
+			let shaOrRemapped: string | undefined = remappedIds.get(commit.sha);
+			if (shaOrRemapped && ids.has(shaOrRemapped)) return undefined;
+
+			shaOrRemapped ??= commit.sha;
+			ids.add(shaOrRemapped);
+
+			const refHeads: GitGraphRowHead[] = [];
+			const refRemoteHeads: GitGraphRowRemoteHead[] = [];
+			const refTags: GitGraphRowTag[] = [];
+			// `head` is per-tip (drives `isCurrentHead` on the branch it decorates); `sawHead` sticks once ANY
+			// tip is HEAD so `accumulateRowState` seeds `reachableFromHEAD` even when HEAD isn't the last tip.
+			let head = false;
+			let sawHead = false;
+
+			if (commit.tips) {
+				for (let tip of commit.tips.split(', ')) {
+					head = false;
+					if (tip.startsWith('tag: ')) {
+						const tagName = tip.substring(15 /* `tag: refs/tags/` */);
+						refTags.push({
+							id: getTagId(repoPath, tagName),
+							name: tagName,
+							// Not currently used, so don't bother looking it up
+							annotated: true,
+						});
+						continue;
+					}
+
+					if (tip.startsWith('HEAD')) {
+						head = true;
+						sawHead = true;
+						if (tip !== 'HEAD') {
+							tip = tip.substring(8);
+						}
+					}
+
+					// Tips are full refnames (see `getGraphParser`), so a local branch and a remote-tracking ref that
+					// share a short name (`team/fork/work` beside remote `team/fork`'s `work`) stay distinct
+					let name: string;
+					let branch: GitBranch | undefined;
+					if (tip.startsWith('refs/heads/')) {
+						name = tip.substring(11);
+						branch = localBranchMap.get(name);
+					} else if (tip.startsWith('refs/remotes/')) {
+						name = tip.substring(13);
+						branch = remoteBranchMap.get(name);
+
+						const slashRemote = slashRemoteNames.length
+							? splitRemoteBranchName(name, slashRemoteNames)
+							: undefined;
+						// `name` is already past `refs/remotes/`, so its first segment is the remote — the `gitRefs`
+						// helpers skip a leading `remotes/` and would miss a remote named `remotes`
+						const slash = name.indexOf('/');
+						const remoteName = slashRemote?.[0] ?? (slash > 0 ? name.substring(0, slash) : undefined);
+						const remote = remoteName ? remoteMap.get(remoteName) : undefined;
+						if (remote != null) {
+							const branchName = slashRemote?.[1] ?? name.substring(slash + 1);
+							if (branchName === 'HEAD') continue;
+
+							refRemoteHeads.push({
+								id: getBranchId(repoPath, true, name),
+								name: branchName,
+								owner: remote.name,
+								url: remote.url,
+								current: name === headRemoteUpstreamName,
+								// `defaultLocalName!` is non-null here because `name === defaultBranchName` short-circuits when `defaultBranchName` is null.
+								isDefault: name === defaultBranchName && !localBranchMap.has(defaultLocalName!),
+								hostingServiceType: remote.provider?.gkProviderId,
+								starred: branch?.starred || undefined,
+							});
+							continue;
+						}
+						// A remote-tracking ref of a remote that no longer exists falls through to a local head
+					} else if (tip === 'HEAD') {
+						// Detached
+						name = tip;
+					} else {
+						// `refs/stash`, or a namespace git was configured to decorate (`log.initialDecorationSet`)
+						continue;
+					}
+
+					const branchId = branch?.id ?? getBranchId(repoPath, false, name);
+					// `worktreesByBranch` has the main/default worktree removed, so recover it here.
+					const worktree =
+						worktreesByBranch?.get(branchId) ??
+						(branchId === branchIdOfMainWorktree ? mainWorktree : undefined);
+					const worktreeRef =
+						worktree != null
+							? {
+									id: getWorktreeId(repoPath, worktree.name),
+									path: worktree.path,
+									isDefault: worktree.isDefault === true,
+								}
+							: undefined;
+					refHeads.push({
+						id: branchId,
+						name: name,
+						isCurrentHead: head,
+						upstream:
+							branch?.upstream != null
+								? {
+										name: branch.upstream.name,
+										id: getBranchId(repoPath, !branch.upstream.local, branch.upstream.name),
+										missing: branch.upstream.missing,
+										state: {
+											ahead: branch.upstream.state.ahead,
+											behind: branch.upstream.state.behind,
+										},
+									}
+								: undefined,
+						worktree: worktreeRef,
+						isDefault: defaultLocalName != null && name === defaultLocalName,
+						starred: branch?.starred || undefined,
+					});
+				}
+			}
+
+			const parents = commit.parents ? commit.parents.split(' ') : [];
+			const stash = gitStash?.stashes.get(shaOrRemapped);
+			let row: GitGraphRow;
+			if (stash != null) {
+				row = {
+					sha: shaOrRemapped,
+					// Always only return the first parent for stashes, as it is a Git implementation for the index and untracked files
+					parents: parents.slice(0, 1),
+					author: currentUser?.name ?? commit.author,
+					email: commit.authorEmail,
+					date: Number(ordering === 'author-date' ? commit.authorDate : commit.committerDate) * 1000,
+					commitDate: Number(commit.committerDate) * 1000,
+					message: (stash.message ?? commit.message).trim(),
+					kind: 'stash',
+					stashNumber: stash.stashNumber,
+					heads: refHeads.length ? refHeads : undefined,
+					remotes: refRemoteHeads.length ? refRemoteHeads : undefined,
+					tags: refTags.length ? refTags : undefined,
+					isCurrentUser: true,
+				};
+				// Don't seed `rowStats` from `stash.stats` here: the graph's stash list is fetched with
+				// `includeFiles: false`, so the commit model SYNTHESIZES a zero-stats object from its empty
+				// fileset — seeding it marks the stash "covered" and permanently blanks it. The deferred
+				// stats pass owns stash stats (first-parent diff, keyed by stash sha).
+			} else {
+				const isCurrentUser = isUserMatch(currentUser, commit.author, commit.authorEmail);
+				row = {
+					sha: shaOrRemapped,
+					parents: onlyFollowFirstParent ? parents.slice(0, 1) : parents,
+					author: commit.author,
+					email: commit.authorEmail,
+					date: Number(ordering === 'author-date' ? commit.authorDate : commit.committerDate) * 1000,
+					commitDate: Number(commit.committerDate) * 1000,
+					message: commit.message.trim(),
+					kind: parents.length > 1 ? 'merge' : 'commit',
+					heads: refHeads.length ? refHeads : undefined,
+					remotes: refRemoteHeads.length ? refRemoteHeads : undefined,
+					tags: refTags.length ? refTags : undefined,
+					isCurrentUser: isCurrentUser || undefined,
+				};
+				if (commit.stats != null) {
+					rowStats.set(shaOrRemapped, commit.stats);
+				}
+			}
+
+			return {
+				row: row,
+				refHeads: refHeads,
+				refRemoteHeads: refRemoteHeads,
+				refTags: refTags,
+				head: sawHead,
+				parents: parents,
+			};
+		}
+
+		// The propagation half of the walk, factored out so the fast path can replay it in memory over reused
+		// rows (passing their own `heads`/`remotes`/`tags` as the ref lists and their full `parents`). Mutates
+		// the shared reachability/HEAD/downstream accumulators and returns the row's post-propagation
+		// reachable-ref map (for interning + flag derivation). `parents` is the FULL parent list (the walk
+		// always propagates through every parent, even when the emitted row stores a sliced set). Faithful
+		// extraction of the walk's former inline body — must stay byte-identical to it.
+		function accumulateRowState(
+			sha: string,
+			parents: string[],
+			refHeads: GitGraphRowHead[],
+			refRemoteHeads: GitGraphRowRemoteHead[],
+			refTags: GitGraphRowTag[],
+			head: boolean,
+			isStash: boolean,
+		): Map<string, ReachableRef> | undefined {
+			if (head) {
+				reachableFromHEAD.add(sha);
+				headSha ??= sha;
+			}
+			if (reachableFromHEAD.has(sha)) {
+				for (const parent of parents) {
+					reachableFromHEAD.add(parent);
+				}
+			}
+
+			// First-parent rewriteable chain from HEAD (see the field's declaration for the full rationale).
+			if (sha === headSha || sha === rewriteableNextSha) {
+				if (parents.length === 1) {
+					rewriteableFromHEAD.add(sha);
+					rewriteableNextSha = parents[0];
+				} else {
+					rewriteableNextSha = undefined;
+				}
+			}
+
+			// A remote head with `current` set IS HEAD's tracking upstream tip (see `buildRowFromCommit`).
+			if (refRemoteHeads.some(r => r.current)) {
+				reachableFromHeadUpstream.add(sha);
+			}
+			if (reachableFromHeadUpstream.has(sha)) {
+				for (const parent of parents) {
+					reachableFromHeadUpstream.add(parent);
+				}
+			}
+
+			// Seed reachability from all ref types on this commit.
+			if (refHeads.length > 0 || refRemoteHeads.length > 0 || refTags.length > 0) {
+				let refs = reachableRefs.get(sha);
+				if (refs == null) {
+					refs = new Map<string, ReachableRef>();
+					reachableRefs.set(sha, refs);
+				}
+				for (const h of refHeads) {
+					refs.set(`b:${h.name}`, {
+						refType: 'branch',
+						name: h.name,
+						remote: false,
+						current: h.isCurrentHead,
+					});
+				}
+				for (const r of refRemoteHeads) {
+					const name = `${r.owner}/${r.name}`;
+					refs.set(`r:${name}`, { refType: 'branch', name: name, remote: true });
+				}
+				for (const t of refTags) {
+					refs.set(`t:${t.name}`, { refType: 'tag', name: t.name });
+				}
+			}
+
+			// Propagate reachability to parents (ownership-transfer fast path; see the `reachableRefs`
+			// declaration + `finalizeRowReachability` for why the first childless parent may alias the map).
+			const currentRefs = reachableRefs.get(sha);
+			if (currentRefs != null && currentRefs.size > 0) {
+				let transferred = false;
+				for (const parent of parents) {
+					const parentRefs = reachableRefs.get(parent);
+					if (parentRefs == null) {
+						if (transferred) {
+							reachableRefs.set(parent, new Map(currentRefs));
+						} else {
+							transferred = true;
+							reachableRefs.set(parent, currentRefs);
+						}
+						continue;
+					}
+
+					for (const [key, ref] of currentRefs) {
+						if (!parentRefs.has(key)) {
+							parentRefs.set(key, ref);
+						}
+					}
+				}
+			}
+
+			// Mark any undo-eligible tip that THIS non-stash commit builds on as non-leaf (stash rows excluded).
+			if (!isStash) {
+				for (const parent of parents) {
+					if (undoableTipShas.has(parent)) {
+						tipShasWithChildren.add(parent);
+					}
+				}
+			}
+
+			// Downstreams: each branch tip → its upstream name. Fallback for when `getBranches` failed and
+			// `branchMap` (and so the seed above) is empty; `addDownstream` dedupes against the seed.
+			for (const h of refHeads) {
+				if (h.upstream?.name != null && localBranchMap.get(h.name)?.upstream?.local !== true) {
+					addDownstream(h.upstream.name, h.name);
+				}
+			}
+
+			return reachableRefs.get(sha);
+		}
+
+		// Builds the deferred `--shortstat` query for the given rows (only shas the seed doesn't cover),
+		// shared by the ordered walk and the fast path. Increments `pendingRowsStatsCount` and resolves it
+		// when the background query completes; returns `undefined` when stats aren't requested.
+		const buildRowsStatsDeferred = (rows: GitGraphRow[]): GitGraph['rowsStatsDeferred'] => {
+			if (!deferStats) return undefined;
+
+			pendingRowsStatsCount++;
+
+			// oxlint-disable-next-line no-async-promise-executor
+			const promise = new Promise<void>(async resolve => {
+				try {
+					// The seed passed the ancestry check — query only shas it does not already cover.
+					let missingStdin = '';
+					let missingStashStdin = '';
+					for (const row of rows) {
+						if (rowStats.has(row.sha)) continue;
+
+						const seeded = rowsStatsSeed?.get(row.sha);
+						if (seeded != null) {
+							rowStats.set(row.sha, seeded);
+							continue;
+						}
+
+						if (row.kind === 'stash') {
+							missingStashStdin += `${row.sha}\n`;
+						} else {
+							missingStdin += `${row.sha}\n`;
+						}
+					}
+
+					// Fully seeded — nothing new to compute, so no git process at all.
+					if (!missingStdin && !missingStashStdin) return;
+
+					// A stash is a merge commit, so its own shortstat record is empty. Stashes get their own
+					// query diffed against the first parent (`-m --first-parent` — what `git stash show`
+					// reports), keyed directly by stash sha: no parent remapping, so none of the old
+					// `--no-walk` time-order races that could let the empty record win and blank the stash.
+					const [statsResult, stashStatsResult] = await Promise.allSettled([
+						missingStdin
+							? this.git.run(
+									{
+										cwd: repoPath,
+										configs: gitConfigsLog,
+										stdin: missingStdin,
+										priority: 'background',
+									},
+									'log',
+									'--no-walk',
+									'--stdin',
+									...statsParser.arguments,
+									'--',
+								)
+							: undefined,
+						missingStashStdin
+							? this.git.run(
+									{
+										cwd: repoPath,
+										configs: gitConfigsLog,
+										stdin: missingStashStdin,
+										priority: 'background',
+									},
+									'log',
+									'--no-walk',
+									'--stdin',
+									'-m',
+									'--first-parent',
+									...statsParser.arguments,
+									'--',
+								)
+							: undefined,
+					]);
+
+					for (const result of [getSettledValue(statsResult), getSettledValue(stashStatsResult)]) {
+						if (!result?.stdout) continue;
+
+						for (const stat of statsParser.parse(result.stdout)) {
+							// Don't overwrite stats already populated for this sha
+							if (rowStats.has(stat.sha)) continue;
+
+							rowStats.set(stat.sha, stat.stats);
+						}
+					}
+				} finally {
+					pendingRowsStatsCount--;
+					resolve();
+				}
+			});
+
+			return { isLoaded: () => pendingRowsStatsCount === 0, promise: promise };
+		};
+
+		const args = ['log', ...parser.arguments, `--${ordering}-order`, '--all'];
+		if (stdin) {
+			args.push('--stdin');
+		}
+		if (onlyFollowFirstParent) {
+			args.push('--first-parent');
+		}
+
+		async function getCommitsForGraphCore(
+			this: GraphGitSubProvider,
+			limit: number,
+			sha?: string,
+			cursor?: { sha: string; skip: number },
+			cancellation?: AbortSignal,
+		): Promise<GitGraph> {
+			try {
+				iterations++;
+
+				// Consume the pre-spawned first walk when available (argv identical by construction:
+				// no cursor on the first call); paging/retry calls spawn normally. The pre-spawn's
+				// aborter doubles as this call's so the limit-stop kills the right process.
+				const prespawned = cursor == null && prespawn != null ? await prespawn : undefined;
+				prespawn = undefined;
+
+				const aborter = prespawned != null ? prespawnAborter : new AbortController();
+				const onAbort = () => {
+					aborter.abort();
+				};
+				cancellation?.addEventListener('abort', onAbort, { once: true });
+				// An ALREADY-aborted signal (e.g. `toAbortSignal` of a cancelled token) never fires listeners
+				// added after the fact — without this the walk would run to completion unabortably.
+				if (cancellation?.aborted) {
+					onAbort();
+				}
+				using _disposable = createDisposable(() => cancellation?.removeEventListener('abort', onAbort));
+
+				const stream =
+					prespawned?.stream ??
+					this.git.stream(
+						{
+							cwd: repoPath,
+							configs: gitConfigsLog,
+							cancellation: aborter.signal,
+							stdin: stdin,
+							// Git flushes stdout per record to a pipe, producing thousands of tiny chunks the
+							// node side must individually await. Full stdio buffering delivers the same bytes
+							// in far fewer, larger chunks — right for this bulk walk (an incremental consumer
+							// wanting per-record latency should NOT set this).
+							env: { GIT_FLUSH: '0' },
+						},
+						...args,
+						cursor?.skip ? `--skip=${cursor.skip}` : undefined,
+						'--',
+					);
+				using _streamDisposer = createDisposable(() => void stream.return?.(undefined));
+
+				const rows: GitGraphRow[] = [];
+
+				let count = 0;
+				let found = false;
+				let hasMore = false;
+
+				// Batched parse when available: one awaited yield per stream chunk instead of two
+				// promise hops per record — the walk's async-iterator overhead collapses. The
+				// with-stats parser (unused here — stats are always deferred) has no batched mode,
+				// so wrap its per-record stream into singleton batches to keep one loop shape.
+				const batches =
+					parser.parseAsyncBatched?.(stream) ??
+					(async function* (it) {
+						for await (const commit of it) {
+							yield [commit];
+						}
+					})(parser.parseAsync(stream));
+
+				outer: for await (const batch of batches) {
+					for (const commit of batch) {
+						// Stopping logic (check AFTER processing the commit):
+						// - SHA + limit > 0: Find SHA, ensure at least `limit` commits loaded
+						// - SHA + limit = 0: Find SHA, stop immediately
+						// - No SHA + limit > 0: Load exactly `limit` commits
+						// - No SHA + limit = 0: Load everything remaining
+						// - SHA + limit > 0 + still unfound past 10× limit: defensive cap so an unreachable
+						//   SHA (e.g. a stale merge-base the webview hasn't yet seen invalidated) can't
+						//   walk the entire history. `hasMore=true` lets callers retry; the graph-wrapper
+						//   side deduplicates re-requests so the cap doesn't loop.
+						if (
+							(limit && count >= limit && (!sha || found || count >= limit * 10)) ||
+							(!limit && sha && found)
+						) {
+							hasMore = true;
+							aborter.abort();
+							break outer;
+						}
+
+						if (sha && !found && commit.sha === sha) {
+							found = true;
+						}
+
+						count++;
+						if (ids.has(commit.sha)) continue;
+
+						const built = buildRowFromCommit(commit);
+						if (built == null) continue; // remapped-stash dedup
+
+						const { row, refHeads, refRemoteHeads, refTags, head, parents } = built;
+						const refs = accumulateRowState(
+							row.sha,
+							parents,
+							refHeads,
+							refRemoteHeads,
+							refTags,
+							head,
+							row.kind === 'stash',
+						);
+						// Transient: the row processor's `+unique` decision reads this; stripped by finalize.
+						// Unsorted (the consumer re-sorts after decoding) — order doesn't affect interning.
+						row.reachability = refs?.size ? { partial: true, refs: [...refs.values()] } : undefined;
+						rowProcessor?.processRow(row, graphCtx!);
+						finalizeRowReachability(row, row.sha, refs);
+						rows.push(row);
+					}
+				}
+
+				const startingCursor = cursor?.sha;
+				const lastSha = last(ids);
+				cursor = lastSha != null ? { sha: lastSha, skip: total - iterations } : undefined;
+
+				const rowsStatsDeferred = buildRowsStatsDeferred(rows);
+
+				return {
+					repoPath: repoPath,
+					avatars: avatars,
+					ids: ids,
+					includes: options?.include,
+					branches: branchMap,
+					remotes: remoteMap,
+					downstreams: downstreamMap,
+					stashes: gitStash?.stashes,
+					worktrees: worktrees,
+					worktreesByBranch: worktreesByBranch,
+					reachableFromHEAD: reachableFromHEAD,
+					rewriteableFromHEAD: rewriteableFromHEAD,
+					reachability: reachabilityBuilder.build(),
+					refTips: refTips,
+					decorationFingerprint: decorationFingerprint,
+					shallowBoundary: shallowBoundary,
+					rows: rows,
+					id: sha ?? rev,
+					rowsStats: rowStats,
+					rowsStatsDeferred: rowsStatsDeferred,
+					paging: {
+						limit: limit === 0 ? count : limit,
+						startingCursor: startingCursor,
+						hasMore: hasMore,
+					},
+					more: async (
+						limit: number,
+						sha?: string,
+						cancellation?: AbortSignal,
+					): Promise<GitGraph | undefined> =>
+						getCommitsForGraphCore.call(this, limit, sha, cursor, cancellation),
+				};
+			} catch (ex) {
+				scope?.error(ex);
+				debugger;
+
+				throw ex;
+			}
+		}
+
+		// R6b incremental head-walk fast path: enumerate ONLY the new commits, stitch the seed's cached tail,
+		// and re-derive flags/reachability in memory — instead of re-walking every loaded row. Returns
+		// `undefined` (→ full walk below) on any structural change. Reports the outcome via `onIncrementalResult`.
+		let incrementalFallbackReason: IncrementalGraphFallbackReason | undefined;
+		const tryIncrementalGraph = async (seed: GraphIncrementalSeed): Promise<GitGraph | undefined> => {
+			const onResult = options?.onIncrementalResult;
+			// Set only by a session rebind: the path the seed's rows were walked at. A rebind with unchanged
+			// tips looks exactly like a checkout to the gates below, but additionally needs the metadata
+			// gate's old-perspective comparison and the per-row id re-stamp, both keyed off this.
+			const rebindFromRepoPath = options?.rebindFromRepoPath;
+			// Reports a fallback outcome; callers then `return undefined` to take the full walk.
+			const fallback = (reason: IncrementalGraphFallbackReason): void => {
+				incrementalFallbackReason = reason;
+				onResult?.({ path: 'fallback', reason: reason });
+			};
+
+			if (ancestryChange != null) {
+				fallback(ancestryChange);
+				return undefined;
+			}
+
+			// Cheap gates (no git).
+			if (rowProcessor == null || graphCtx == null) {
+				fallback('no-row-processor');
+				return undefined;
+			}
+			// The convergence + date-boundary reasoning is only sound for `date` order.
+			if (ordering !== 'date' || seed.ordering !== 'date') {
+				fallback('ordering-not-date');
+				return undefined;
+			}
+
+			const seedShas = new Set<string>(seed.rows.map(r => r.sha));
+
+			// A `rev` narrows the walk's find/stop semantics. The host's same-repo rebuild passes a rebuild
+			// ANCHOR sha (the loaded window's bottom) to pin that boundary — the anchor is by construction inside
+			// the seed, and the stitch + trim below preserve the seed tail, so the fast path can honor it (it
+			// grows the window down to the anchor; see the window/limit shape below). A rev NOT in the seed is a
+			// real out-of-window target (deep link, reveal) the fast path can't reach → full walk.
+			if (rev != null && !seedShas.has(rev)) {
+				fallback('rev-outside-seed');
+				return undefined;
+			}
+
+			// First-parent (now or in the seed) means the emitted rows carry sliced parents the in-memory
+			// re-derivation can't expand back to the full set the walk propagates through.
+			if (onlyFollowFirstParent || seed.onlyFollowFirstParent) {
+				fallback('first-parent');
+				return undefined;
+			}
+
+			// The ACTUAL current HEAD sha (to seed reachable-from-HEAD and detect a checkout). Distinct from
+			// `selectSha`, which resolves the `rev` ANCHOR — not HEAD — when a rev is passed: with no rev
+			// `selectSha` already IS the resolved HEAD, otherwise take the current branch tip (also populated for
+			// a detached HEAD). The graph `id` still mirrors the full walk's `selectSha ?? rev` (below).
+			const currentHeadSha = rev == null ? selectSha : headBranch?.sha;
+
+			// Reuse the prelude's tips (same repo state — nothing mutates between the prelude and here).
+			const currentTips = refTips;
+
+			// Ref-tip diff gate: deletions + non-fast-forward moves force a full walk.
+			// Reused rows whose ref badges / current-HEAD flag changed and must be rebuilt from raw git.
+			const affected = new Set<string>();
+			const ffPairs: [string, string][] = [];
+			// A moved/new REMOTE ref also changes its tracking branches' ahead/behind — baked into those
+			// branch pills' serialized contexts (`+ahead`/`+behind` drive Push/Pull menu gating) — while the
+			// LOCAL tips stay put; refetch those rows too so a plain fetch corrects them without a full walk.
+			const addTrackingBranchRows = (remoteRefname: string): void => {
+				if (branches == null || !remoteRefname.startsWith('refs/remotes/')) return;
+
+				const upstreamName = remoteRefname.substring('refs/remotes/'.length);
+				for (const b of branches) {
+					if (b.upstream?.name === upstreamName && b.sha != null && seedShas.has(b.sha)) {
+						affected.add(b.sha);
+					}
+				}
+			};
+			for (const [refname, oldSha] of seed.tips) {
+				if (!isMoveableGraphRef(refname)) continue;
+
+				const cur = currentTips.get(refname);
+				if (cur == null) {
+					fallback('ref-deleted');
+					return undefined;
+				}
+
+				if (cur !== oldSha) {
+					ffPairs.push([oldSha, cur]);
+					if (seedShas.has(oldSha)) {
+						affected.add(oldSha);
+					}
+					if (seedShas.has(cur)) {
+						affected.add(cur);
+					}
+					addTrackingBranchRows(refname);
+				}
+			}
+			// New refs (present now, absent from the seed) landing on an already-loaded row.
+			for (const [refname, cur] of currentTips) {
+				if (!isMoveableGraphRef(refname) || seed.tips.has(refname)) continue;
+
+				if (seedShas.has(cur)) {
+					affected.add(cur);
+				}
+				addTrackingBranchRows(refname);
+			}
+			if (ffPairs.length > 0) {
+				// Bounded fan-out: a mass-moved-ref fetch can produce hundreds of pairs — an unbounded
+				// `Promise.all` would monopolize (or overflow) the git queue. Small chunks stay well under the
+				// queue's slot count, and the first non-fast-forward bails without paying for the rest.
+				const ffCheckChunkSize = 4;
+				for (let i = 0; i < ffPairs.length; i += ffCheckChunkSize) {
+					const results = await Promise.all(
+						ffPairs
+							.slice(i, i + ffCheckChunkSize)
+							.map(([oldSha, newSha]) => this.isFastForward(repoPath, oldSha, newSha, cancellation)),
+					);
+					if (results.some(ok => !ok)) {
+						fallback('ref-non-fast-forward');
+						return undefined;
+					}
+				}
+			}
+
+			// HEAD move (checkout) — old/new HEAD rows need their `isCurrentHead` re-derived from raw git. A
+			// checkout between two branches sitting on the SAME commit moves no sha yet flips which head carries
+			// `isCurrentHead`, so compare the current-head ref NAME too (both are git short refnames; a detached
+			// HEAD has an undefined branch name). Either sha or name differing re-derives both endpoints' rows.
+			const priorHeadRow = seed.rows.find(r => r.heads?.some(h => h.isCurrentHead));
+			const priorHeadSha = priorHeadRow?.sha;
+			const priorHeadName = priorHeadRow?.heads?.find(h => h.isCurrentHead)?.name;
+			const currentHeadName = headBranch?.name;
+			if (priorHeadSha !== currentHeadSha || priorHeadName !== currentHeadName) {
+				if (priorHeadSha != null && seedShas.has(priorHeadSha)) {
+					affected.add(priorHeadSha);
+				}
+				if (currentHeadSha != null && seedShas.has(currentHeadSha)) {
+					affected.add(currentHeadSha);
+				}
+			}
+
+			// Stash-set gate: any push/pop/drop changes the injected rows.
+			const currentStashShas =
+				gitStash?.stashes != null ? new Set<string>(gitStash.stashes.keys()) : new Set<string>();
+			const priorStashShas = seed.rows.filter(r => r.kind === 'stash').map(r => r.sha);
+			if (priorStashShas.length !== currentStashShas.size || priorStashShas.some(s => !currentStashShas.has(s))) {
+				fallback('stash-changed');
+				return undefined;
+			}
+
+			// Decoration-metadata gate: rows EMBED metadata derived from side inputs (default branch,
+			// upstreams, worktree assignments, remote urls/providers, current user) that can change without
+			// moving any ref tip — e.g. `git remote set-head`, `branch --set-upstream-to`, `worktree add`.
+			// Reused rows keep their prior decorations (only flags/reachability are re-derived below), so ANY
+			// change here must take the full walk that rebuilds them. An absent seed fingerprint never matches —
+			// safe full fallback. Deliberately LAST of the gates so the structural gates above keep their precise
+			// reasons (a deleted tracking branch reports `ref-deleted`, not this).
+			//
+			// On a REBIND, `wd:` (default worktree's checkout) and `h:` (HEAD's upstream) are expected to
+			// differ for benign perspective-only reasons, so recompute the comparison from the OLD path and
+			// the SEED's HEAD upstream — equal means nothing but the rebind changed; unequal still falls back.
+			// Neutralizing `h:` is sound only because `remotes[].current` (the field it feeds) is re-derived
+			// in the replay pass below. The graph still REPORTS its fingerprint from the NEW perspective, for
+			// the next refresh to gate against.
+			const seedComparableFingerprint =
+				rebindFromRepoPath != null
+					? computeDecorationFingerprint(
+							rebindFromRepoPath,
+							defaultBranchName,
+							defaultLocalName,
+							seed.headRefUpstreamName,
+							seed.headRefUpstreamLocal === true,
+							branches,
+							remotes,
+							worktrees,
+							currentUser,
+						)
+					: decorationFingerprint;
+			if (seed.decorationFingerprint !== seedComparableFingerprint) {
+				fallback('metadata-changed');
+				return undefined;
+			}
+
+			// `wd:` blind spot on a rebind AWAY FROM the default worktree: that component only exists when NOT
+			// on the default worktree, so it's absent from both the seed and the recompute above — a checkout
+			// made in the default worktree during the window would slip through and get reused with a stale
+			// `+checkedout` marker. Guard by comparing the seed's own current-head name (walked at the default
+			// worktree) against the worktree's current branch; an unknown seed head can't prove anything, so
+			// it falls back too. The other two rebind directions need no guard — `wd:` is present on both
+			// sides there already.
+			if (rebindFromRepoPath != null) {
+				const defaultWorktree = worktrees.find(w => w.isDefault);
+				if (rebindFromRepoPath === defaultWorktree?.path) {
+					if (priorHeadName !== defaultWorktree.branch?.name) {
+						fallback('metadata-changed');
+						return undefined;
+					}
+				}
+			}
+
+			// Per-branch upstream retargets/removals/additions on RETAINED rows: a branch pill embeds its
+			// upstream, and a tip-stationary branch's row is reused as-is — so compare every seed-row pill's
+			// embedded upstream against the current mapping. Kept OUT of the fingerprint so a NEW tracking
+			// branch stays fast (its row is rebuilt via the `affected` refetch; a deleted one is `ref-deleted`).
+			for (const r of seed.rows) {
+				if (r.heads == null) continue;
+
+				for (const h of r.heads) {
+					const currentBranch = localBranchMap.get(h.name);
+					if (currentBranch == null) continue;
+
+					// By id, not name: a local `origin/x` and the remote `origin/x` share a short name. Ids carry
+					// the seed's repoPath, which a rebind hasn't restamped yet.
+					const currentUpstream = currentBranch.upstream;
+					if (
+						h.upstream?.id !==
+						(currentUpstream != null
+							? getBranchId(rebindFromRepoPath ?? repoPath, !currentUpstream.local, currentUpstream.name)
+							: undefined)
+					) {
+						fallback('metadata-changed');
+						return undefined;
+					}
+				}
+			}
+
+			// Enumerate the new commits (reachable now but not from any prior tip) + boundary check.
+			// Stashes' rows are already in the seed, so their shas join the EXCLUSIONS (passing them via
+			// `--all` would re-emit them as "new"). The exclusions are fed as `^sha` lines over stdin, NOT
+			// argv — a repo can carry more distinct ref tips (tags, PR refs) than a command line holds
+			// (Windows caps ~32K chars), and stdin is unbounded.
+			const notShas = new Set<string>(seed.tips.values());
+			for (const s of currentStashShas) {
+				notShas.add(s);
+			}
+			let exclusionsStdin = '';
+			for (const s of notShas) {
+				exclusionsStdin += `^${s}\n`;
+			}
+			const enumResult = await this.git.run(
+				{ cwd: repoPath, configs: gitConfigsLog, cancellation: cancellation, stdin: exclusionsStdin },
+				'log',
+				...parser.arguments,
+				'--date-order',
+				'--all',
+				'--stdin',
+				'--',
+			);
+			const newCommits = [...parser.parse(enumResult.stdout)];
+
+			// Stitch soundness: the result must equal [...new, ...seed]. That holds iff every new commit is
+			// strictly newer than the seam (the max date across the seed window) — an equal/older date could
+			// interleave under `--date-order`, so bail. Checked on raw dates BEFORE any mutation.
+			let maxSeedDate = Number.NEGATIVE_INFINITY;
+			for (const r of seed.rows) {
+				if (r.date > maxSeedDate) {
+					maxSeedDate = r.date;
+				}
+			}
+			for (const c of newCommits) {
+				if (Number(c.committerDate) * 1000 <= maxSeedDate) {
+					fallback('date-boundary');
+					return undefined;
+				}
+			}
+
+			// Window/limit shape.
+			const stitchedSize = newCommits.length + seed.rows.length;
+			const seedHasMore = seed.hasMore === true;
+			const noLimit = defaultLimit === 0;
+			// The rev anchor (a seed sha) bounds the walk's BOTTOM: the full walk with `sha=rev` grows its window
+			// down to (and INCLUDING) rev before honoring the limit — and with no limit it stops the instant it
+			// finds rev — so the anchor row survives the trim even when `limit` alone would cut above it. Its index
+			// in the assembled window `[new…, seed…]` (new commits never dedup, so `newRows.length` equals
+			// `newCommits.length`): `newCommits.length + <its index in seed.rows>`.
+			const revWindowIndex = rev != null ? newCommits.length + seed.rows.findIndex(r => r.sha === rev) : -1;
+			// Rows the walk targets: `defaultLimit`, raised to at least include the rev anchor (with no limit + rev,
+			// exactly `revWindowIndex + 1`, since the walk stops on finding rev).
+			const targetRows =
+				rev != null
+					? noLimit
+						? revWindowIndex + 1
+						: Math.max(defaultLimit, revWindowIndex + 1)
+					: defaultLimit;
+			// The fast path can only serve rows the seed carries; if more is wanted than it holds AND there was
+			// more below it, git is needed for the gap → full walk. (No rev + no limit wants everything below.)
+			const wantsBelowWindow = rev != null ? targetRows > stitchedSize : noLimit || defaultLimit > stitchedSize;
+			if (wantsBelowWindow && seedHasMore) {
+				fallback('limit-exceeds-seed');
+				return undefined;
+			}
+
+			const trimTo =
+				rev != null
+					? Math.min(targetRows, stitchedSize)
+					: noLimit
+						? stitchedSize
+						: Math.min(defaultLimit, stitchedSize);
+			const hasMore = trimTo < stitchedSize || seedHasMore;
+			// Stashes present in the window make the `more()` skip math (records vs unique ids) ambiguous —
+			// only take the fast path when nothing pages below.
+			if (currentStashShas.size > 0 && hasMore) {
+				fallback('stash-window-conflict');
+				return undefined;
+			}
+
+			// Commit to the fast path — mutations begin here (all fallbacks are above).
+			const newRows: GitGraphRow[] = [];
+			for (const c of newCommits) {
+				const built = buildRowFromCommit(c);
+				if (built != null) {
+					newRows.push(built.row);
+				}
+			}
+
+			// Rebuild the affected reused rows from raw git (bounded `--no-walk`) so their ref badges + emojified
+			// message + current-HEAD flag are exactly what a full walk would produce (git owns %D ordering).
+			const refetched = new Map<string, GitGraphRow>();
+			if (affected.size > 0) {
+				// SHAs over stdin, not argv — a mass-moved-ref fetch can put hundreds of retained rows in
+				// `affected`, past what a command line holds (see the enumeration above).
+				const refetchResult = await this.git.run(
+					{ cwd: repoPath, configs: gitConfigsLog, cancellation: cancellation, stdin: join(affected, '\n') },
+					'log',
+					...parser.arguments,
+					'--no-walk',
+					'--stdin',
+					'--',
+				);
+				for (const c of parser.parse(refetchResult.stdout)) {
+					const built = buildRowFromCommit(c);
+					if (built != null) {
+						refetched.set(built.row.sha, built.row);
+					}
+				}
+			}
+			const freshShas = new Set<string>([...newRows.map(r => r.sha), ...refetched.keys()]);
+
+			// Assemble [new…, reused/refetched…] and trim to the requested window (new commits push the
+			// bottom rows out — exactly what a full walk at this limit does).
+			const windowRows: GitGraphRow[] = [...newRows];
+			for (const r of seed.rows) {
+				windowRows.push(refetched.get(r.sha) ?? r);
+			}
+			windowRows.length = Math.min(windowRows.length, trimTo);
+
+			// Building the fresh rows above populated `ids`/`total` (via `buildRowFromCommit`); reset and rebuild
+			// them from the FINAL trimmed window so `ids`/`total`/the reachability boundary match a full walk
+			// exactly (this is what makes `more()` continue identically).
+			ids.clear();
+			total = 0;
+			for (const row of windowRows) {
+				ids.add(row.sha);
+				total++;
+				const fresh = freshShas.has(row.sha);
+				// The first REUSED row (aliased with the caller's own window array) is about to be written to
+				// below. Signal before any write lands, so a cancellation mid-loop still leaves everything
+				// from this row onward correctly reported as "mutation started".
+				if (!fresh) {
+					options?.onMutationStart?.();
+				}
+				// REBIND only: a reused row's `remotes[].current` has the PRIOR HEAD's answer baked in, and the
+				// new HEAD may track a different branch (the gate above deliberately allows that). Re-derive it
+				// against `headRefUpstreamName` here — equivalent to refetching the row, so upstream tip rows
+				// need not join `affected` — BEFORE `accumulateRowState`, which seeds the unpushed/unpulled
+				// flags from this.
+				if (rebindFromRepoPath != null && !fresh && row.remotes != null) {
+					for (const remoteHead of row.remotes) {
+						remoteHead.current = `${remoteHead.owner}/${remoteHead.name}` === headRemoteUpstreamName;
+					}
+				}
+				const refs = accumulateRowState(
+					row.sha,
+					row.parents,
+					row.heads ?? [],
+					row.remotes ?? [],
+					row.tags ?? [],
+					row.sha === currentHeadSha,
+					row.kind === 'stash',
+				);
+				if (fresh) {
+					// Fresh rows are raw — run the full processor (contexts, emojify, avatar). Reused rows keep
+					// their already-processed contexts/message; only their flags (below) are recomputed.
+					row.reachability = refs?.size ? { partial: true, refs: [...refs.values()] } : undefined;
+					rowProcessor.processRow(row, graphCtx);
+				} else if (rebindFromRepoPath != null && restampGraphRowIds(row, rebindFromRepoPath, repoPath)) {
+					// Rebind: a reused row still carries the OLD path's ref ids (re-stamped above). Hand it to
+					// the processor so repoPath-embedded serialized contexts rebuild too — `affected` rows were
+					// already rebuilt fresh above, so this `else` never double-touches them.
+					rowProcessor.restampRow?.(row, graphCtx);
+				}
+				// Authoritative flags for every commit row (membership can shift on reused rows too — e.g. a new
+				// interior branch flips `+unique`). Stash rows carry none.
+				if (row.kind !== 'stash') {
+					(row.contexts ??= {}).flags = computeGraphRowContextFlags(row.sha, refs?.values(), graphCtx);
+				}
+				finalizeRowReachability(row, row.sha, refs);
+			}
+
+			// Reconstruct the walk's first-call cursor so `more()` (which re-spawns git from `--skip`) continues
+			// byte-identically off the trimmed window.
+			iterations = 1;
+			const lastSha = last(ids);
+			const cursor = lastSha != null ? { sha: lastSha, skip: total - iterations } : undefined;
+			const rowsStatsDeferred = buildRowsStatsDeferred(windowRows);
+
+			onResult?.({ path: 'fast', added: newRows.length });
+			return {
+				repoPath: repoPath,
+				avatars: avatars,
+				ids: ids,
+				includes: options?.include,
+				branches: branchMap,
+				remotes: remoteMap,
+				downstreams: downstreamMap,
+				stashes: gitStash?.stashes,
+				worktrees: worktrees,
+				worktreesByBranch: worktreesByBranch,
+				reachableFromHEAD: reachableFromHEAD,
+				rewriteableFromHEAD: rewriteableFromHEAD,
+				reachability: reachabilityBuilder.build(),
+				refTips: refTips,
+				decorationFingerprint: decorationFingerprint,
+				shallowBoundary: shallowBoundary,
+				rows: windowRows,
+				// Mirror the full walk's `id` (`sha ?? rev`, sha = the resolved rev-or-HEAD) — NOT the actual HEAD,
+				// which `currentHeadSha` now tracks separately when a rev anchor is passed.
+				id: selectSha ?? rev,
+				rowsStats: rowStats,
+				rowsStatsDeferred: rowsStatsDeferred,
+				paging: {
+					limit: noLimit ? total : defaultLimit,
+					startingCursor: undefined,
+					hasMore: hasMore,
+				},
+				more: async (limit: number, sha?: string, cancellation?: AbortSignal): Promise<GitGraph | undefined> =>
+					getCommitsForGraphCore.call(this, limit, sha, cursor, cancellation),
+			};
+		};
+
+		if (options?.incrementalSeed != null) {
+			let fast: GitGraph | undefined;
+			try {
+				fast = await tryIncrementalGraph(options.incrementalSeed);
+			} catch (ex) {
+				// The fast path must never fail where the full walk it accelerates would succeed — its git
+				// operations have failure modes the `--all` walk doesn't (per-tip `--not` argv on huge ref
+				// sets, queue-depth overflow fanning out FF checks, transient git errors). Cancellation
+				// still propagates; anything else degrades to the full walk below.
+				if (isCancellationError(ex) || cancellation?.aborted) throw ex;
+
+				// The fast path may have died AFTER its mutation barrier (the affected-row refetch, or the
+				// row processor) with the walk accumulators partially populated — a full walk over polluted
+				// `ids` would silently DROP those rows (its loop dedups on `ids.has`). Reset every closure
+				// accumulator to its pristine pre-walk state; the seeded reachability builder is append-only
+				// and tolerates orphaned interns by design, and mutated reused-row objects are superseded by
+				// the full walk's fresh rows.
+				ids.clear();
+				total = 0;
+				iterations = 0;
+				rowStats.clear();
+				avatars.clear();
+				reachableFromHEAD.clear();
+				rewriteableFromHEAD.clear();
+				reachableFromHeadUpstream.clear();
+				reachableRefs.clear();
+				tipShasWithChildren.clear();
+				downstreamMap.clear();
+				seedDownstreamMapFromBranches();
+				headSha = undefined;
+				rewriteableNextSha = undefined;
+
+				scope?.warn(`incremental graph walk failed; falling back to full walk; ${String(ex)}`);
+				incrementalFallbackReason = 'error';
+				options.onIncrementalResult?.({ path: 'fallback', reason: 'error' });
+			}
+			if (fast != null) {
+				void this.provider.maintenance?.request(repoPath, 'commit-graph');
+				return fast;
+			}
+
+			// External Git can change ancestry during an asynchronous walk. After a failed attempt,
+			// conservatively recompute stats for the recovery walk rather than trust its earlier seed.
+			if (incrementalFallbackReason === 'error') {
+				rowsStatsSeed = undefined;
+			}
+		}
+
+		let graph = await getCommitsForGraphCore.call(this, defaultLimit, selectSha, undefined, cancellation);
+
+		// Spurious-empty guard: the repo has branches (so `git log --all` should yield commits) yet the
+		// log returned no rows. That's an inconsistent result — almost always a transient ref-read race
+		// while a concurrent git operation rewrites refs/packed-refs — not a genuinely empty repo.
+		// Returning it would flash "No commits" in the graph. Retry once (transient glitches clear within
+		// ms). A truly empty repo has no branches and is left untouched.
+		if (graph.rows.length === 0 && branches?.length && !cancellation?.aborted) {
+			scope?.warn(`graph returned 0 rows but repo has ${branches.length} branches; retrying`);
+			graph = await getCommitsForGraphCore.call(this, defaultLimit, selectSha, undefined, cancellation);
+		}
+
+		// After the first load, hint the maintenance service to backfill the commit-graph file (background)
+		// so the NEXT open's ordered walk starts emitting rows immediately instead of sorting the whole
+		// history first. Fire-and-forget — the service's demand throttle decides whether it actually runs.
+		void this.provider.maintenance?.request(repoPath, 'commit-graph');
+
+		return graph;
+	}
+
+	@debug({
+		args: (repoPath, s, o) => ({
+			repoPath: repoPath,
+			search: `[${s.matchAll ? 'A' : ''}${s.matchCase ? 'C' : ''}${s.matchRegex ? 'R' : ''}${s.matchWholeWord ? 'W' : ''}]: ${
+				s.query.length > 500 ? `${s.query.substring(0, 500)}...` : s.query
+			}`,
+			options: `limit=${o?.limit}, ordering=${o?.ordering}`,
+		}),
+	})
+	async *searchGraph(
+		repoPath: string,
+		search: SearchQuery,
+		options?: { limit?: number; ordering?: 'date' | 'author-date' | 'topo' },
+		cancellation?: AbortSignal,
+	): AsyncGenerator<GitGraphSearchProgress, GitGraphSearch, void> {
+		return yield* this.searchGraphCore(repoPath, search, undefined, undefined, options, cancellation);
+	}
+
+	@debug({
+		args: (repoPath, c, r, o) => ({
+			repoPath: repoPath,
+			cursor: `[${c.search.matchAll ? 'A' : ''}${c.search.matchCase ? 'C' : ''}${c.search.matchRegex ? 'R' : ''}${c.search.matchWholeWord ? 'W' : ''}]: ${
+				c.search.query.length > 500 ? `${c.search.query.substring(0, 500)}...` : c.search.query
+			} (continue)`,
+			existingResults: `results=${r.size}`,
+			options: `limit=${o?.limit}`,
+		}),
+	})
+	async *continueSearchGraph(
+		repoPath: string,
+		cursor: GitGraphSearchCursor,
+		existingResults: GitGraphSearchResults,
+		options?: { limit?: number },
+		cancellation?: AbortSignal,
+	): AsyncGenerator<GitGraphSearchProgress, GitGraphSearch, void> {
+		return yield* this.searchGraphCore(repoPath, cursor.search, cursor, existingResults, options, cancellation);
+	}
+
+	/**
+	 * Cheap commit count for `search`, no result materialization — used to probe a candidate relaxed
+	 * query before offering it. Never throws: any failure (including a sha-only `commit:` query, which
+	 * can't be meaningfully "relaxed") returns 0, since this is a probe, not a search.
+	 */
+	async countSearchResults(
+		repoPath: string,
+		search: SearchQuery,
+		options?: { maxCount?: number },
+		cancellation?: AbortSignal,
+	): Promise<number> {
+		try {
+			search = { matchAll: false, matchCase: false, matchRegex: true, matchWholeWord: false, ...search };
+
+			const currentUser = search.query.includes('@me')
+				? await this.provider.config.getCurrentUser(repoPath)
+				: undefined;
+
+			const { args: searchArgs, files, shas, filters } = parseSearchQueryGitCommand(search, currentUser);
+			// An exact sha lookup can't be relaxed by dropping filter groups — nothing to count.
+			if (shas?.size) return 0;
+
+			// `--merges` matches stash commits too (they have 2-3 parents). `rev-list` gets no stdin, so the
+			// only stash that can leak in here is refs/stash's tip via `--all` -- exclude it up front
+			if (filters.type === 'merge') {
+				const allIndex = searchArgs.indexOf('--all');
+				if (allIndex !== -1) {
+					searchArgs.splice(allIndex, 0, '--exclude=refs/stash');
+				}
+			}
+
+			const maxCount = options?.maxCount ?? 1000;
+			const result = await this.git.run(
+				{ cwd: repoPath, configs: gitConfigsLog, cancellation: cancellation, errors: 'ignore' },
+				'rev-list',
+				'--count',
+				`--max-count=${maxCount}`,
+				...searchArgs,
+				'--',
+				...files,
+			);
+
+			const count = Number.parseInt(result.stdout.trim(), 10);
+			return Number.isFinite(count) ? count : 0;
+		} catch {
+			return 0;
+		}
+	}
+
+	private async *searchGraphCore(
+		repoPath: string,
+		search: SearchQuery,
+		cursor: GitGraphSearchCursor | undefined,
+		existingResults: GitGraphSearchResults | undefined,
+		options?: { limit?: number; ordering?: 'date' | 'author-date' | 'topo' },
+		cancellation?: AbortSignal,
+	): AsyncGenerator<GitGraphSearchProgress, GitGraphSearch, void> {
+		search = { matchAll: false, matchCase: false, matchRegex: true, matchWholeWord: false, ...search };
+
+		const comparisonKey = getSearchQueryComparisonKey(search);
+		try {
+			const currentUser = search.query.includes('@me')
+				? await this.provider.config.getCurrentUser(repoPath)
+				: undefined;
+
+			const { args: searchArgs, files, shas, filters } = parseSearchQueryGitCommand(search, currentUser);
+
+			const tipsOnly = filters.type === 'tip';
+			// Stash commits have 2-3 parents, so `--merges` matches them; excluded from results below.
+			// Derived from the args git actually runs rather than `filters.type`, since a multi-value
+			// `type:` query (e.g. `type:merge type:tip`) leaves `--merges` in the args while
+			// `filters.type` reflects only the last value parsed
+			const mergesOnly = searchArgs.includes('--merges');
+			const parser = filters.files
+				? getShaAndDatesWithFilesLogParser(tipsOnly)
+				: getShaAndDatesLogParser(tipsOnly);
+
+			const similarityThreshold = this.context.config?.commits.similarityThreshold ?? undefined;
+			const args = [
+				'log',
+				...parser.arguments,
+				`-M${similarityThreshold == null ? '' : `${similarityThreshold}%`}`,
+				'--use-mailmap',
+			];
+
+			let stashes: Map<string, GitStashCommit> | undefined;
+			let stdin: string | undefined;
+			let remappedIds: Map<string, string>;
+
+			let resolvedShas: Set<string> | undefined;
+			if (shas?.size) {
+				resolvedShas = await this.provider.revision.resolveShas(repoPath, shas, cancellation);
+				// Never throw on cancellation here: the outer catch wraps non-GitSearchError into
+				// GitSearchError, which surfaces as a false "Invalid search pattern". Return instead.
+				if (cancellation?.aborted) {
+					return {
+						repoPath: repoPath,
+						query: search,
+						queryFilters: filters,
+						comparisonKey: comparisonKey,
+						results: existingResults ?? new Map<string, GitGraphSearchResultData>(),
+						hasMore: true,
+					};
+				}
+				// Short SHA(s) matched no commit: return empty (empty stdin to `--no-walk --stdin`
+				// would return HEAD, so we must not fall through to git).
+				if (!resolvedShas.size) {
+					return {
+						repoPath: repoPath,
+						query: search,
+						queryFilters: filters,
+						comparisonKey: comparisonKey,
+						results: existingResults ?? new Map<string, GitGraphSearchResultData>(),
+						hasMore: false,
+					};
+				}
+			}
+
+			if (resolvedShas?.size) {
+				stdin = join(resolvedShas, '\n');
+				args.push('--no-walk');
+
+				remappedIds = new Map();
+			} else if (!filters.refs) {
+				// Don't include stashes when using ref: filter, as they would add unrelated commits
+				// There *HAS* to be a better way to get git log to return stashes, but this is the best we've found
+				const converted = convertStashesToStdin(
+					await this.provider.stash?.getStash(repoPath, { includeFiles: false }, cancellation),
+				);
+				stashes = converted.stashes;
+				remappedIds = converted.remappedIds;
+				// `--all` already surfaces refs/stash's tip on its own, so when merges-only there's no need
+				// to walk the rest of the stash stack via stdin -- the results filter below still excludes
+				// any stash sha that slips through via refs/stash
+				stdin = mergesOnly ? undefined : converted.stdin;
+			} else if (mergesOnly) {
+				// `ref:` skips walking stashes into the results (they're unrelated to the ref), but a
+				// stash's tip can still leak in via `--merges` if the ref reaches refs/stash -- fetch
+				// stashes here purely so the results filter below can exclude them, without widening
+				// the walk via stdin
+				const converted = convertStashesToStdin(
+					await this.provider.stash?.getStash(repoPath, { includeFiles: false }, cancellation),
+				);
+				stashes = converted.stashes;
+				remappedIds = converted.remappedIds;
+			} else {
+				remappedIds = new Map();
+			}
+
+			if (stdin) {
+				args.push('--stdin');
+			}
+
+			const limit = options?.limit ?? this.context.config?.graph?.maxSearchItems ?? 0;
+			const ordering = options?.ordering ?? this.context.config?.commits.ordering ?? undefined;
+			if (ordering) {
+				args.push(`--${ordering}-order`);
+			}
+
+			// Add the search args, but skip any shas (as they are already included in the stdin)
+			for (const arg of searchArgs) {
+				if (shas?.has(arg) || args.includes(arg)) continue;
+
+				args.push(arg);
+			}
+
+			const results: GitGraphSearchResults = existingResults ?? new Map<string, GitGraphSearchResultData>();
+
+			// Use state from cursor, if provided
+			const cursorState = cursor?.state != null && typeof cursor.state === 'object' ? cursor.state : undefined;
+			let iterations = cursorState?.iterations ?? 0;
+			let totalSeen = cursorState?.totalSeen ?? 0;
+			let skipCursor = cursorState ? { sha: cursorState.sha, skip: cursorState.skip } : undefined;
+
+			let count = 0;
+			try {
+				iterations++;
+
+				const aborter = new AbortController();
+				const onAbort = () => {
+					aborter.abort();
+				};
+				cancellation?.addEventListener('abort', onAbort, { once: true });
+				// An ALREADY-aborted signal (e.g. `toAbortSignal` of a cancelled token) never fires listeners
+				// added after the fact — without this the walk would run to completion unabortably.
+				if (cancellation?.aborted) {
+					onAbort();
+				}
+				using _disposable = createDisposable(() => cancellation?.removeEventListener('abort', onAbort));
+
+				const stream = this.git.stream(
+					{
+						cwd: repoPath,
+						cancellation: aborter.signal,
+						configs: ['-C', repoPath, ...gitConfigsLog],
+						stdin: stdin,
+					},
+					...args,
+					skipCursor?.skip ? `--skip=${skipCursor.skip}` : undefined,
+					'--',
+					...files,
+				);
+				using _streamDisposer = createDisposable(() => void stream.return?.(undefined));
+				let hasMore = false;
+				let sha;
+				const stashesOnly = filters.type === 'stash';
+
+				// Progressive results support - time-based batching for consistent UI updates
+				const batch: [string, GitGraphSearchResultData][] = [];
+				let lastProgressTime = Date.now();
+
+				for await (const r of parser.parseAsync(stream)) {
+					// Check for cancellation early in each iteration
+					if (cancellation?.aborted) {
+						// When paused/cancelled, assume there are more results
+						hasMore = true;
+						break;
+					}
+
+					count++;
+					if (limit && count > limit) {
+						hasMore = true;
+
+						aborter.abort();
+						break;
+					}
+
+					sha = remappedIds.get(r.sha) ?? r.sha;
+					if (
+						results.has(sha) ||
+						(stashesOnly && !stashes?.has(sha)) ||
+						(mergesOnly && stashes?.has(sha)) ||
+						(tipsOnly && !r.tips)
+					) {
+						continue;
+					}
+
+					const resultData: GitGraphSearchResultData = {
+						i: results.size,
+						date: Number(options?.ordering === 'author-date' ? r.authorDate : r.committerDate) * 1000,
+						files: r.files,
+					};
+					results.set(sha, resultData);
+					batch.push([sha, resultData]);
+
+					// Send progress updates with incremental results
+					const timeSinceLastProgress = Date.now() - lastProgressTime;
+
+					// Send batch when enough time has passed and we have new results
+					const shouldSendBatch =
+						timeSinceLastProgress >= progressiveSearchResultsBatchTimeMs && batch.length > 0;
+
+					if (shouldSendBatch) {
+						// Send only the NEW results since last batch (incremental)
+						yield {
+							repoPath: repoPath,
+							query: search,
+							queryFilters: filters,
+							comparisonKey: comparisonKey,
+							results: new Map(batch),
+							runningTotal: results.size,
+							hasMore: true,
+						};
+
+						batch.length = 0;
+						lastProgressTime = Date.now();
+					}
+				}
+
+				// Send final progress update if there are remaining results
+				if (batch.length) {
+					yield {
+						repoPath: repoPath,
+						query: search,
+						queryFilters: filters,
+						comparisonKey: comparisonKey,
+						results: new Map(batch),
+						runningTotal: results.size,
+						hasMore: hasMore,
+					};
+				}
+
+				totalSeen += count;
+				const lastSha = last(results)?.[0];
+				skipCursor = lastSha != null ? { sha: lastSha, skip: totalSeen - iterations } : undefined;
+
+				return {
+					repoPath: repoPath,
+					query: search,
+					queryFilters: filters,
+					comparisonKey: comparisonKey,
+					results: results,
+					hasMore: hasMore,
+					paging:
+						limit || hasMore
+							? {
+									limit: limit || count,
+									cursor:
+										hasMore && skipCursor
+											? {
+													search: search,
+													state: {
+														iterations: iterations,
+														totalSeen: totalSeen,
+														sha: skipCursor.sha,
+														skip: skipCursor.skip,
+													},
+												}
+											: undefined,
+								}
+							: undefined,
+				};
+			} catch (ex) {
+				if (isCancellationError(ex) || cancellation?.aborted) {
+					// When cancelled, preserve cursor so search can be resumed
+					// Update totalSeen with the count from this iteration
+					totalSeen += count;
+					const lastSha = last(results)?.[0];
+					const skipCursor = lastSha != null ? { sha: lastSha, skip: totalSeen - iterations } : undefined;
+
+					return {
+						repoPath: repoPath,
+						query: search,
+						queryFilters: filters,
+						comparisonKey: comparisonKey,
+						results: results,
+						hasMore: true, // Assume there are more results since we were cancelled mid-search
+						paging:
+							limit || skipCursor
+								? {
+										limit: limit || count,
+										cursor: skipCursor
+											? {
+													search: search,
+													state: {
+														iterations: iterations,
+														totalSeen: totalSeen,
+														sha: skipCursor.sha,
+														skip: skipCursor.skip,
+													},
+												}
+											: undefined,
+									}
+								: undefined,
+					};
+				}
+
+				const classified = classifySearchError(ex);
+				throw new GitSearchError(ex, classified?.reason, classified?.detail);
+			}
+		} catch (ex) {
+			if (ex instanceof GitSearchError) throw ex;
+
+			const classified = classifySearchError(ex);
+			throw new GitSearchError(ex, classified?.reason, classified?.detail);
+		}
+	}
+}
+
+/**
+ * CLI-backed {@link GitGraphSession}: a stateful facade over {@link GraphGitSubProvider.getGraph}. It
+ * owns the canonical accumulated window and builds the R6b incremental seed internally (from the window,
+ * the prior walk's tips/reachability/stats, and the walk shape), so the host no longer mirrors loaded
+ * rows, stamps ref tips, or hand-assembles a seed. Behavior-neutral: `refresh`/`more` reproduce exactly
+ * what the host's `getState` seed construction + `setGraph` mirror maintenance + write-once avatar merge
+ * did.
+ */
+class GraphSession implements GitGraphSession {
+	// Assigned by `initialize` before the session is handed out; never read before then.
+	private _current!: GitGraph;
+	private _window: readonly GitGraphRow[] = [];
+	// The walk shape (`ordering|onlyFollowFirstParent`) the current window was produced under — the
+	// incremental seed is only valid when the NEXT walk uses the SAME shape (a graph object doesn't
+	// record its shape, so it's tracked here). Undefined until the first walk lands.
+	private _buildShape: string | undefined;
+	// Set by `getGraph`'s `onMutationStart` the first time the fast path writes to a reused row during the
+	// walk in flight; reset at every `rebindCore` entry. Lets its catch tell "failed before any window row
+	// was touched" (no rollback beyond restoring `_repoPath`) from "failed partway through" (must taint).
+	private _rebindMutationStarted = false;
+
+	constructor(
+		private readonly provider: GraphGitSubProvider,
+		private _repoPath: string,
+		private readonly rowProcessor: GraphRowProcessor | undefined,
+		private readonly getWalkShape: () => {
+			ordering: 'date' | 'author-date' | 'topo';
+			onlyFollowFirstParent: boolean;
+		},
+	) {}
+
+	/** The CURRENT bound path — the repo the session was opened for, or the worktree {@link rebind} last
+	 *  moved it onto. Mutable internally ONLY through `rebind`, which re-walks the window at the new path. */
+	get repoPath(): string {
+		return this._repoPath;
+	}
+
+	get window(): readonly GitGraphRow[] {
+		return this._window;
+	}
+
+	/** See {@link GitGraphSession.tainted} — owned by the write queue, raised by `rebindCore`'s failure
+	 *  path and cleared by the rebuild that repairs it. */
+	get tainted(): boolean {
+		return this.writes.tainted;
+	}
+
+	get current(): GitGraph {
+		return this._current;
+	}
+
+	/**
+	 * First walk — no seed (nothing accumulated yet), equivalent to a plain `getGraph`.
+	 *
+	 * Deliberately NOT queued through {@link writes}: `openGraphSession` awaits this before it returns the
+	 * session, so no caller can hold a reference yet and there is nothing to race with.
+	 */
+	async initialize(
+		options?: { rev?: string; limit?: number; include?: { stats?: boolean } },
+		cancellation?: AbortSignal,
+	): Promise<void> {
+		const shape = this.getWalkShape();
+		const graph = await this.provider.getGraph(
+			this.repoPath,
+			options?.rev,
+			{ include: options?.include, limit: options?.limit, rowProcessor: this.rowProcessor },
+			cancellation,
+		);
+		this.applyRebuild(graph, shape);
+	}
+
+	/**
+	 * The shared serialization + generation machinery — see {@link GraphSessionWriteQueue}, which owns the
+	 * contract so this implementation and the GitHub one cannot drift apart on it. Every mutating op below
+	 * goes through it; `initialize` is the one exception (see there).
+	 */
+	private readonly writes = new GraphSessionWriteQueue();
+
+	refresh(
+		options?: GitGraphSessionRefreshOptions,
+		cancellation?: AbortSignal,
+	): Promise<GitGraphSessionRefreshResult> {
+		return this.writes.run(() => this.refreshCore(options, undefined, cancellation));
+	}
+
+	rebind(repoPath: string, cancellation?: AbortSignal): Promise<GitGraphSessionRefreshResult> {
+		return this.writes.run(() => this.rebindCore(repoPath, cancellation));
+	}
+
+	/** {@link rebind}'s body — inside the exclusive chain, so `_repoPath` here is the binding a queued
+	 *  predecessor left behind, not the one that was live when the caller asked. */
+	private async rebindCore(repoPath: string, cancellation?: AbortSignal): Promise<GitGraphSessionRefreshResult> {
+		// Already there — no walk, and nothing for the host to re-publish.
+		if (repoPath === this._repoPath) {
+			return {
+				path: 'fast',
+				added: 0,
+				changed: {
+					rows: false,
+					reachability: false,
+					rowsStats: false,
+					avatars: false,
+					downstreams: false,
+				},
+			};
+		}
+
+		const fromRepoPath = this._repoPath;
+		this._repoPath = repoPath;
+		this._rebindMutationStarted = false;
+		try {
+			// `rebind` carries no options (a scope switch has none to give), so anchor the walk on the
+			// session's OWN accumulated window — its bottom commit row and its size — the same boundary the
+			// host pins on a refresh. Without it a rebind would re-shape the window to the provider's default
+			// limit, silently trimming a window the user had paged open.
+			return await this.refreshCore(this.computeWindowAnchor(), fromRepoPath, cancellation);
+		} catch (ex) {
+			// The window still describes `fromRepoPath`: leaving the binding moved would strand a session
+			// claiming a perspective its rows don't match (and a later refresh would seed from them).
+			this._repoPath = fromRepoPath;
+
+			// The walk mutates reused rows IN PLACE, so a failure after it starts touching them can leave the
+			// window with a mix of old- and new-path ref ids. A failure before any row was touched leaves the
+			// window at `fromRepoPath` intact — restoring `_repoPath` above is the whole fix, and tainting it
+			// would force a needless full-walk repair. `_rebindMutationStarted` tells the two apart.
+			if (this._rebindMutationStarted) {
+				// Torn ref ids are never recomputed on a plain refresh, only rebuilt by a full walk, so drop
+				// the shape key to force one. Taint so a reader won't serve the corrupt window and a queued
+				// page is refused instead of appending to it.
+				this._buildShape = undefined;
+				this.writes.taint();
+			}
+			throw ex;
+		}
+	}
+
+	private async refreshCore(
+		options: GitGraphSessionRefreshOptions | undefined,
+		rebindFromRepoPath: string | undefined,
+		cancellation?: AbortSignal,
+	): Promise<GitGraphSessionRefreshResult> {
+		const shape = this.getWalkShape();
+		const buildShape = buildShapeKey(shape);
+		const prior = this._current;
+
+		// Incremental head-walk seed: the FULL accumulated window + the prior walk's tips/reachability/stats,
+		// gated on an unchanged walk shape (a first-parent/ordering change reshapes every row's parents/order,
+		// so the cached rows can't be reused). Mirrors the host's former `incrementalSeed` construction and
+		// `_graphBuildShape` gate — the session owns the shape, so it can't be handed a lying seed. The provider
+		// still re-validates ordering/first-parent internally and falls back on any structural change.
+		const priorHead = find(prior.branches.values(), b => b.current);
+		const incrementalSeed: GraphIncrementalSeed | undefined =
+			options?.rebuild !== true && prior.refTips != null && this._buildShape === buildShape
+				? {
+						rows: this._window,
+						tips: prior.refTips,
+						ordering: shape.ordering,
+						reachability: prior.reachability,
+						rowsStats: prior.rowsStats,
+						hasMore: prior.paging?.hasMore ?? false,
+						onlyFollowFirstParent: shape.onlyFollowFirstParent,
+						shallowBoundary: prior.shallowBoundary,
+						decorationFingerprint: prior.decorationFingerprint,
+						// Recovered from the prior graph's own `branches` map, the same way the walk itself
+						// derives it, rather than adding a new `GitGraph` field to keep in sync.
+						headRefUpstreamName: priorHead?.upstream?.name,
+						headRefUpstreamLocal: priorHead?.upstream?.local === true,
+					}
+				: undefined;
+
+		let outcome: IncrementalGraphOutcome | undefined;
+		const graph = await this.provider.getGraph(
+			this.repoPath,
+			options?.rev,
+			{
+				include: options?.include,
+				limit: options?.limit,
+				rowProcessor: this.rowProcessor,
+				// Same-repo rebuild: continue the prior reachability generation (stable indices for retained
+				// rows). Stats reuse additionally requires the independent ancestry proof below.
+				reachabilitySeed: prior.reachability,
+				rowsStatsSeed: prior.rowsStats,
+				ancestrySeed: prior,
+				incrementalSeed: incrementalSeed,
+				onIncrementalResult: o => {
+					outcome = o;
+				},
+				// Set only by `rebind`: same repo family, so the seeds above stay valid (reachability keys on
+				// ref NAMES, stats on shas) — what changes is the perspective the rows' ids are stamped from.
+				rebindFromRepoPath: rebindFromRepoPath,
+				// Feeds `rebindCore`'s catch via `_rebindMutationStarted`. Harmless on a plain refresh too —
+				// `rebindCore` resets the field fresh on every entry, so nothing leaks between calls.
+				onMutationStart: () => {
+					this._rebindMutationStarted = true;
+				},
+			},
+			cancellation,
+		);
+
+		// Write-once cross-generation avatar merge (formerly in host `setGraph`): carry prior URLs forward
+		// into the fresh graph's map without overwriting its own entries.
+		mergeAvatarsForward(prior.avatars, graph.avatars);
+		this.applyRebuild(graph, shape);
+
+		// The full path (seeded fallback or unseeded full walk) re-derives everything → every channel changed.
+		// The fast path derives each channel honestly from what it actually touched — a false negative is data
+		// loss, so a channel is `false` only when it PROVABLY didn't change (never merely when uncertain).
+		if (outcome?.path === 'fast') {
+			const changed: GitGraphSessionChangedChannels = {
+				// A head-walk always reshapes the window; the publisher's ledger diff derives the precise splice
+				// (including reused-row flag / reachability-index changes the re-derivation makes in place).
+				rows: true,
+				// The builder continues the prior generation (same id); a grown table means new dict/set entries
+				// to append. A per-row index that re-points to an EXISTING set rides the rows channel, not this.
+				reachability: reachabilityTableChanged(prior.reachability, graph.reachability),
+				// Only NEW commit shas need stats (reused rows carry seeded, already-shipped stats), and only when
+				// stats were requested at all. The host's deferred-completion hook re-marks this channel when the
+				// background query lands, so this is just the synchronous signal.
+				rowsStats: graph.includes?.stats === true && (outcome.added ?? 0) > 0,
+				// Avatars are write-once merged across generations, so the map only grows — a larger size means
+				// new emails. Value replacements (avatar proxy) ride the host's dedicated avatar path, not this.
+				avatars: graph.avatars.size !== prior.avatars.size,
+				// The fast path rebuilds the downstreams map from all rows; compare it against the prior.
+				downstreams: downstreamsChanged(prior.downstreams, graph.downstreams),
+			};
+			return { path: 'fast', added: outcome.added, changed: changed };
+		}
+
+		const changed: GitGraphSessionChangedChannels = {
+			rows: true,
+			reachability: true,
+			rowsStats: true,
+			// Stats and same-sha parents depend on ancestry even when the full walk had no incremental
+			// seed. Error recovery also covers external ancestry changes during the asynchronous walk.
+			rowsStatsRecomputed:
+				getAncestryChange(prior, graph) != null || (outcome?.path === 'fallback' && outcome.reason === 'error'),
+			avatars: true,
+			downstreams: true,
+		};
+		// A seeded fallback carries its reason; an unseeded full walk (no `onIncrementalResult` fired) carries
+		// none.
+		if (outcome?.path === 'fallback') {
+			return { path: 'full', reason: outcome.reason, changed: changed };
+		}
+		return { path: 'full', changed: changed };
+	}
+
+	/**
+	 * Refresh options that reproduce the CURRENT window: the oldest loaded COMMIT row as the rev anchor
+	 * (pinning the walk's bottom boundary) and the window's size as the limit. Stash rows are skipped —
+	 * their shas aren't in `git log --all`, so anchoring on one triggers the walk's defensive over-walk.
+	 */
+	private computeWindowAnchor(): GitGraphSessionRefreshOptions | undefined {
+		const rows = this._window;
+		if (!rows.length) return undefined;
+
+		let rev: string | undefined;
+		for (let i = rows.length - 1; i >= 0 && i >= rows.length - 10; i--) {
+			const kind = rows[i].kind;
+			if (kind === 'commit' || kind === 'merge') {
+				rev = rows[i].sha;
+				break;
+			}
+		}
+
+		return { rev: rev, limit: rows.length, include: this._current.includes };
+	}
+
+	more(limit?: number, targetId?: string, cancellation?: AbortSignal): Promise<GitGraphSessionMoreResult> {
+		// `runPage`, not `run`: it captures the window's generation synchronously HERE — at request time,
+		// before queueing — and refuses the page outright if a rebuild lands before it reaches the front.
+		// See {@link GraphSessionWriteQueue.runPage}.
+		return this.writes.runPage(() => this.moreCore(limit, targetId, cancellation));
+	}
+
+	/** {@link more}'s body — runs inside the write queue, and only when the window it was requested
+	 *  against is still the current one, so nothing can rebuild underneath it. */
+	private async moreCore(
+		limit?: number,
+		targetId?: string,
+		cancellation?: AbortSignal,
+	): Promise<GitGraphSessionMoreResult> {
+		// Cancelled while queued — the host cancels a page's token when a newer page takes its slot, and by
+		// the time we reach the front of the queue that may already have happened. `'none'`, not
+		// `'superseded'`: nobody is waiting on this page, so nothing should retry it.
+		if (cancellation?.aborted === true) return 'none';
+
+		const prior = this._current;
+		const updated = await prior.more?.(limit ?? 0, targetId, cancellation);
+		// A live page walk yielding nothing is unexpected (hasMore said otherwise).
+		if (updated == null) {
+			debugger;
+			return 'none';
+		}
+
+		mergeAvatarsForward(prior.avatars, updated.avatars);
+		this.applyPage(updated);
+		return 'added';
+	}
+
+	dispose(): void {
+		// No-op — the window lives entirely in memory and dies with the session.
+	}
+
+	/** A cursor-less rebuild (full walk / fast path) IS the full window. */
+	private applyRebuild(graph: GitGraph, shape: { ordering: string; onlyFollowFirstParent: boolean }): void {
+		this._current = graph;
+		this._window = graph.rows;
+		this._buildShape = buildShapeKey(shape);
+		// Every REPLACEMENT of the window advances the generation, which is what lets a queued page tell
+		// that its cursor has gone stale. Deliberately not called from `applyPage`: appending leaves every
+		// earlier cursor meaningful. See {@link GraphSessionWriteQueue.invalidate}.
+		this.writes.invalidate();
+	}
+
+	/** A page-append: keep the window up to the cursor and append the page (the reducer's cursor-anchored
+	 *  concatenation); the walk shape is unchanged (same generation). */
+	private applyPage(page: GitGraph): void {
+		this._current = page;
+		const startingCursor = page.paging?.startingCursor;
+		// A page always carries a cursor; a cursor-less page (shouldn't happen) is treated as a full window,
+		// matching the host mirror's former fallback.
+		this._window = startingCursor == null ? page.rows : appendRowsAtCursor(this._window, startingCursor, page.rows);
+	}
+}

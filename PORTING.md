@@ -4,7 +4,7 @@
 > 登记与文件头」。本文件自 ⑤ status 引擎模块（2026-10-31）起建立；此前各模块的登记在
 > `NOTICE.md` §2（两表互为镜像索引，行级内容一致，以先建立的 NOTICE §2 为历史权威）。
 >
-> 许可红线权威：`research/ported-sources/SOURCES.md`；逐文件来源版本与字节校验记录在彼处。
+> 许可红线权威：`docs/ported-sources/SOURCES.md`；逐文件来源版本与字节校验记录在彼处。
 
 ## 1. 级别定义与义务
 
@@ -31,7 +31,7 @@
 |---|---|---|---|---|---|
 | A | `packages/host/src/graph.ts`（log 分页取参段：`normalizeLogLimit`/`normalizeLogSkip` 钳制语义、`-n <limit+1>` 防御性 over-fetch ⇒ hasMore、unborn stderr 守卫族 ⇒ 空页不抛错） | zai-org/ZCode `packages/services/src/git/repo/gitCliRepo.ts`（getCommitGraph 分页段 :1013-1053 + normalizeGitGraphMaxCount/normalizeGitGraphSkip :386-400） | `3c5b2276` | Apache-2.0 | spec §1.8 登记行的落地。修改：分页入参换 spec §1.0.3 LogOptions（钳制上界换 Config.logMaxLimit、非有限数回落 Config.logDefaultLimit）；分隔符换 spec §1.8 的 %x1f/%x1e（ZCode %x00/%x1e），字段集按 CommitInfo（%aI/%cI 替代 %at、增 %ae/%b）；排序只留 --topo-order 单起点 HEAD（ZCode 另叠 --date-order 与 --branches/--tags/--remotes）；commandProvider → GitRunner 只读实例；错误改 RemoteError。文件头已落 |
 | C | `packages/host/src/graph.ts`（refs 单次 for-each-ref 含 upstream:track、head 三态判定、RefInfo.upstreamTrack 形状；`getCommitDetail` 的 refs 过滤） | GitLens MIT 区 `packages/git/src/models/graph.ts`（GitGraphRowHead.isCurrentHead / upstream {missing, state:{ahead,behind}} 形状——「跟踪态随 refs 一次取回、按行装饰」的对照）+ `packages/git/src/models/graphSession.ts`（single-writer 分页契约 :11-18）+ `packages/git/src/utils/graph.utils.ts`（appendRowsAtCursor 窗口追加） | `020cfc1b` | **MIT 区**（LICENSE:3-5 除外条款） | **语义对照，零代码搬运**：upstreamTrack（`[gone]`/`[ahead N]`）与 head 三态按 GitLens 行头形状自写；single-writer 落在 client git-graph-store 的 loadMoreInFlight 闸；窗口追加简化为「纯 push + oid 去重」（分页窗口是 walk 的无重叠前缀，无需 cursor-trim——偏差记 openIssues）。head 解析的 `symbolic-ref --quiet --short HEAD` 语义另对照 opencode `plugin/vcs/git.ts:260`（MIT，`b6c43a52`）。providers/graph.ts（over-walk :2487 / spurious-empty :1822）未读取未移植——host log 为无状态分页，over-fetch 已由 ZCode A 级段承载（spec §5.1「只摘模式」行的实际落法，见 ModuleResult openIssues） |
-| C | `packages/client-ui/src/client/graph/lane-layout.ts`（**自研声明行**：G1–G5 契约的泳道布局纯函数） | pvigier 博客教材 `research/ported-sources/notes/commit-graph-drawing-algorithms.md`（temporal topological sort、active-branches 直线泳道、最小空闲位/nil 占位防移位、分支/合并子提交二分） | 网页教材（2019-05-06） | 文章可自由学习 | **算法思想自研实现，零代码搬运**：行序 = 拓扑输入直通（G2 前缀稳定）+ 非拓扑输入 temporal 修复（committedAt 降序、输入序 tiebreak——spec §3.3.1 重排语义的修复路径落地）；lane 分配 = 活跃 lane 表 + trunk 偏好取位 + 最小空闲位复用（禁止列 J(c) 未实现——次父边以「独立 travel lane 预约」语义达成同等的可连线性，多一次折返曲线换单遍 O(n)）。**mhutchie/vscode-git-graph、gitamine（GPL-3.0）零触碰零搬运**（本模块未读取 mhutchie 任何代码）；graphamine 教材外的泳道实现均为本模块原创 |
+| C | `packages/client-ui/src/client/graph/lane-layout.ts`（**自研声明行**：G1–G5 契约的泳道布局纯函数） | pvigier 博客教材 `docs/ported-sources/notes/commit-graph-drawing-algorithms.md`（temporal topological sort、active-branches 直线泳道、最小空闲位/nil 占位防移位、分支/合并子提交二分） | 网页教材（2019-05-06） | 文章可自由学习 | **算法思想自研实现，零代码搬运**：行序 = 拓扑输入直通（G2 前缀稳定）+ 非拓扑输入 temporal 修复（committedAt 降序、输入序 tiebreak——spec §3.3.1 重排语义的修复路径落地）；lane 分配 = 活跃 lane 表 + trunk 偏好取位 + 最小空闲位复用（禁止列 J(c) 未实现——次父边以「独立 travel lane 预约」语义达成同等的可连线性，多一次折返曲线换单遍 O(n)）。**mhutchie/vscode-git-graph、gitamine（GPL-3.0）零触碰零搬运**（本模块未读取 mhutchie 任何代码）；graphamine 教材外的泳道实现均为本模块原创 |
 
 （graph-svg.tsx 行切片渲染、git-graph-store/graph-tab-store、git-graph-tab/commit-detail-panel、graph-view-model、词典 graph 键组为按 spec §3.3/§3.2/§4 与 workflow 任务口径自写，无第三方对照来源，无登记义务。既有文件改动清点见 §4 红线记录。）
 
