@@ -38,10 +38,10 @@
  *         （dsh-resource://git-changes/session/）、keyed 注册 key（dsh-plugin.git.changes）、
  *         变更卡片/diff 视图 data 锚、ui-primitives 基线 require（useCodeHighlighter）、
  *         changes/diff 词典词条。
- *      J. ④-K 提交对话框模块：bundle 内联提交对话框——portal 背板 data 锚
- *         （data-git-commit-dialog）、消息编辑器锚、aria-keyshortcuts 快捷键组、
- *         commit.* 词典词条（AI 生成/修订/提交并推送）、生成的 git/commit、git/push、
- *         git/generateCommitMessage 描述符；
+ *      J. ④-K 提交对话框模块：bundle 内联提交对话框——样式注入器标记（data-plugin-css，
+ *         P2 样式管线）、对话框 children 包裹层 data 锚（data-git-commit-dialog）、
+ *         消息编辑器锚、aria-keyshortcuts 快捷键组、commit.* 词典词条（AI 生成/修订/
+ *         提交并推送）、生成的 git/commit、git/push、git/generateCommitMessage 描述符；
  *      K. 提交链路 RPC 往返（M11 全断言的闭环半）：workspaceOverride 钉住的夹具仓库
  *         **带一笔种子提交**（分支字段全量可断言）→ git/status 返回 ok:true（ready，
  *         即 host StatusEngine availability='ready' 的 wire 投影——wire 形状是裸
@@ -56,7 +56,21 @@
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
- * 退出码：全部断言通过 = 0；任何一步失败 = 1（打印宿主输出尾部诊断）。
+ * 退出码纪律（P3 门禁矩阵）：全部断言通过 = 0；任何一步失败 = 1（打印宿主输出尾部
+ * 诊断）；npm 列 skip（npm-cli.js 缺失 / npm view|install 失败）= 2，设
+ * DSH_VERIFY_ALLOW_SKIP=1 时 exit 0 但 RESULT 行 outcome=SKIPPED-ALLOWED（永不把
+ * skip 记 pass）。每列结束打印 RESULT 行。
+ *
+ * 列矩阵（列解析与发布形态安装见 ./verify-target.mjs，报告 §2.3）：缺省 = dev-tree 列
+ * （与上列 ①-④ 行为逐位一致，断言面全严格）；`DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm 列
+ * （npm view 探活 + npm i --prefix <tmp>，装后裸 node lib/bin.js 启动；boot 行 /
+ * 激活 marker / dump-config 无层标签断言——本脚本本无层标签断言——按列放宽，marker
+ * 降级 'GitService active' 子串 + WARN）；DSH_SPEC 命中 NEGATIVE_SPECS（0.1.7-rc.2 /
+ * 0.2.1-rc.2）= 观测列（KNOWN-UNSUPPORTED exit 0 纯记录式 / PASS-UNEXPECTED exit 1
+ * 双结局合法）；`DSH_BIN=<pkgRoot>/lib/bin.js` = 现成可执行列。strict typert 注册
+ * 断言（⑤-F）按列 flag target.strictTypert（矩阵列默认 true——0.2.1-rc.5 的 typert
+ * loader src 与 HEAD 零 diff 普查实证；首跑 fail 的处置是该列置 false 并记录，
+ * 非全局放宽）。
  *
  * 注记（ask ④ 口径与 wire 实形的差异，不硬凑）：ask 写「status() 断言 {kind:'ready'}」，
  * 但 wire 上 git/status 返回裸 GitStatusSnapshot（packages/host/src/types.ts:89 无 kind
@@ -69,10 +83,20 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  EXIT_FAIL,
+  EXIT_PASS,
+  SkipError,
+  applySkipDiscipline,
+  bootLineMatch,
+  npmInstallToPrefix,
+  resolveTarget,
+} from './verify-target.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(here, '..')
-const DSH_TREE = process.env.DSH_TREE ?? 'D:\\DeepSeekHarness'
+// 列解析（P3 §2.3）：模块顶层同步、零网络；缺省 = dev-tree 列（env DSH_TREE 可改指向）。
+const target = resolveTarget()
 const PROFILE = 'dshgit-verify'
 const BOOT_TIMEOUT_MS = 180_000
 const INSTALL_TIMEOUT_MS = 300_000
@@ -86,10 +110,13 @@ function assert(condition, message) {
   if (!condition) throw new Error(message)
 }
 
-/** spawn once, capture output, enforce a timeout, kill the tree on timeout. */
-function run(cmd, args, { cwd, env, timeoutMs }) {
+/** spawn once, capture output, enforce a timeout, kill the tree on timeout.
+ *  shell 透传与 install 同构（本脚本现无 shell 调用点，保留同形签名）；spawn 失败
+ *  （ENOENT 等）会触发 child 'error' 事件：run() 此前无监听器（报告 §2.3 备注级
+ *  修订）——现显式兜底，与 DSH_BIN 列的存在性断言构成两道防线。 */
+function run(cmd, args, { cwd, env, timeoutMs, shell }) {
   return new Promise((resolveRun) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell })
     let out = ''
     const collect = (chunk) => { out += chunk.toString('utf8') }
     child.stdout.on('data', collect)
@@ -98,6 +125,10 @@ function run(cmd, args, { cwd, env, timeoutMs }) {
       killTree(child.pid)
       resolveRun({ code: -1, out: `${out}\n[verify] process timed out after ${timeoutMs}ms` })
     }, timeoutMs)
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      resolveRun({ code: -1, out: `${out}\n[verify] spawn failed: ${error?.message ?? error}` })
+    })
     child.on('exit', (code) => {
       clearTimeout(timer)
       resolveRun({ code: code ?? -1, out })
@@ -109,7 +140,8 @@ function run(cmd, args, { cwd, env, timeoutMs }) {
 function killTree(pid) {
   if (!pid) return
   try {
-    spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    killer.on('error', () => { /* best effort */ })
   } catch { /* best effort */ }
 }
 
@@ -141,8 +173,9 @@ function extractJsonAfter(text, marker) {
 }
 
 async function main() {
-  // ── 0. 前置检查 ──────────────────────────────────────────────
-  const binTs = join(DSH_TREE, 'apps', 'cli', 'src', 'bin.ts')
+  // ── 0. 前置检查（读侧断言：失败属仓库/宿主破损，直接抛出 → FAIL；观测列不吞）──
+  assert(target.cli !== null && target.cliArgs !== null && target.cliCwd !== null,
+    `verify target CLI unresolved (kind=${target.kind}) — npm column install step missing?`)
   const hostPkgDir = join(REPO, 'packages', 'host')
   const hostLib = join(hostPkgDir, 'lib', 'index.js')
   const hostTypert = join(hostPkgDir, 'lib', 'typert.host.js')
@@ -150,12 +183,16 @@ async function main() {
   const hostPatch = join(REPO, 'packages', 'host', 'cordis.patch.yml')
   const clientPkg = join(REPO, 'packages', 'client-ui')
   const clientLib = join(clientPkg, 'lib', 'client.js')
-  assert(existsSync(binTs), `dsh CLI entry missing: ${binTs}（env DSH_TREE 可改指向）`)
+  if (target.kind === 'dev-tree') {
+    // binTs 断言仅 dev-tree 列执行（npm 发布包只有 lib/*.js，无 src —— P3 根因①）。
+    const binTs = join(target.cliCwd, 'apps', 'cli', 'src', 'bin.ts')
+    assert(existsSync(binTs), `dsh CLI entry missing: ${binTs}（env DSH_TREE 可改指向）`)
+  }
   assert(existsSync(hostLib), `host lib missing: ${hostLib} — run \`pnpm build\` first`)
   assert(existsSync(hostTypert), `generated host typert artifact missing: ${hostTypert} — run \`pnpm build\` first`)
   assert(existsSync(hostRemoteClient), `generated remote-client artifact missing: ${hostRemoteClient} — run \`pnpm build\` first`)
   assert(readFileSync(hostPatch, 'utf8').includes("name: 'dsh-gitkit'"), 'host cordis.patch.yml mismatch')
-  step(`dsh tree: ${DSH_TREE}; repo: ${REPO}`)
+  step(`dsh target: ${target.label}; repo: ${REPO}`)
 
   // status/commit 往返夹具：临时真仓库 + 本地身份 + 一笔种子提交（M11 全断言：
   // 分支字段全量可断言 —— unborn 空仓库断言（④-E H 段）按 ask ④ 的「ready + 分支
@@ -172,20 +209,19 @@ async function main() {
 
   const home = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dsh-git-verify-'))
   const env = { ...process.env, DSH_HOME: home }
-  const cli = process.execPath
-  const cliArgs = ['--import', 'tsx/esm', binTs]
   const profileDir = join(home, 'profiles', PROFILE)
 
   let host = null
-  let exitCode = 1
+  let outcome = 'FAIL'
+  let exitCode = EXIT_FAIL
   let hostOutput = ''
   try {
     // ── 1. 通道 A 安装（runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）──
     for (const [label, dir] of [['host dsh-gitkit', hostPkgDir], ['client dsh-gitkit-ui', clientPkg]]) {
       step(`installing ${label}: dsh plugin --profile ${PROFILE} add file:${dir.replaceAll('\\', '/')}`)
       const spec = `file:${dir.replaceAll('\\', '/')}`
-      const install = await run(cli, [...cliArgs, 'plugin', '--profile', PROFILE, 'add', spec], {
-        cwd: DSH_TREE, env, timeoutMs: INSTALL_TIMEOUT_MS,
+      const install = await run(target.cli, [...target.cliArgs, 'plugin', '--profile', PROFILE, 'add', spec], {
+        cwd: target.cliCwd, env, timeoutMs: INSTALL_TIMEOUT_MS,
       })
       assert(install.code === 0, `install failed for ${label} (exit ${install.code}):\n${install.out.slice(-2000)}`)
       step(`installed ${label} (exit 0)`)
@@ -202,7 +238,14 @@ async function main() {
     assert(Array.isArray(bundles), `profile dsh.profile.bundles missing: ${JSON.stringify(profilePackageJson.dsh)}`)
     if (!bundles.includes('@deepseek-ai/dsh-web-app')) {
       const baseAt = bundles.indexOf('@deepseek-ai/dsh-base')
-      bundles.splice(baseAt + 1, 0, '@deepseek-ai/dsh-web-app')
+      if (baseAt >= 0) {
+        bundles.splice(baseAt + 1, 0, '@deepseek-ai/dsh-web-app')
+      } else {
+        // indexOf=-1 时 splice(-1+1=0,0,…) 会静默把 dsh-web-app 插到队首（P3 修复）：
+        // 改为队尾追加 + WARN。
+        console.warn('[verify] WARN: profile bundles lack dsh-base — appending dsh-web-app at the end (indexOf=-1 silent queue-head insert fixed)')
+        bundles.push('@deepseek-ai/dsh-web-app')
+      }
       writeFileSync(join(profileDir, 'package.json'), JSON.stringify(profilePackageJson, null, 2) + '\n')
       step(`profile bundles patched to include dsh-web-app: ${JSON.stringify(bundles)}`)
     }
@@ -241,19 +284,25 @@ async function main() {
     //        （它会变成内层 app 参数 → "too many arguments"——首跑实测踩坑），
     //        app 由 profile 的 dsh-web-app bundle 层挂载，--no-open/--port 是内层 app flags。──
     step('starting dsh web host…')
-    host = spawn(cli, [...cliArgs, '--profile', PROFILE, '--no-open', '--port', '0'], {
-      cwd: DSH_TREE, env, stdio: ['ignore', 'pipe', 'pipe'],
+    host = spawn(target.cli, [...target.cliArgs, '--profile', PROFILE, '--no-open', '--port', '0'], {
+      cwd: target.cliCwd, env, stdio: ['ignore', 'pipe', 'pipe'],
     })
     host.stdout.on('data', (c) => { hostOutput += c.toString('utf8') })
     host.stderr.on('data', (c) => { hostOutput += c.toString('utf8') })
     const bootLine = await new Promise((resolveBoot, rejectBoot) => {
       const timer = setTimeout(() => rejectBoot(new Error(`host boot timed out after ${BOOT_TIMEOUT_MS}ms`)), BOOT_TIMEOUT_MS)
+      // spawn 失败（DSH_BIN 指错等）只触发 'error' 事件不触发 'exit'——显式兜底 reject。
+      host.on('error', (error) => {
+        clearTimeout(timer)
+        rejectBoot(new Error(`host spawn failed: ${error?.message ?? error}`))
+      })
       host.stdout.on('data', function pump() {
-        const match = hostOutput.match(/dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=\S+)/)
-        if (match) {
+        // boot 行按列匹配：dev-tree 严格形；npm/bin 列宽松兜底形（verify-target.bootLineMatch）。
+        const bootURL = bootLineMatch(hostOutput, target)
+        if (bootURL) {
           clearTimeout(timer)
           host.stdout.off('data', pump)
-          resolveBoot(match[1])
+          resolveBoot(bootURL)
         }
       })
       host.on('exit', (code) => {
@@ -268,9 +317,21 @@ async function main() {
     // ── 3. 断言 B：无装载失败标记（runbook §5.4 反向判据）──
     assert(!/entry did not activate/.test(hostOutput), `host log reports "did not activate":\n${tail(hostOutput)}`)
     assert(!/failed to import/.test(hostOutput), `host log reports "failed to import":\n${tail(hostOutput)}`)
-    const constructed = hostOutput.includes('[dsh-plugin-git] GitService active')
-    step(`host load marker "[dsh-plugin-git] GitService active": ${constructed ? 'present' : 'ABSENT'}`)
-    assert(constructed, 'GitService activation marker missing from host stdout — plugin did not activate')
+    // 激活 marker 按列（P3）：dev-tree 全串严格（打点整串来自插件自身
+    // packages/host/src/index.ts:253 的 process.stdout.write 字面量）；npm/bin 列
+    // 降级 'GitService active' 子串 + WARN（宿主可能改写 stdout 行格式）。
+    const fullMarker = hostOutput.includes('[dsh-plugin-git] GitService active')
+    if (target.strictActivationMarker) {
+      assert(fullMarker, 'GitService activation marker missing from host stdout — plugin did not activate')
+      step('host load marker "[dsh-plugin-git] GitService active": present')
+    } else {
+      assert(hostOutput.includes('GitService active'),
+        'GitService activation marker missing from host stdout — plugin did not activate（npm/bin 列降级子串判据仍失败）')
+      if (!fullMarker) {
+        console.warn('[verify] WARN: full marker "[dsh-plugin-git] GitService active" not found — degraded to "GitService active" substring（npm/bin 列）')
+      }
+      step(`host load marker: ${fullMarker ? 'full' : 'degraded substring'} "GitService active": present`)
+    }
 
     // ── 4. 断言 C：client 半进入 boot 花名册 + bundle 被服务 ──
     // 浏览器 cookie 与 API cookie 是两种凭据（browser-auth.ts 实读）：index 的
@@ -320,10 +381,10 @@ async function main() {
     'client bundle does not consume dsh-client-ui-primitives (useCodeHighlighter) via injected require')
     assert(bundleBody.includes('已暂存') && bundleBody.includes('差异加载中'),
       'client bundle lacks the changes/diff zh dictionary entries (changes.staged / diff.loading)')
-    // ④-K 提交对话框模块断言（J）：对话框 portal 背板/编辑器锚、快捷键组、词典、生成描述符。
-    assert(bundleBody.includes('data-git-commit-dialog'), 'client bundle lacks the commit dialog portal backdrop anchor')
+    // ④-K 提交对话框模块断言（J）：样式注入器标记/对话框包裹层与编辑器锚、快捷键组、词典、生成描述符。
+    assert(bundleBody.includes('data-git-commit-dialog'), 'client bundle lacks the commit dialog wrapper anchor')
     assert(bundleBody.includes('data-git-commit-editor'), 'client bundle lacks the commit message editor anchor')
-    assert(bundleBody.includes('data-git-commit-portal'), 'client bundle does not mount a self-built portal host (ask ① portal 自建)')
+    assert(bundleBody.includes('data-plugin-css'), 'client bundle lacks the inline style injector tag (data-plugin-css — P2 样式管线：git.css 编译进 factory 执行时注入 <style>)')
     assert(bundleBody.includes('aria-keyshortcuts'), 'client bundle lacks the aria-keyshortcuts shortcut set (ask ②)')
     assert(bundleBody.includes("'Control+Enter Meta+Enter'") || bundleBody.includes('"Control+Enter Meta+Enter"'),
       'client bundle lacks the Ctrl/Cmd+Enter shortcut string')
@@ -462,12 +523,18 @@ async function main() {
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的
     //        strict codec 在网关拒绝非法值为 gateway/input-invalid；若仍是 SRC
     //        反射兜底，该值会穿过网关进方法 → git/git-error。
-    const strictProbe = await rpcCall(base.origin, apiCookie, 'git/identity', { scope: 'not-a-scope' })
-    assert(strictProbe.ok === false, `git/identity(scope=<invalid>) unexpectedly succeeded: ${JSON.stringify(strictProbe)}`)
-    assert(strictProbe.error?.code === 'gateway/input-invalid',
-      `expected gateway/input-invalid (strict descriptor registered), got ${JSON.stringify(strictProbe.error)} — ` +
-      'the generated ./typert artifact was NOT registered (SRC fallback is active)')
-    step('strict descriptor registered OK: invalid scope rejected as gateway/input-invalid (typert-loader auto-registration works)')
+    //        按列 flag target.strictTypert（矩阵列默认 true；首跑 fail 的处置是该列
+    //        置 false 并记录，非全局放宽）。
+    if (!target.strictTypert) {
+      step('strict typert registration probe: not asserted for this column (target.strictTypert=false)')
+    } else {
+      const strictProbe = await rpcCall(base.origin, apiCookie, 'git/identity', { scope: 'not-a-scope' })
+      assert(strictProbe.ok === false, `git/identity(scope=<invalid>) unexpectedly succeeded: ${JSON.stringify(strictProbe)}`)
+      assert(strictProbe.error?.code === 'gateway/input-invalid',
+        `expected gateway/input-invalid (strict descriptor registered), got ${JSON.stringify(strictProbe.error)} — ` +
+        'the generated ./typert artifact was NOT registered (SRC fallback is active)')
+      step('strict descriptor registered OK: invalid scope rejected as gateway/input-invalid (typert-loader auto-registration works)')
+    }
 
     // ── 6. 断言 E：未知端点不被服务（证明 /api 路由表真实解析了 git 命名空间）。
     //        实测：未知端点在 Connection 传输层就 404（gateway 的 claimsEndpoint 不认领
@@ -477,11 +544,25 @@ async function main() {
     assert(negative.rejected, `unknown endpoint unexpectedly succeeded: ${JSON.stringify(negative)}`)
     step(`negative check OK: unknown endpoint rejected (${negative.detail})`)
 
-    exitCode = 0
+    outcome = 'PASS'
+    exitCode = EXIT_PASS
     step('ALL CHECKS PASSED')
   } catch (error) {
-    fail(error?.message ?? String(error))
-    if (hostOutput) console.error(`---- host output tail ----\n${tail(hostOutput, 4000)}`)
+    if (error instanceof SkipError) {
+      ({ outcome, exit: exitCode } = applySkipDiscipline(error, '[verify]'))
+    } else if (target.observation) {
+      // 观测列：KNOWN-UNSUPPORTED 行改纯记录式（报告 §2.3）——不预设失败形态，
+      // 记录实际失败与宿主输出尾部；exit 0（观测列 KNOWN-UNSUPPORTED 亦 0）。
+      console.warn(`[verify] KNOWN-UNSUPPORTED（观测列纯记录，双结局合法）: ${error?.message ?? String(error)}`)
+      if (hostOutput) console.warn(`---- host output tail ----\n${tail(hostOutput, 4000)}`)
+      outcome = 'KNOWN-UNSUPPORTED'
+      exitCode = EXIT_PASS
+    } else {
+      fail(error?.message ?? String(error))
+      if (hostOutput) console.error(`---- host output tail ----\n${tail(hostOutput, 4000)}`)
+      outcome = 'FAIL'
+      exitCode = EXIT_FAIL
+    }
   } finally {
     // ── 7. 清理（runbook §6.9）──
     if (host?.pid && host.exitCode === null) {
@@ -505,7 +586,7 @@ async function main() {
       console.warn(`[verify] WARN: could not remove fixture repo ${fixtureRepo}: ${error?.message ?? error}`)
     }
   }
-  process.exit(exitCode)
+  return { outcome, exit: exitCode }
 }
 
 /** 未知端点的负向检查：接受传输层 404 或 gateway 层 ok:false 两种拒绝形状。 */
@@ -568,7 +649,47 @@ function tail(text, limit = 2500) {
   return text.length <= limit ? text : `…${text.slice(-limit)}`
 }
 
-main().catch((error) => {
-  fail(error?.stack ?? String(error))
-  process.exit(1)
-})
+// ── 编排（P3）：列解析（模块顶层）→ npm 列安装回填（try 内首步，延迟解析）→ main
+//    → 统一 finally（清理 npm prefix 临时目录）→ RESULT 行 → 唯一退出点。──
+let outcome = 'FAIL'
+let exitCode = EXIT_FAIL
+let npmPrefix = null // npm 列 --prefix 临时目录：try 内赋值、统一 finally 清理
+try {
+  step(`verify target: ${target.label}${target.observation ? '（观测列：KNOWN-UNSUPPORTED / PASS-UNEXPECTED 双结局合法，纯记录式）' : ''}`)
+  if (target.npmSpec) {
+    npmPrefix = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dshgit-verify-npm-'))
+    step(`npm column: installing ${target.npmSpec} into prefix ${npmPrefix}`)
+    const installed = await npmInstallToPrefix(target.npmSpec, npmPrefix)
+    target.cli = installed.cli
+    target.cliArgs = installed.cliArgs
+    target.cliCwd = installed.cliCwd
+    step(`npm column ready: node ${installed.cliArgs[0]} (cwd=${installed.cliCwd}; npm view version → ${installed.viewVersion})`)
+  }
+  const mainResult = await main()
+  outcome = mainResult.outcome
+  exitCode = mainResult.exit
+  // 观测列双结局落地（报告 §2.3）：全断言通过 = PASS-UNEXPECTED（exit 1）——声明下限
+  // 外的宿主意外可装载 = 兼容声明被现实证伪，必须显式失败而非静默记 PASS。
+  if (target.observation && outcome === 'PASS') {
+    console.warn('[verify] WARN: observation column passed all assertions — recorded as PASS-UNEXPECTED (exit 1)：声明下限外宿主意外可装载')
+    outcome = 'PASS-UNEXPECTED'
+    exitCode = EXIT_FAIL
+  }
+} catch (error) {
+  if (error instanceof SkipError) {
+    ({ outcome, exitCode } = applySkipDiscipline(error, '[verify]'))
+  } else {
+    fail(error?.stack ?? String(error))
+  }
+} finally {
+  if (npmPrefix) {
+    try {
+      rmSync(npmPrefix, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+      step(`removed npm prefix ${npmPrefix}`)
+    } catch (error) {
+      console.warn(`[verify] WARN: could not remove npm prefix ${npmPrefix}: ${error?.message ?? error}`)
+    }
+  }
+}
+console.log(`[verify] RESULT: outcome=${outcome} target=${target.label}`)
+process.exit(exitCode)

@@ -19,17 +19,20 @@
  *     经 GitConfirmDialog 确认后 push({setUpstream:true})、fetch/pull 同步动作（host
  *     diverged 预检与 pull-diverged 说明文案兜底）。
  *
- * 浮层：**portal 自建**（document.body 挂载点，Escape 折叠）+ **焦点管理**（开框存
- * 焦点 → 聚焦消息编辑器 → 关框还原）。不注册 root 槽——root 被 AppFrame 占据
- * （map §3.1）；由拉起方（GitHeaderButton 菜单 / GitChangesTab 底部按钮）在自己的
- * 组件树内渲染本组件。
+ * 浮层：**原语 Modal**（审查报告 §2.2 P2 / A3 修订——手写 portal/背板/焦点管理整段
+ * 删除，壳/标题/遮罩/Escape 层栈/Tab 焦点圈/初始聚焦归 useModalLayer；不注册 root
+ * 槽——root 被 AppFrame 占据（map §3.1）；由拉起方（GitHeaderButton 菜单 /
+ * GitChangesTab 底部按钮）在自己的组件树内渲染本组件）。编辑器以 data-modal-autofocus
+ * 标注初始聚焦（取代原 editorRef 手动聚焦）；data-git-commit-dialog 锚保留在 Modal
+ * children 包裹层（verify-load 断言）。
  *
- * 快捷键（ask §②，aria-keyshortcuts 全组）：Ctrl/Cmd+Enter = 默认动作
- * （defaultAction），Esc = Cancel；嵌套覆盖确认打开时让位给确认框自己的 Esc。
+ * 快捷键（ask §②，aria-keyshortcuts 全组，经 footer Button 的 rest 透传落在按钮元素
+ * 上）：Ctrl/Cmd+Enter = 默认动作（defaultAction）；Esc 归 Modal 层栈——嵌套覆盖确认
+ * 打开时层栈顶持有 Escape，自动让位给确认框。
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { Button, Checkbox, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { GeneratedCommitMessage, GitIdentityResult, GitStatusSnapshot } from 'dsh-gitkit/types'
@@ -46,7 +49,7 @@ import { GitErrorNotice } from './GitErrorNotice.js'
 export type CommitDialogIntent = 'commit' | 'commit-push'
 
 export interface GitCommitDialogProps {
-  /** false = 不渲染（portal 亦不挂载）。 */
+  /** false = 不渲染（原语 Modal 亦不挂载）。 */
   open: boolean
   /** 默认动作（Ctrl/Cmd+Enter 触发；主按钮视觉序）。 */
   defaultAction: CommitDialogIntent
@@ -68,7 +71,7 @@ type IdentityState =
   | { phase: 'ready'; identity: GitIdentityResult | null; error: GitErrorLike | null }
 
 /**
- * 提交对话框（portal 浮层）。
+ * 提交对话框（原语 Modal 浮层）。
  * @param props - 拉起方注入的快照/业务面/回调。
  */
 export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
@@ -135,28 +138,8 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
     return () => { cancelled = true }
   }, [open, face])
 
-  // ── portal 自建：open 时在 body 挂承载节点，关闭即摘除 ───────
-  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
-  useEffect(() => {
-    if (!open) {
-      setPortalHost(null)
-      return
-    }
-    const host = document.createElement('div')
-    host.setAttribute('data-git-commit-portal', '')
-    document.body.appendChild(host)
-    setPortalHost(host)
-    return () => { host.remove() }
-  }, [open])
-
-  // ── 焦点管理：开框存焦点 → 聚焦编辑器 → 关框还原 ─────────────
-  const editorRef = useRef<HTMLTextAreaElement | null>(null)
-  useEffect(() => {
-    if (!open) return
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    editorRef.current?.focus()
-    return () => { previous?.focus() }
-  }, [open])
+  // （原 portal 自建承载节点与手写焦点管理已整段删除——壳/遮罩/Escape 层栈/Tab 焦点
+  // 圈/初始聚焦/关闭还原全部归原语 Modal 的 useModalLayer；审查报告 §2.2 A3。）
 
   // ── amend 预填（[清单 19]）：勾选开 → 取 HEAD 消息 → 预填 ────
   const toggleAmend = (next: boolean): void => {
@@ -295,17 +278,11 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
     else void runCommit(failed.pushAfter)
   }
 
-  // ── 快捷键（ask §②）：Ctrl/Cmd+Enter 默认动作；Esc 取消 ─────
+  // ── 快捷键（ask §②）：Ctrl/Cmd+Enter 默认动作。Esc 归原语 Modal 的 useModalLayer
+  // （层栈顶持有 Escape——嵌套覆盖确认 / set-upstream 确认打开时自动让位）。──
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        // 嵌套覆盖确认 / set-upstream 确认打开时让位：确认框自己的 Esc 负责收它。
-        if (pendingGenerate !== null || setUpstreamAsk) return
-        event.preventDefault()
-        onClose()
-        return
-      }
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()
         if (pendingGenerate !== null || setUpstreamAsk) return
@@ -316,7 +293,7 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
     return () => { window.removeEventListener('keydown', onKey) }
   }, [open, pendingGenerate, setUpstreamAsk, defaultAction, onClose, view.commitEnabled, message, amend, skipHooks, snapshot])
 
-  if (!open || portalHost === null) return null
+  if (!open) return null
 
   const identityError = identityState.phase === 'ready' ? identityState.error : null
   const busyLabel = pending === 'commit'
@@ -327,21 +304,54 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
         ? t('commit.fetching')
         : t('commit.pulling')
 
-  return createPortal(
+  // footer 三动作（原语 Button；aria-keyshortcuts 经 Button 的 rest 透传落在按钮元素
+  // 上——verify-load 的快捷键组断言依赖该透传面）。Esc 快捷键语义随 Modal 层栈。
+  const footer = (
     <>
-      <div
-        className='dsh-git-commit-backdrop'
-        data-git-commit-dialog=''
+      <Button
+        variant='outline'
+        className='dsh-git-commit-dialog__cancel'
+        data-git-commit-cancel=''
+        aria-keyshortcuts='Escape'
         onClick={() => { onClose() }}
       >
-      <div
-        className='dsh-git-commit-dialog'
-        role='dialog'
-        aria-modal='true'
-        aria-label={t('commit.title')}
-        onClick={(event) => { event.stopPropagation() }}
+        {t('confirm.cancel')}
+      </Button>
+      <Button
+        variant='primary'
+        className='dsh-git-commit-dialog__commit'
+        data-git-commit-do='commit'
+        disabled={!view.commitEnabled}
+        aria-keyshortcuts={defaultAction === 'commit' ? 'Control+Enter Meta+Enter' : undefined}
+        onClick={() => { void runCommit(false) }}
       >
-        <h3 className='dsh-git-commit-dialog__title'>{t('commit.title')}</h3>
+        {pending === 'commit' && defaultAction !== 'commit-push' ? busyLabel : t('commit.commit')}
+      </Button>
+      <Button
+        variant='primary'
+        className='dsh-git-commit-dialog__commit-push'
+        data-git-commit-do='commit-push'
+        disabled={!view.pushEnabled}
+        aria-keyshortcuts={defaultAction === 'commit-push' ? 'Control+Enter Meta+Enter' : undefined}
+        onClick={() => { void runCommit(true) }}
+      >
+        {pending !== false && defaultAction === 'commit-push' ? busyLabel : t('commit.commitPush')}
+      </Button>
+    </>
+  )
+
+  return (
+    <>
+      {/* 壳/标题/遮罩/Escape 层栈/Tab 焦点圈/初始聚焦/关闭还原归原语 Modal；
+          data-git-commit-dialog 锚保留在 children 包裹层（verify-load 断言）。 */}
+      <Modal
+        open={open}
+        onClose={onClose}
+        title={t('commit.title')}
+        closeLabel={t('common.close')}
+        footer={footer}
+      >
+        <div className='dsh-git-commit-dialog' data-git-commit-dialog=''>
 
         {view.showUnbornBar && (
           <p className='dsh-git-commit-dialog__bar' data-git-commit-bar='unborn'>{t('changes.emptyRepo')}</p>
@@ -376,9 +386,9 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
         </label>
         <textarea
           id='dsh-git-commit-message'
-          ref={editorRef}
           className='dsh-git-commit-dialog__editor'
           data-git-commit-editor=''
+          data-modal-autofocus=''
           placeholder={t('commit.placeholder')}
           value={message}
           rows={5}
@@ -423,30 +433,24 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
         </div>
 
         <div className='dsh-git-commit-dialog__flags'>
-          <label className='dsh-git-commit-dialog__flag'>
-            <input
-              type='checkbox'
-              checked={amend}
-              disabled={!view.amendAvailable}
-              data-git-commit-amend=''
-              onChange={(event) => { toggleAmend(event.target.checked) }}
-            />
-            <span>
-              {view.amendParams !== null
-                ? t('commit.amend', view.amendParams)
-                : t('commit.amendFallback')}
-            </span>
-          </label>
-          <label className='dsh-git-commit-dialog__flag'>
-            <input
-              type='checkbox'
-              checked={skipHooks}
-              disabled={pending !== false}
-              data-git-commit-skip-hooks=''
-              onChange={(event) => { setSkipHooks(event.target.checked) }}
-            />
-            <span>{t('commit.skipHooks')}</span>
-          </label>
+          {/* 勾选框换原语 Checkbox（无 rest 透传——data-git-commit-amend/-skip-hooks
+              锚随落地消失；两锚在 verify-load/tests/capability-spec 均无断言）。 */}
+          <Checkbox
+            className='dsh-git-commit-dialog__flag'
+            checked={amend}
+            disabled={!view.amendAvailable}
+            label={view.amendParams !== null
+              ? t('commit.amend', view.amendParams)
+              : t('commit.amendFallback')}
+            onChange={toggleAmend}
+          />
+          <Checkbox
+            className='dsh-git-commit-dialog__flag'
+            checked={skipHooks}
+            disabled={pending !== false}
+            label={t('commit.skipHooks')}
+            onChange={setSkipHooks}
+          />
         </div>
         {view.showAmendWarning && (
           <p className='dsh-git-commit-dialog__amend-warning' data-git-commit-amend-warning=''>
@@ -454,41 +458,11 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
           </p>
         )}
 
-        <div className='dsh-git-commit-dialog__actions'>
-          <button
-            type='button'
-            className='dsh-git-commit-dialog__cancel'
-            data-git-commit-cancel=''
-            aria-keyshortcuts='Escape'
-            onClick={() => { onClose() }}
-          >
-            {t('confirm.cancel')}
-          </button>
-          <button
-            type='button'
-            className='dsh-git-commit-dialog__commit'
-            data-git-commit-do='commit'
-            disabled={!view.commitEnabled}
-            aria-keyshortcuts={defaultAction === 'commit' ? 'Control+Enter Meta+Enter' : undefined}
-            onClick={() => { void runCommit(false) }}
-          >
-            {pending === 'commit' && defaultAction !== 'commit-push' ? busyLabel : t('commit.commit')}
-          </button>
-          <button
-            type='button'
-            className='dsh-git-commit-dialog__commit-push'
-            data-git-commit-do='commit-push'
-            disabled={!view.pushEnabled}
-            aria-keyshortcuts={defaultAction === 'commit-push' ? 'Control+Enter Meta+Enter' : undefined}
-            onClick={() => { void runCommit(true) }}
-          >
-            {pending !== false && defaultAction === 'commit-push' ? busyLabel : t('commit.commitPush')}
-          </button>
         </div>
-      </div>
-      </div>
+      </Modal>
 
-      {/* AI 覆盖前确认（嵌套确认框架；portal host 内与背板平级——遮罩点击不冒泡到外层取消） */}
+      {/* AI 覆盖前确认（嵌套确认框架：两个确认是原语 Modal 自身 portal 到 body 的
+          独立浮层，遮罩点击只关各自那一层——外层不受牵连；Escape 让位由层栈承担） */}
       <GitConfirmDialog
         open={pendingGenerate !== null}
         title={t('commit.aiOverwriteTitle')}
@@ -511,7 +485,6 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
         onConfirm={runSetUpstreamPush}
         onCancel={() => { setSetUpstreamAsk(false) }}
       />
-    </>,
-    portalHost,
+    </>
   )
 }

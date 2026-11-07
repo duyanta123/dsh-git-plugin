@@ -36,3 +36,15 @@ jobs:
 
       - name: Build（host typert 产物 + client bundle + git-bundle 一致性）
         run: pnpm run build
+
+      # P3 门禁矩阵：npm latest 列——对已发布 dsh 形态（0.2.1-rc.5）做安装冒烟，
+      # 此前门禁从未覆盖任何已发布 dsh。不设 DSH_VERIFY_ALLOW_SKIP ⇒ npm 形态安装
+      # 失败 exit 2 按步失败处理。
+      # 显式决策（报告 §2.6③ 与 CI 交互复核）：CI 设 DSH_VERIFY_INSTALL_SKIP_CLONE=1
+      # 跳过干净 clone 相——clone 相会对本工作区再 clone + pnpm install --frozen-lockfile
+      # + pnpm run build，CI 时长近乎翻倍；干净 clone 相保持本地发布门禁定位。
+      - name: Verify install matrix（npm latest 列）
+        run: node scripts/verify-install.mjs
+        env:
+          DSH_SPEC: '@deepseek-ai/dsh@0.2.1-rc.5'
+          DSH_VERIFY_INSTALL_SKIP_CLONE: '1'

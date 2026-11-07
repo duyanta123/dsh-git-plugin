@@ -1,0 +1,1019 @@
+/*
+ * dsh-gitkit-ui — git.css：插件唯一样式入口（审查报告 §2.2 P2）。
+ *
+ * 颜色只引用宿主 token，零硬编码色值：
+ *   - 语义层 `--dsw-alias-*`（明暗由 ui-theme 运行时注入的定义层决定——暗色挂
+ *     body[data-ds-dark-theme]；本文件不写明暗分支）；
+ *   - lane 色板降级 `--dsw-static-*`（双源实测：已装 0.1.7-rc.2 ui-theme 产物与
+ *     dsh-v0.2.1-rc.5 tag 的 design-platform.css 均存在）。A1 修订：lane-4 用
+ *     `--dsw-static-deepseek-300`（violet-400 在已装 0.1.7-rc.2 产物 grep=0、直到
+ *     dsh 树 HEAD design-platform.css 才出现——不赌未来版本），选 deepseek-300
+ *     避免与 lane-0 blue-400 / lane-6 blue-600 同族扎堆。
+ *   - 形状 `--dsw-radius-*` 与字体 `--dsw-font-*` 同为宿主 token（base.css / ui-theme）。
+ *
+ * 只覆盖原语不可达的部分：header 菜单卡片、对话框壳/遮罩/焦点、Checkbox 控件由
+ * @deepseek-ai/dsh-client-ui-primitives 的宿主样式承担（`__menu` 仅作 Menu
+ * listClassName 钩子、footer Button 类仅作样式钩子）。
+ * lane 变量挂 `.dsh-git-graph` 作用域——graph-svg.tsx 以
+ * `var(--dsh-git-lane-N, <fallback hex>)` 消费，token 存在时 fallback 永不生效。
+ */
+
+/* ── lane 色板（C3 提交图；graph-svg 的 --dsh-git-lane-0..7 / --dsh-git-graph-head-ring）── */
+.dsh-git-graph {
+  --dsh-git-lane-0: var(--dsw-static-blue-400);
+  --dsh-git-lane-1: var(--dsw-static-green-400);
+  --dsh-git-lane-2: var(--dsw-static-amber-400);
+  --dsh-git-lane-3: var(--dsw-static-red-400);
+  /* A1 修订：violet-400 → deepseek-300（已装 0.1.7-rc.2 实测存在）。 */
+  --dsh-git-lane-4: var(--dsw-static-deepseek-300);
+  --dsh-git-lane-5: var(--dsw-static-green-500);
+  --dsh-git-lane-6: var(--dsw-static-blue-600);
+  --dsh-git-lane-7: var(--dsw-static-neutral-bluish-400);
+  --dsh-git-graph-head-ring: var(--dsw-static-amber-500);
+}
+
+/* ── C1 GitHeaderButton（菜单本体由原语 Menu 承担，listClassName 见 __menu）── */
+.dsh-git-header-button {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsw-font-xs-13-font-size);
+}
+
+.dsh-git-header-button__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-header-button__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-header-button__toggle:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.dsh-git-header-button__label {
+  white-space: nowrap;
+}
+
+.dsh-git-header-button__badge {
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-brand-primary);
+  border-radius: var(--dsw-radius-sm);
+  font-size: var(--dsw-font-xxxs-11-font-size);
+  line-height: 1.4;
+  padding: 0 5px;
+}
+
+/* portal 列表唯一可达样式钩子（Menu listClassName——卡片本体在 document.body）。 */
+.dsh-git-header-button__menu {
+  min-width: 220px;
+}
+
+/* ── C2 GitChangesTab 变更审查 ── */
+.dsh-git-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+.dsh-git-changes__unborn,
+.dsh-git-changes__empty {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-changes__empty {
+  padding: 24px 0;
+  text-align: center;
+}
+
+.dsh-git-changes__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.dsh-git-changes__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dsh-git-changes__group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 6px 2px;
+}
+
+.dsh-git-changes__group-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.dsh-git-changes__group-count {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__dir {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+}
+
+.dsh-git-changes__dir-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.dsh-git-changes__dir-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-changes__dir-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-git-changes__diff-status {
+  margin: 4px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__diff-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-git-changes__diff-retry {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-changes__diff-retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 写操作错误条（stage/unstage/discard 失败）：错误语义着色。 */
+.dsh-git-changes__mutation {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 0.5px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-static-red-400-a12);
+  padding: 8px 10px;
+}
+
+.dsh-git-changes__discard-hint {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__mutation-dismiss {
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-changes__mutation-dismiss:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-changes__footer {
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.dsh-git-changes__commit {
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 6px 14px;
+}
+
+.dsh-git-changes__commit:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.dsh-git-changes__commit:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ── C2 ChangeCard 单文件变更卡片 ── */
+.dsh-git-change-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dsh-git-change-card__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.dsh-git-change-card__check {
+  flex: none;
+  margin: 0;
+  accent-color: var(--dsw-alias-brand-primary);
+}
+
+.dsh-git-change-card__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.dsh-git-change-card__main:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-change-card__main:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+/* 状态字母徽标：四色（added/removed/renamed/conflict），modified/untracked 落默认灰
+ * （审查报告 §2.2 残余风险⑧——六值枚举留白，不破版）。 */
+.dsh-git-change-card__glyph {
+  flex: none;
+  width: 1.2ch;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-change-card__glyph[data-git-change-glyph-tone='added'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dsh-git-change-card__glyph[data-git-change-glyph-tone='removed'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-git-change-card__glyph[data-git-change-glyph-tone='renamed'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.dsh-git-change-card__glyph[data-git-change-glyph-tone='conflict'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-change-card__path {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dsh-git-change-card__orig {
+  color: var(--dsw-alias-label-tertiary);
+  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-git-change-card__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-git-change-card__flag {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  font-size: var(--dsw-font-xxxs-11-font-size);
+  padding: 0 4px;
+}
+
+.dsh-git-change-card__counts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-change-card__added {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dsh-git-change-card__deleted {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-git-change-card__actions {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.dsh-git-change-card__action {
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-change-card__action:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-change-card__diff {
+  min-width: 0;
+  padding: 2px 0 6px 22px;
+}
+
+/* ── C2/C3 FileDiffView ── */
+.dsh-git-diff {
+  min-width: 0;
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-diff__note {
+  margin: 2px 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-git-diff__status {
+  margin: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-diff__hunk {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsh-git-diff__hunk-header {
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-sm);
+  padding: 1px 6px;
+  margin: 4px 0 1px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.dsh-git-diff__line {
+  display: grid;
+  grid-template-columns: 4ch 4ch 1.2ch 1fr;
+  column-gap: 4px;
+  border-radius: var(--dsw-radius-sm);
+  padding: 0 2px;
+  min-width: 0;
+}
+
+.dsh-git-diff__line[data-git-diff-line='add'] {
+  background: var(--dsw-alias-file-diff-added-bg);
+}
+
+.dsh-git-diff__line[data-git-diff-line='del'] {
+  background: var(--dsw-alias-file-diff-deleted-bg);
+}
+
+.dsh-git-diff__no {
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+  user-select: none;
+}
+
+.dsh-git-diff__sign {
+  color: var(--dsw-alias-label-secondary);
+  text-align: center;
+  user-select: none;
+}
+
+.dsh-git-diff__line[data-git-diff-line='add'] .dsh-git-diff__sign {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dsh-git-diff__line[data-git-diff-line='del'] .dsh-git-diff__sign {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 冲突标记行（M13 markConflictRows 的 data-git-diff-conflict 锚）。 */
+.dsh-git-diff__line[data-git-diff-conflict] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-diff__text {
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-width: 0;
+}
+
+/* ── C3 GitGraphTab 提交图 ── */
+.dsh-git-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsw-font-xs-13-font-size);
+}
+
+.dsh-git-graph__notice {
+  min-width: 0;
+}
+
+.dsh-git-graph__status {
+  margin: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-graph__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dsh-git-graph__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.dsh-git-graph__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-graph__row:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.dsh-git-graph__row--selected,
+.dsh-git-graph__row--selected:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.dsh-git-graph__gutter {
+  flex: none;
+}
+
+.dsh-git-graph__refs {
+  flex: none;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dsh-git-graph__ref {
+  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.dsh-git-graph__ref--head {
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-graph__subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-graph__meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  white-space: nowrap;
+}
+
+/* ── C3 提交详情面板 ── */
+.dsh-git-graph-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  padding-top: 8px;
+}
+
+.dsh-git-graph-detail__header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-graph-detail__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-git-graph-detail__subject {
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-s-14-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-graph-detail__oid {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-graph-detail__meta {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-graph-detail__refs {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dsh-git-graph-detail__ref {
+  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.dsh-git-graph-detail__ref--head {
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-graph-detail__close {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-graph-detail__close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-graph-detail__body {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--dsw-radius-sm);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  max-height: 120px;
+  overflow: auto;
+}
+
+.dsh-git-graph-detail__files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dsh-git-graph-detail__files-header {
+  margin: 0;
+  padding: 4px 6px 2px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-graph-detail__file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dsh-git-graph-detail__file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 3px 6px;
+  text-align: left;
+}
+
+.dsh-git-graph-detail__file-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-graph-detail__file-row:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.dsh-git-graph-detail__file-status {
+  flex: none;
+  width: 1.2ch;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-graph-detail__file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-git-graph-detail__file-counts {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-graph-detail__loading,
+.dsh-git-graph-detail__note {
+  margin: 2px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+/* ── C6 GitErrorNotice ── */
+.dsh-git-error-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-left: 2px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsw-font-xs-13-font-size);
+  padding: 8px 10px;
+}
+
+.dsh-git-error-notice__message {
+  margin: 0;
+}
+
+.dsh-git-error-notice__details {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-error-notice__details summary {
+  cursor: pointer;
+}
+
+.dsh-git-error-notice__stderr {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-base);
+  border-radius: var(--dsw-radius-sm);
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--dsw-font-markdown-code-font-family);
+  max-height: 160px;
+  overflow: auto;
+}
+
+.dsh-git-error-notice__actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.dsh-git-error-notice__action {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-error-notice__action:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── C4 GitCommitDialog 正文（壳/标题/遮罩/焦点由原语 Modal 承担）── */
+.dsh-git-commit-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-commit-dialog__bar {
+  margin: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 6px 10px;
+}
+
+.dsh-git-commit-dialog__bar[data-git-commit-bar='identity'],
+.dsh-git-commit-dialog__bar[data-git-commit-bar='diverged'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-commit-dialog__error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px;
+}
+
+.dsh-git-commit-dialog__error-dismiss {
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-commit-dialog__error-dismiss:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-commit-dialog__editor-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-commit-dialog__editor {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsw-font-s-14-font-size);
+  line-height: 1.5;
+  padding: 8px 10px;
+}
+
+.dsh-git-commit-dialog__editor::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.dsh-git-commit-dialog__editor:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.dsh-git-commit-dialog__editor-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-commit-dialog__conventional {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-commit-dialog__validation {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-git-commit-dialog__generate {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 4px 12px;
+}
+
+.dsh-git-commit-dialog__generate:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-commit-dialog__generate:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dsh-git-commit-dialog__staged {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dsh-git-commit-dialog__staged-count {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-commit-dialog__staged-list {
+  margin: 0;
+  padding: 4px 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.dsh-git-commit-dialog__staged-item {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-git-commit-dialog__flags {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Checkbox（原语）label 的布局钩子：控件外观由原语宿主样式承担。 */
+.dsh-git-commit-dialog__flag {
+  font-size: var(--dsw-font-xs-13-font-size);
+}
+
+.dsh-git-commit-dialog__amend-warning {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+/* ── C5 GitConfirmDialog 正文（壳/标题/描述/遮罩/焦点由原语 Modal 承担，
+ *    closeLabel 复用 cancelLabel）── */
+.dsh-git-confirm-dialog__items {
+  margin: 0 0 12px;
+  padding: 4px 6px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow: auto;
+  border: 0.5px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.dsh-git-confirm-dialog__item {
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Checkbox（原语）label 的布局钩子。 */
+.dsh-git-confirm-dialog__checkbox {
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+/* danger 确认按钮：已装 Button 无 danger variant——按报告把 primary 族的 fill
+ * token 重指向 state-error-primary（自定义属性在元素上覆写继承值，原语 hashed
+ * 规则读 var() 时取到覆写值；明暗两态均由定义层供给）。 */
+.dsh-git-confirm-dialog__confirm[data-git-confirm-danger] {
+  --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
+  --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
+}

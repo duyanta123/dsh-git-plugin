@@ -101,7 +101,9 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
     expect(dialog).toContain("'Control+Enter Meta+Enter'")
     expect(dialog).toContain("aria-keyshortcuts='Escape'")
     expect(dialog).toContain('data-git-commit-dialog=')
-    expect(dialog).toContain('createPortal')
+    // 原 portal 自建实现已被原语 Modal 取代（初始聚焦锚 = 编辑器上的
+    // data-modal-autofocus，Modal useModalLayer querySelector 消费）。
+    expect(dialog).toContain('data-modal-autofocus')
     const card = await readText(clientSrc('components/ChangeCard.tsx'))
     expect(card).toContain("'Space Enter Delete'")
     expect(card).toContain("'Space Enter'")

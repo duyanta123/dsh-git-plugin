@@ -20,6 +20,10 @@
  * （map §3.2），本插件只注册 `conversation.session.header.utilities`。
  */
 
+// 唯一样式导入点（审查报告 §2.2 P2）：side-effect import 经 build-client.mjs 的
+// dsh-git-css-inline 插件虚拟化 → 注入代码编译进 factory 闭包，materialization 时
+// 执行、先于任何组件渲染（模块体副作用住在 factory 闭包内的 Lazy CJS 语义）。
+import './styles/git.css'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Events['connection/reset'] 官方增强（dsh-client-connection/src/client/index.ts:26-31）——

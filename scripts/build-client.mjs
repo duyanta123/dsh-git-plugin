@@ -14,13 +14,16 @@
  */
 import { mkdir, writeFile, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const pkgDir = join(here, '..', 'packages', 'client-ui')
 // rolldown 是 client-ui 包的 devDependency；从该包目录锚定解析。
 const { rolldown } = createRequire(join(pkgDir, 'package.json'))('rolldown')
+// lightningcss 同为 client-ui 的 devDependency（P2 样式管线）；同上从该包目录锚定解析
+// （pnpm 严格隔离：两包都只在 client-ui/node_modules 有直连）。
+const { transform } = createRequire(join(pkgDir, 'package.json'))('lightningcss')
 const input = join(pkgDir, 'src', 'client', 'index.ts')
 const outFile = join(pkgDir, 'lib', 'client.js')
 const PACKAGE_ID = 'dsh-gitkit-ui'
@@ -40,9 +43,78 @@ const EXTERNALS = [
   '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
+// ── CSS 编译管线（审查报告 §2.2 P2）────────────────────────────────────────
+// dsh client-modules 协议只服务单文件 client.js（无 .css 旁文件路由），宿主主 CSS
+// 对 dsh-git 类名零规则——bundle 必须自带样式。官方 tsdown client 预设的范式是把
+// CSS 编译后内联进 JS、factory 执行时注入 <style>（dsh 树 packages/client/
+// tsdown.client.ts:856-881 插件体），本管线按同款形状实现：
+//   `.css` / `.module.css` 导入 → lightningcss 编译（module 支路 cssModules pattern
+//   '[hash]_[local]' + minify，同 tsdown.client.ts:874-875；global 支路仅 minify，
+//   同款 dsh-css-global-inline——cssModules 会改写全局类名，全局支路不得开启）→
+//   styleInjectionModule 形状的 JS 模块（逐字复刻 tsdown.client.ts:58-77：typeof
+//   document 守卫 + querySelector 防重复 + data-plugin + data-plugin-css +
+//   head.appendChild）。虚拟 id（\0dsh-git-css: 前缀 + .js 后缀）抢在 rolldown 内置
+//   CSS 管线之前虚拟化——后缀不能是 .css（会落进内置管线），.js 让虚拟模块按 JS 编译。
+const CSS_VIRTUAL_PREFIX = '\0dsh-git-css:'
+const CSS_VIRTUAL_SUFFIX = '.js'
+
+/**
+ * Emit one plugin-owned style injector and an optional CSS Modules export.
+ * 形状逐字对照 tsdown.client.ts:58-77；css 表达式内联了 stylesheetSource 的零引用
+ * 形态 JSON.stringify(css)（本管线不携带 assets url() 重写，git.css 无 url()）。
+ */
+function styleInjectionModule(id, fileId, css, classMap) {
+  const source = [
+    `const css = ${css};`,
+    `const tagId = ${JSON.stringify(`${id}/${basename(fileId)}`)};`,
+    'if (typeof document !== \'undefined\' && document.querySelector(\'style[data-plugin-css=\' + JSON.stringify(tagId) + \']\') === null) {',
+    '  const tag = document.createElement(\'style\');',
+    `  tag.dataset.plugin = ${JSON.stringify(id)};`,
+    '  tag.dataset.pluginCss = tagId;',
+    '  tag.textContent = css;',
+    '  document.head.appendChild(tag);',
+    '}',
+  ]
+  source.push(classMap === undefined ? 'export {};' : `export default ${JSON.stringify(classMap)};`)
+  return source.join('\n')
+}
+
+const cssInlinePlugin = {
+  name: 'dsh-git-css-inline',
+  resolveId(source, importer) {
+    if (!source.endsWith('.css')) return null
+    const abs = isAbsolute(source)
+      ? source
+      : importer !== undefined ? resolvePath(dirname(importer), source) : resolvePath(source)
+    return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+  },
+  async load(virtualId) {
+    if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
+    const fileId = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+    // 官方同款：把物理样式表登记进 watch 图（本脚本为一次性构建，API 形状保真）。
+    this.addWatchFile(fileId)
+    const source = await readFile(fileId)
+    const isModuleCss = fileId.endsWith('.module.css')
+    const { code, exports: cssExports } = transform({
+      filename: fileId,
+      code: source,
+      ...(isModuleCss ? { cssModules: { pattern: '[hash]_[local]' } } : {}),
+      minify: true,
+    })
+    const classMap = {}
+    if (isModuleCss) {
+      const exportEntries = Object.entries(cssExports ?? {})
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      for (const [local, exp] of exportEntries) classMap[local] = exp.name
+    }
+    return styleInjectionModule(PACKAGE_ID, fileId, JSON.stringify(code.toString()), Object.keys(classMap).length > 0 ? classMap : undefined)
+  },
+}
+
 const bundle = await rolldown({
   input,
   external: id => EXTERNALS.includes(id),
+  plugins: [cssInlinePlugin],
 })
 const { output } = await bundle.generate({
   format: 'cjs',
@@ -74,6 +146,11 @@ await writeFile(outFile, wrapped, 'utf8')
 if (!/\brequire\(\s*["']react["']\s*\)/.test(body)) {
   throw new Error('client bundle body does not require("react") — externals misconfigured')
 }
+// sanity: the style pipeline must survive into the artifact (审查报告 §2.2 ④ P2 回归
+// 闸——缺 data-plugin-css 注入器的 bundle 意味着整幅 UI 退回裸 DOM)
+if (!body.includes('data-plugin-css')) {
+  throw new Error('client bundle body lacks the data-plugin-css style injector — CSS inline pipeline missing')
+}
 console.log(`build-client: wrote ${outFile} (${wrapped.length} bytes)`)
 
 // ── git-bundle 薄包一致性检查（② 全量构建的第三件产物：零代码发布薄包）──
@@ -93,8 +170,26 @@ if (bundlePkg === null || bundlePatchRaw === null) {
 }
 const bundleManifest = JSON.parse(bundlePkg)
 if (bundleManifest.name !== 'dsh-gitkit-bundle') throw new Error(`git-bundle manifest name mismatch: ${bundleManifest.name}`)
-if (bundleManifest.version !== JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8')).version) {
+// ── 四 manifest 一致性 + 宣传面同锚（审查报告 §2.4 第二层）──
+// root/host/client/bundle version 全等；根 description 与 README 必须锚定同一版本号
+// ——发布内容与宣称版本在 push CI 的构建门禁咬合，『改了内容不升版、dispatch 补发』
+// 在这里被拒。根 package.json 读取在原 bundle-version 断言处已存在（复用其 parse，
+// 零额外文件 IO）；hostPkg/clientPkg 在上方已读取；README 为新增读取。
+const rootManifest = JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8'))
+const hostVersion = JSON.parse(hostPkg).version
+const clientVersion = JSON.parse(clientPkg).version
+if (bundleManifest.version !== rootManifest.version) {
   throw new Error('git-bundle version drifted from the repo root version')
+}
+if (hostVersion !== rootManifest.version || clientVersion !== rootManifest.version) {
+  throw new Error(`manifest version drift: root=${rootManifest.version} host=${hostVersion} client=${clientVersion} bundle=${bundleManifest.version}`)
+}
+if (!String(rootManifest.description ?? '').includes(`v${rootManifest.version}`)) {
+  throw new Error(`root package.json description must mention v${rootManifest.version}`)
+}
+const readme = await readFile(join(here, '..', 'README.md'), 'utf8')
+if (!readme.includes(`v${rootManifest.version}`)) {
+  throw new Error(`README.md must mention v${rootManifest.version}`)
 }
 if (bundleManifest.dsh?.bundle?.patch !== './cordis.patch.yml') throw new Error('git-bundle manifest lacks dsh.bundle.patch: ./cordis.patch.yml')
 if (bundleManifest.dependencies?.['dsh-gitkit'] !== 'file:../packages/host'

@@ -21,7 +21,7 @@
 | `dsh.client.immediately` | （不设） | 可选布尔（runbook §3.C，manifest.ts:182-191）；v1 无需立即装载 |
 | `dsh.client.external` | （不设） | **基线 externals 不要写进来**：react/react-dom/@tanstack/react-virtual/@deepseek-ai/dsh-client-* 属 dsh 预置外部依赖（spec §⑦ 清单注意，spec 转引 host-capability-map.md:78）；`@tanstack/react-virtual` 进 devDependencies 走 npm（spec §3.3.3） |
 | `files` | lib / cordis.patch.yml / LICENSE / NOTICE.md / THIRD_PARTY_NOTICES.md | 封闭覆盖全部运行时产物（spec §⑦，spec 转引 host-capability-map.md:77）；三份合规文件 = spec §5.2 发布要求 |
-| `engines.dsh` | `>=0.2.1-rc.2` | spec §⑦；精确 range 施工期按宿主实际版本复核（runbook §6.7：树为 0.2.2-alpha.2 滚动版） |
+| `engines.dsh` | `>=0.2.1-rc.5` | spec §⑦；0.1.2 定稿口径——下限 = 唯一做过逐符号源码级对照的已发布 dsh 版本（npm dist-tags latest；静态对照，真机装载为发版前置门禁）。两代宿主校验语义：engines-first 宿主（0.2.1 线起）由 `engines.dsh` 单独裁决（includePrerelease:true）、peerDependencies 不参与；peer-only 旧宿主（≤0.2.0.x）忽略 engines、按 peerDependencies 裁决（host 半拒载、client 半照常载入）——详见 README §2 兼容性口径段 |
 
 ## 2. client 半插槽与注入面（client 地基模块现状，spec §③）
 

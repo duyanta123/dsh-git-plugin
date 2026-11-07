@@ -11,6 +11,7 @@
 > **用户决议（本 spec 的硬前提）**：host 包名 `dsh-gitkit`，client 包名 `dsh-gitkit-ui`，**pnpm workspace 双包**，本地发布就绪（`file:`/`link:` 安装 + npm publish 均可直接进行）。
 >
 > **修订记录**：v1.1（2026-10-30）按评审修订六项阻断问题——B1 untracked diff 命令修正 + exit 1 白名单（本机实测 exit 129/1）；B2 client 包预留 remote-client 产物位并写明两种 spike 结局；B3 push 改显式 refspec（裸 `git push` 在 `push.default=matching` 下实测一次推多分支）；B4 status 摘除 `git diff --check` 步（冲突标记展示移交 FileDiffView）；B5 watcher `ignored` 改函数谓词（chokidar@5 内置 matcher 对字符串做整串相等比较，实读其 dist 证实）；B6 refs 取 peeled oid（annotated tag 实测 `objectname`≠`*objectname`）。
+> **修订记录**：v1.2（2026-11-07）按实现偏离归真修订（NOTICE.md:42 既定偏离记录）——① watcher 实现为宿主 `ctx.fs.watch` 能力面（三目标 `.git/index`/`.git/HEAD`/`repoRoot`，depth:0 非递归；宿主 watch 回调不带内容路径）：事件路径防线 = 150ms 防抖 + R2 帧内容比对、嵌套目录变更只能靠 R4 兜底轮询捕获、fs 能力缺席降级纯轮询（R6）；§2.3 原案（插件自带 chokidar@5 递归 watcher）废弃、原案引用语保留于 §2.3 主表。② §0.4-9『dependencies 对齐 fs-local chokidar 版本』决议失效——chokidar `^5.0.0` 移入 devDependencies（唯一消费者 tests/support.ts 的 chokidarFsFace 测试替身），运行时依赖零 chokidar（§6 host 模板 dependencies/devDependencies 已同步）。③ vendored `packages/typert-protocol` 的 cordis peer 维持 `~4.0.6-alpha.1` 不动（owner 裁决 2026-11-05：副本零发布面——release.yml 只发 dsh-gitkit/dsh-gitkit-ui 两包、运行时从 registry 装官方同名 npm 包，放宽无生效面且破坏『未改动副本』四处登记）。④ §6 模板 engines 样例同步 0.1.2 定稿口径 `>=0.2.1-rc.5`（下限 = 唯一做过逐符号源码级对照的已发布版本，npm dist-tags latest；真机装载为发版前置门禁）。
 >
 > dsh 树内源码（`D:\DeepSeekHarness\...`）的行号一律**转引自【map】**，本会话未直接重读 dsh 源码；凡【map】标 ✅核 的条目是该图作者的核对结论，本文沿用并标注出处。
 
@@ -91,7 +92,7 @@
 6. **`ctx.invocation.peer` 能否鉴别"用户动作 vs 其他来源"**（§0.2 决议 5）。
 7. **dsh 命令面板/快捷键注册机制**（[清单 51]）。
 8. **dsh 仓库 LICENSE 的版权行原文**（NOTICE 需要，§5）。
-9. **fs-local 的 chokidar 精确版本**（`packages/fs/fs-local/package.json:36`，【map】§4.2 `host-capability-map.md:297`——我们 dependencies 里对齐它）；**chokidar@5 `ignored` 的 Matcher 类型与匹配语义**已部分实读核实（dsh 树 `node_modules/.pnpm/chokidar@5.0.0/node_modules/chokidar/index.d.ts:29,40,45`：`Matcher = string | RegExp | MatchFunction | MatcherObject`；`index.js:24-26`：字符串=整串相等、RegExp=test、函数谓词、`{path, recursive}` 对象匹配）——本 spec 统一用函数谓词（三种语义下都正确）；若 fs-local 对齐版本变为 v3（真 anymatch/glob 语义）需复核谓词兼容。
+9. **fs-local 的 chokidar 精确版本**（`packages/fs/fs-local/package.json:36`，【map】§4.2 `host-capability-map.md:297`——我们 dependencies 里对齐它）；**chokidar@5 `ignored` 的 Matcher 类型与匹配语义**已部分实读核实（dsh 树 `node_modules/.pnpm/chokidar@5.0.0/node_modules/chokidar/index.d.ts:29,40,45`：`Matcher = string | RegExp | MatchFunction | MatcherObject`；`index.js:24-26`：字符串=整串相等、RegExp=test、函数谓词、`{path, recursive}` 对象匹配）——本 spec 统一用函数谓词（三种语义下都正确）；若 fs-local 对齐版本变为 v3（真 anymatch/glob 语义）需复核谓词兼容。**【v1.2 失效注记】『dependencies 对齐 fs-local chokidar 版本』决议失效**——实现按实测偏离改用宿主 `ctx.fs.watch` 能力面（NOTICE.md:42 既定偏离记录；§2.3 v1.2 行），插件运行时依赖零 chokidar（chokidar 仅存 devDependencies，tests/support.ts 测试替身消费）；上段 chokidar@5 Matcher 语义知识保留为背景，不再构成本插件依赖决策依据。
 
 ---
 
@@ -158,7 +159,7 @@ export interface GitPluginConfig {
   logDefaultLimit: number        // 默认 500
   /** log 单页上限（GitLens getGraph 默认 5000，SOURCES.md:108） */
   logMaxLimit: number            // 默认 5_000
-  /** host 文件监听开关（递归 watcher 用插件自带 chokidar，见 §2.3） */
+  /** host 文件监听开关（宿主 ctx.fs.watch 三目标 depth:0 监听 + 兜底轮询，见 §2.3；v1.2 归真） */
   watchEnabled: boolean          // 默认 true
   /** fs 事件防抖（ZCode DEBOUNCE_MS=150，SOURCES.md:36） */
   debounceMs: number             // 默认 150
@@ -589,7 +590,7 @@ async show(options: ShowOptions, signal?: AbortSignal): Promise<CommitDetail>
 
 | 触发 | 动作 | 出处 |
 |---|---|---|
-| 仓库文件变化 | 插件自带 `chokidar@5` 递归 watch `repoRoot`——**`ignored` 必须用函数谓词**：`(p: string) => /(^|\/)\.git(\/|$)/.test(p) || /(^|\/)node_modules(\/|$)/.test(p)`（chokidar@5 的 `normalizePath` 把 `\` 归一为 `/`，谓词只用 `/`）。**不能用裸字符串** `'.git'`/`'node_modules'`：chokidar@5 内置 matcher 对字符串模式做**整串相等**比较（其 dist `index.js` 的 `createPattern`：`typeof matcher === 'string'` ⇒ `(string) => matcher === string`；本会话实读 dsh 树 `node_modules/.pnpm/chokidar@5.0.0/node_modules/chokidar/index.js:24-26`）——`'.git'` 只匹配路径恰为 `.git` 的情形，`D:/repo/.git` 永不失配 ⇒ `.git/index` 与锁文件的持续变动会造成事件风暴，淹没 150ms 防抖与自动刷新（[清单 52]）。→ 150ms 防抖（`debounceMs`）→ 重算快照缓存。【map】§4.2：`ctx.fs.watch` depth:0 且不能排除 `.git`，做不了递归（D9，`host-capability-map.md:294-297`）——所以自带 watcher，`ctx.fs.watch` 只作不可用时的降级（depth:0 监直接子项） | ZCode fileWatcherService 防抖与引用计数（SOURCES.md:36）；chokidar@5 dist 实读 |
+| 仓库文件变化 | 宿主 fs 能力面监听三目标——`.git/index`、`.git/HEAD`、`repoRoot`（`ctx.fs.watch`，**depth:0 非递归**；【map】§4.2 D9，`host-capability-map.md:294-297`；宿主 watch 回调不带内容路径）。事件路径的防线因此**不是路径过滤，而是 150ms 防抖（`debounceMs`）+ R2 帧内容比对**（新旧快照按签名比对，未变化不渲染）→ 重算快照缓存。**已知限制：嵌套目录内文件编辑不触发任何 watch 事件**，只能靠 R4 兜底轮询（`pollIntervalMs`）捕获；fs 能力缺席时 R6 降级纯轮询。**原案（插件自带 chokidar@5 递归 watch `repoRoot` + 函数谓词过滤 `.git`/`node_modules`）未采用**——按实现偏离归真（NOTICE.md:42 既定偏离记录；谓词 matcher 语义等原案知识见 v1.1 修订行与 git 历史 v1.1 版本文本） | ZCode fileWatcherService 防抖与引用计数**结构**（SOURCES.md:36）；dsh fs-local watch 实读（depth:0，`host-capability-map.md:294-297`） |
 | 自身写操作完成 | 对应方法内部立即重算（§1.9 失效列） | 【报告】:253 |
 | 定时兜底 | `pollIntervalMs`（默认 60s）轮询重算 | ZCode useGitAutoRefresh 60s（SOURCES.md:40） |
 | 生命周期 | watcher 与定时器挂宿主 ctx，`ctx.effect` 清理（`host-capability-map.md:187`） | 【map】§4.2 |
@@ -850,7 +851,7 @@ export function computeGraphLayout(input: GraphLayoutInput): GraphLayoutResult
 | `host/src/mutations.ts` / `commit.ts` | ZCode `gitCliRepo.ts`（写命令段）+ `gitService.ts`（编排状态机） | `3c5b2276` | Apache-2.0 | 移植；IPC → RPC/轮询（SOURCES.md:34） |
 | `host/src/sync.ts` | ZCode push `--set-upstream`（:1654）与 `upstream...HEAD`（:1391-1400）段 | `3c5b2276` | Apache-2.0 | 逐段移植（SOURCES.md:33） |
 | `host/src/message-gen.ts` | ZCode `gitCommitMessageGenerator.ts`（裁剪常量 :10-17、`CONVENTIONAL_COMMIT_RE` :20、prompt 约束 :197-199） | `3c5b2276` | Apache-2.0 | 移植；LLM 调用换 `ctx.llm.prepareCall`（SOURCES.md:35） |
-| `host/src/watcher.ts` | ZCode `fileWatcherService.ts`（防抖 150ms 与引用计数**结构**） | `3c5b2276` | Apache-2.0 | 只抄结构；watch 换插件自带 chokidar（SOURCES.md:36） |
+| `host/src/watcher.ts` | ZCode `fileWatcherService.ts`（防抖 150ms 与引用计数**结构**） | `3c5b2276` | Apache-2.0 | 只抄结构；watch 换宿主 `ctx.fs.watch` 三目标 depth:0（v1.2 归真，NOTICE.md:42；SOURCES.md:36） |
 | `client/src/client/diff/hunkRows.ts` 等 | dsh `packages/client/ui-deliverables/src/client/.../FileDiff.tsx:66-125`（hunkRows/splitRows/renderedHunks，MAX_RENDERED_LINES=5000） | dsh 树 | MIT（dsh） | 照抄纯函数进自己包（【map】§3.6 `host-capability-map.md:259`） |
 | `client/src/client/graph/graph-types.ts` | GitLens `packages/git/src/models/graph.ts`（行/头类型收敛）+ `graphSession.ts`（single-writer 契约）+ `graph.utils.ts`（窗口追加 reducer） | `020cfc1b` | **MIT 区**（LICENSE:3-5 除外条款，SOURCES.md:99） | 类型收敛 + 契约移植；逐文件登记（SOURCES.md:105-107） |
 | `host/src/log.ts`（分页/增量模式） | GitLens `packages/git-cli/src/providers/graph.ts`（over-walk :2487、spurious-empty :1822 **模式**） | `020cfc1b` | MIT 区 | 只摘模式不整体移植（2561 行含 GitLens 基建耦合，SOURCES.md:108） |
@@ -936,7 +937,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
 │   │   │   ├── sync.ts                  # push/pull/fetch + diverged/auth 分类
 │   │   │   ├── log.ts                   # log/refs/show 解析与分页
 │   │   │   ├── message-gen.ts           # §1.7
-│   │   │   └── watcher.ts               # chokidar@5 递归 + 防抖 + 轮询兜底（§2.3）
+│   │   │   └── watcher.ts               # 宿主 ctx.fs.watch 三目标（depth:0）+ 防抖 + 轮询兜底（§2.3）
 │   │   ├── lib/                         # 构建产物（gitignore）
 │   │   └── tests/                       # host 侧 7 个 spec + support.ts + fixtures/
 │   └── client-ui-git/                   # dsh-gitkit-ui —— client（web 面）
@@ -986,16 +987,15 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
   },
   "files": ["lib", "locale", "cordis.patch.yml", "LICENSE", "NOTICE.md", "THIRD_PARTY_NOTICES.md"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "engines": { "dsh": ">=0.2.1-rc.2" },              // 精确 range 施工期按 dsh 实际版本复核（§0.4-2）
+  "engines": { "dsh": ">=0.2.1-rc.5" },              // 0.1.2 定稿口径：下限 = 唯一做过逐符号源码级对照的已发布版本（npm dist-tags latest；静态对照，真机装载为发版前置门禁——README §2 兼容性口径段）
   "dependencies": {
-    "@deepseek-ai/schemastery": "<真实 range，npm view 核实>",
-    "chokidar": "^5（对齐 fs-local 版本，§0.4-9）"
+    "@deepseek-ai/schemastery": "<真实 range，npm view 核实>"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "<真实 range>",
     "@deepseek-ai/dsh-typert-protocol": "<真实 range>"
   },
-  "devDependencies": { "vitest": "*", "typescript": "*", "@types/node": "*" } // 版本对齐 dsh 树
+  "devDependencies": { "vitest": "*", "typescript": "*", "@types/node": "*", "chokidar": "^5.0.0" } // chokidar 仅 tests/support.ts 测试替身消费（v1.2 归真：运行时监听走宿主 ctx.fs.watch，§2.3）；版本对齐 dsh 树
 }
 ```
 
@@ -1024,7 +1024,7 @@ dsh-git-plugin/                          # workspace 根（本仓库，构建于
                   "@deepseek-ai/dsh-client-store"]   // 信息性（预检/HMR），不决定激活顺序（host-capability-map.md:248）
     }
   },
-  "engines": { "dsh": ">=0.2.1-rc.2" },
+  "engines": { "dsh": ">=0.2.1-rc.5" },
   "devDependencies": {
     // 浏览器-only 第三方库进 devDependencies（打进 bundle 或作基线 external，host-capability-map.md:78）
     "@types/react": "*", "react": "*", "@tanstack/react-virtual": "*",
