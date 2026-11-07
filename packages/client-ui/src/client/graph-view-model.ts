@@ -9,6 +9,29 @@
  */
 
 import type { CommitDetail, DiffFile } from 'dsh-gitkit/types'
+import type { GitErrorLike } from './remote/mount.js'
+
+/** 顶部错误条的来源（重试路由的判别面）。 */
+export type GraphNoticeSource = 'log' | 'status' | 'refs'
+
+/**
+ * 提交图顶部错误条装配 + 重试路由（GitGraphTab 的纯决策半；tests 断言）。
+ *
+ * 展示优先序与既有 `??` 链一致：log.error → 仓库级 statusError（调用方按
+ * unavailable 过滤后传入）→ refsError。重试按**来源**路由（P2 修复）：refs 查询
+ * 失败只重取 refs——清窗重载（reload）对 refs 故障是错误动作，log 重拉成功也修
+ * 不好 refsError，反而白丢已加载窗口；其余来源（log 失败 / 仓库级不可用）清窗重载。
+ */
+export function graphNoticeRetry(params: {
+  logError: GitErrorLike | null
+  statusError: GitErrorLike | null
+  refsError: GitErrorLike | null
+}): { notice: GitErrorLike | null; source: GraphNoticeSource | null } {
+  if (params.logError !== null) return { notice: params.logError, source: 'log' }
+  if (params.statusError !== null) return { notice: params.statusError, source: 'status' }
+  if (params.refsError !== null) return { notice: params.refsError, source: 'refs' }
+  return { notice: null, source: null }
+}
 
 /** 行 ref chip 的输入投影（GraphRowLayout 的 isHead/refs 切片）。 */
 export interface RowChipSource {

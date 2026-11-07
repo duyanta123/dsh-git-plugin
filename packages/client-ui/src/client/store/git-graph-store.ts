@@ -80,14 +80,15 @@ export interface GitGraphStore {
   readonly store: SnapshotStore<GitGraphState>
   /** 追加一页（single-writer：进行中/无更多/非有限游标时忽略）。 */
   loadMore(): Promise<void>
-  /** 清窗重载第一页（branch.oid 变化 / 手动重试）。 */
+  /** 清窗重载第一页（branch.oid 变化 / 手动重试）；同时清理失败详情槽（成功缓存保留）。 */
   reloadLog(): Promise<void>
   /** 重取 refs 快照。 */
   refreshRefs(): Promise<void>
   /**
    * 详情加载：path 为 null/缺省 = 列表态（meta + numstat）；给定 path = 该文件
    * patch 重取并 splice 回缓存（点文件调 host commitDiff 路——workflow ask §④）。
-   * in-flight 按 `oid|path` 去重；error 态可重试。
+   * in-flight 按 `oid|path` 去重；error 态可重试——对 error 槽再次调用即清除失败槽
+   * （置 loading）并重新拉取（详情面板重试按钮走的就是这条路；reloadLog 也清 error 槽）。
    */
   showCommit(oid: string, path?: string | null): Promise<void>
   /** connection/reset：清全部缓存 + 代际递增（在途响应丢弃）+ 立即按当前快照重载。 */
@@ -147,6 +148,13 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     const gen = generation
     store.update((draft) => {
       draft.log = { ...INITIAL_LOG, commits: [], refreshing: true }
+      // 失败详情槽一并清理（P2 卡死修复的配套半）：清窗重载 = 详情的重新拉取机会——
+      // error 槽移除后，重选该行会经 tab 的「槽缺席即拉」effect 重新触发；ready（成功）
+      // 缓存保留（详情按 oid 键，oid 不可变，成功详情不随 reload 失效）；loading 槽
+      // （在途）不动——其响应落地路径与本清理无关。
+      for (const oid of Object.keys(draft.details)) {
+        if (draft.details[oid]?.state === 'error') delete draft.details[oid]
+      }
     })
     let page: RemoteResult<LogPage>
     try {

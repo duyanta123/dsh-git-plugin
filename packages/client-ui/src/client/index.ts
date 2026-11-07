@@ -165,6 +165,7 @@ export function apply(ctx: ClientContext): void {
         },
         loadMore: () => { void graphStore.loadMore() },
         reload: () => { void graphStore.reloadLog() },
+        refreshRefs: () => { void graphStore.refreshRefs() },
         showCommit: (oid, path) => { void graphStore.showCommit(oid, path) },
       }),
     }, GitGraphTab)

@@ -88,6 +88,28 @@ describe('classifyStderr（spec §1.0.5 关键词分类）', () => {
     expect(classifyStderr('fatal: Not possible to fast-forward, aborting.')).toBe('pull-diverged')
   })
 
+  // M6 实测修订并入后的补测：以下形态在收敛前的弱版（大小写敏感、无 [remote
+  // rejected]、无 network 簇）下全部漏分类落 undefined——样本取自 remote-ops.ts
+  // M6 夹具与 sync.spec.ts 同源的真实世界 stderr。
+  it('[remote rejected]（pre-receive 拒绝不含字面 [rejected]，弱版此前漏分类）→ push-rejected', () => {
+    expect(classifyStderr(' ! [remote rejected] main -> main (pre-receive hook declined)')).toBe('push-rejected')
+  })
+
+  it('network 簇（curl 传输层措辞，弱版此前漏分类）→ network', () => {
+    const samples = [
+      "fatal: unable to access 'https://nonexistent.invalid/repo.git/': Could not resolve host: nonexistent.invalid",
+      "fatal: unable to access 'http://127.0.0.1:9/repo.git/': Failed to connect to 127.0.0.1 port 9 after 2 ms: Couldn't connect to server",
+      'fatal: unable to access ...: Connection timed out',
+      'ssh: connect to host git.example.com port 22: Network is unreachable',
+    ]
+    for (const sample of samples) expect(classifyStderr(sample), sample).toBe('network')
+  })
+
+  it('簇正则 /i（弱版大小写敏感漏分类面）：大小写变体同样命中', () => {
+    expect(classifyStderr('fatal: authentication failed for ...')).toBe('auth-failed')
+    expect(classifyStderr("fatal: COULD NOT READ USERNAME for 'https://git.example.com'")).toBe('auth-failed')
+  })
+
   it('其余 → undefined（调用方落 git/git-error）', () => {
     expect(classifyStderr('fatal: not a git repository')).toBeUndefined()
   })
@@ -104,6 +126,24 @@ describe('gitRunError（非零退出 → 域错误）', () => {
     const error = gitRunError('identity', 128, 'fatal: not a git repository', true)
     expect(error.code).toBe('git/git-error')
     expect(error.details).toEqual({ op: 'identity', exitCode: 128, stderr: 'fatal: not a git repository', truncated: true })
+  })
+
+  // gitRunError 随单一强版分类器同步变强的补测（弱版下两例均落默认失败消息）。
+  it('[remote rejected] 经本分类器 → git-error「rejected by remote」（弱版落默认失败消息）', () => {
+    const stderr = ' ! [remote rejected] main -> main (pre-receive hook declined)'
+    const error = gitRunError('push', 1, stderr, false)
+    expect(error.code).toBe('git/git-error')
+    expect(error.message).toContain('rejected by remote')
+    expect(error.details).toEqual({ op: 'push', exitCode: 1, stderr, truncated: false })
+  })
+
+  it('network stderr → git-error，message 带 (network) 注记（remote-ops fallback 同款口径）', () => {
+    const stderr = "fatal: unable to access 'http://127.0.0.1:9/repo.git/': Failed to connect to 127.0.0.1 port 9"
+    const error = gitRunError('push(set-upstream)', 128, stderr, false)
+    expect(error.code).toBe('git/git-error')
+    expect(error.message).toContain('(network)')
+    expect(error.message).toContain('(exit 128)')
+    expect(error.details).toEqual({ op: 'push(set-upstream)', exitCode: 128, stderr, truncated: false })
   })
 })
 

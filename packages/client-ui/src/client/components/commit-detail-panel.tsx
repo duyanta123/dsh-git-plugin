@@ -12,11 +12,17 @@
  * changes/diff 词典键）。
  *
  * 面板自体不做数据获取与 RPC（props 注入；范式 map §3.4）；渲染为纯函数可测的
- * 视图模型收敛在 graph-view-model.ts。
+ * 视图模型收敛在 graph-view-model.ts。失败详情可重试（P2）：error 槽在错误码的
+ * 映射动作全为 retry 时经 GitErrorNotice 的动作位重试（onAction 只在可服务时传入，
+ * 防 set-upstream/fetch/pull 等不可服务动作位渲染成死按钮），其余码走面板自备
+ * 重试位——都调 `onRetry` → tab 侧 `showCommit(oid, null)` 重发拉取（store 清槽
+ * 语义见 git-graph-store 的 showCommit/reloadLog 注记）。
  */
 
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import { errorNoticeView } from '../error-map.js'
+import type { ErrorAction } from '../error-map.js'
 import type { CommitDetailState } from '../store/git-graph-store.js'
 import type { DetailRow, DetailViewModel } from '../graph-view-model.js'
 import { FileDiffView } from './FileDiffView.js'
@@ -32,6 +38,11 @@ export interface CommitDetailPanelProps {
   view: DetailViewModel
   /** 词典翻译。 */
   t: TranslateNS<'git'>
+  /**
+   * 失败详情的重试（P2 卡死修复：一次失败不再整会话卡死）。tab 侧 =
+   * `showCommit(oid, null)`——store 契约：error 槽重发拉取并清槽（置 loading）。
+   */
+  onRetry(): void
   /** 文件点击（path patch 懒加载；同 path 再点收起由 tab 侧 openDetailPath 承担）。 */
   onFileClick(path: string): void
   /** 关闭面板（tab 侧 select(null)）。 */
@@ -40,7 +51,19 @@ export interface CommitDetailPanelProps {
 
 /** 提交详情面板（提交图 tab 的选中态下半区）。 */
 export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
-  const { oid, state, view, t, onFileClick, onClose } = props
+  const { oid, state, view, t, onRetry, onFileClick, onClose } = props
+  // 详情错误槽的动作面（评审第 1 轮）：面板只服务 retry——仅当错误码的映射动作
+  // **全为** retry（现状即 gateway/service-unavailable）时才把 onAction 交给
+  // notice，动作行才渲染；携带 set-upstream/fetch/pull 的码（git/no-upstream、
+  // git/diverged——error-map.ts 的 actions 表）在 onAction 缺席时不渲染动作位
+  // （GitErrorNotice 的渲染闸 = actions.length > 0 && onAction !== undefined），
+  // 否则会产出点击无效的死按钮（修复前面板不传 onAction，动作位同样不渲染；
+  // 现行 getCommitDetail 错误面不产生这些码，属潜伏缺陷封堵）。every 而非
+  // includes 亦防未来「混合动作码」复发。无 retry 可服务的码走面板自备重试位。
+  const errorSlot = state?.state === 'error' && state.error !== undefined ? state.error : null
+  const errorActions = errorSlot !== null ? errorNoticeView(errorSlot).actions : []
+  const noticeServesRetry = errorActions.length > 0
+    && errorActions.every((action) => action === 'retry')
   return (
     <section className='dsh-git-graph-detail' data-git-graph-detail='' data-git-graph-detail-oid={oid}>
       <header className='dsh-git-graph-detail__header'>
@@ -76,8 +99,31 @@ export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
       {view.body !== '' && (
         <pre className='dsh-git-graph-detail__body' data-git-graph-detail-body=''>{view.body}</pre>
       )}
-      {state?.state === 'error' && state.error !== undefined && (
-        <GitErrorNotice error={state.error} t={t} />
+      {errorSlot !== null && (
+        <div className='dsh-git-graph-detail__error' data-git-graph-detail-error=''>
+          <GitErrorNotice
+            error={errorSlot}
+            t={t}
+            // exactOptionalPropertyTypes 下可选属性不接受显式 undefined——用条件展开
+            // 表达「不传」；onAction 缺席 ⇒ notice 动作行不渲染（见上方 noticeServesRetry 注）。
+            {...(noticeServesRetry
+              ? { onAction: (action: ErrorAction) => { if (action === 'retry') onRetry() } }
+              : {})}
+          />
+          {/* 无 retry 可服务的失败码（git/git-error 等大多数 + set-upstream/fetch/pull 码）
+              也要可重试——面板自备重试位（GitChangesTab diff-error 既有范式）；已由
+              notice 动作位承担 retry 的码（gateway/service-unavailable）不重复出钮。 */}
+          {!noticeServesRetry && (
+            <button
+              type='button'
+              className='dsh-git-graph-detail__retry'
+              data-git-graph-detail-retry=''
+              onClick={onRetry}
+            >
+              {t('common.retry')}
+            </button>
+          )}
+        </div>
       )}
       {state?.state === 'loading' && (
         <p className='dsh-git-graph-detail__loading' data-git-graph-detail-loading=''>{t('graph.loading')}</p>

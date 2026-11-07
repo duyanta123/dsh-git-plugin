@@ -11,8 +11,8 @@
  *  - **代际（generation）丢帧**：每代流持一个单调代际号；`reset()`（connection/reset）
  *    与 `dispose()` 递增代际并 dispose 旧句柄——旧流在清空竞态里迟到的帧一律丢弃
  *    （绝不覆盖新代际的状态）。
- *  - **revision 丢帧**：`state.revision` 只对**被接受**的帧递增；内容签名（剔除
- *    generatedAt 的廉价比对——spec §2.3「快照比对」行）与上一帧相同的帧被丢弃，
+ *  - **revision 丢帧**：`state.revision` 只对**被接受**的帧递增；剔除 `generatedAt` 的
+ *    内容签名与上一帧相同的帧被丢弃（spec §2.3「client 侧消费契约」块的快照比对口径），
  *    不写 store、不 bump revision、不触发渲染（host R5 manual 的无条件帧与 R1 重放
  *    由此幂等）。
  *  - **错误以帧通告**：`GitStatusFrame` 的 error 分支落 `statusError` + `repo.available`
@@ -67,19 +67,22 @@ const INITIAL_STATE: GitStatusSourceState = {
 }
 
 /**
- * 快照内容签名（spec §2.3「branch.oid + 分组计数 + generatedAt 廉价对比」——
- * generatedAt 每次重算必变，**剔除后**比对才可能判等；与 host watcher.frameSignature
- * 的剔除口径一致）。分组计数控本 + 分支锚点已覆盖渲染相关面。
+ * 快照内容签名（spec §2.3「client 侧消费契约」块的快照比对口径——generatedAt 每次
+ * 重算必变，**剔除后**比对
+ * 才可能判等）。字段集与 host watcher.frameSignature 的 snapshot 半**同粒度**：
+ * repoRoot + branch + 四组**路径数组**（staged/unstaged/untracked/conflicted，非计数！）
+ * + clean。只比「oid + 分组计数」会漏掉路径置换（staged=[a.ts]→[b.ts] 计数不变）：
+ * host 按全量签名判「有变化」推新帧，client 侧判重丢帧 ⇒ 渲染面滞后（P1 修复回归：
+ * tests/git-status-source.spec「路径置换」用例）。
  */
 export function snapshotSignature(snapshot: GitStatusSnapshot): string {
   return JSON.stringify({
-    oid: snapshot.branch.oid,
-    counts: [
-      snapshot.staged.length,
-      snapshot.unstaged.length,
-      snapshot.untracked.length,
-      snapshot.conflicted.length,
-    ],
+    repoRoot: snapshot.repoRoot,
+    branch: snapshot.branch,
+    staged: snapshot.staged,
+    unstaged: snapshot.unstaged,
+    untracked: snapshot.untracked,
+    conflicted: snapshot.conflicted,
     clean: snapshot.clean,
   })
 }

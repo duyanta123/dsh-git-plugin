@@ -4,6 +4,7 @@
  * 假 GitRpcFace（内存流）——spec §3.2「测试 = 内存假实现」。
  */
 
+import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from 'dsh-gitkit/types'
 import { createGitStatusSource, snapshotSignature } from '../src/client/store/git-status-source.ts'
@@ -167,6 +168,11 @@ function statusFrame(snapshot: GitStatusSnapshot): GitStatusFrame {
   return { kind: 'status', reason: 'change', snapshot }
 }
 
+/** 一条 staged 变更（路径置换回归用；形状照 host GitStatusChange 的 wire 面）。 */
+function stagedChange(path: string): GitStatusSnapshot['staged'][number] {
+  return { path, origPath: null, kind: 'modified', x: 'M', y: '.', conflicted: false, binary: false, additions: 1, deletions: 0, submodule: false }
+}
+
 function errorFrame(code: string): GitStatusFrame {
   return { kind: 'error', reason: 'poll', error: { code, message: `boom: ${code}` } }
 }
@@ -236,6 +242,40 @@ describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', 
     const other = mkSnapshot({ generatedAt: new Date(Date.now() + 60_000).toISOString() })
     expect(snapshotSignature(base)).toBe(snapshotSignature(other))
     expect(snapshotSignature(base)).not.toBe(snapshotSignature(mkSnapshot({ clean: false })))
+  })
+
+  it('snapshotSignature 纳入四组路径数组（与 host frameSignature 同粒度）', () => {
+    // 路径置换（计数不变）⇒ 签名不等——P1 丢帧修复的字段面。
+    const base = mkSnapshot({ clean: false, staged: [stagedChange('a.ts')] })
+    const permuted = mkSnapshot({ clean: false, staged: [stagedChange('b.ts')] })
+    expect(snapshotSignature(base)).not.toBe(snapshotSignature(permuted))
+    // 同内容（generatedAt 不同）⇒ 签名相等（剔除口径不变）。
+    expect(snapshotSignature(base)).toBe(
+      snapshotSignature(mkSnapshot({ clean: false, staged: [stagedChange('a.ts')], generatedAt: new Date(Date.now() + 60_000).toISOString() })),
+    )
+    // 其余三组（unstaged/untracked/conflicted）同口径纳入。
+    expect(snapshotSignature(base)).not.toBe(snapshotSignature(mkSnapshot({ clean: false, staged: [stagedChange('a.ts')], untracked: [stagedChange('n.ts')] })))
+  })
+
+  it('路径置换且计数不变 ⇒ 不丢帧、新路径进状态', async () => {
+    const rpc = new FakeRpc()
+    const source = createGitStatusSource(rpc)
+    source.start()
+    await settled()
+    rpc.latest().push(statusFrame(mkSnapshot({ clean: false, staged: [stagedChange('a.ts')] })))
+    await vi.waitFor(() => expect(source.store.getSnapshot().revision).toBe(1))
+    // staged=[a.ts] → [b.ts]：计数不变（1→1）、generatedAt 更新（host 重算必换）。
+    // 修复前：签名只含 oid+计数+clean ⇒ 判重丢帧；修复后：路径数组入签 ⇒ 帧被接受。
+    rpc.latest().push(statusFrame(mkSnapshot({
+      clean: false,
+      staged: [stagedChange('b.ts')],
+      generatedAt: new Date(Date.now() + 5_000).toISOString(),
+    })))
+    await vi.waitFor(() => expect(source.store.getSnapshot().revision).toBe(2))
+    const state = source.store.getSnapshot()
+    expect(state.status?.staged.map((change) => change.path)).toEqual(['b.ts'])
+    expect(state.repo.available).toBe(true)
+    source.dispose()
   })
 })
 
@@ -397,5 +437,43 @@ describe('GitErrorLike 形状（spec §3.2 按 code 判别的投影面）', () =
     const error: GitErrorLike = source.store.getSnapshot().statusError as GitErrorLike
     expect(Object.keys(error).sort()).toEqual(['code', 'message'])
     source.dispose()
+  })
+})
+
+describe('spec §2.3 快照比对口径守卫（权威 spec 与实现字段面一致——v1.3 归真）', () => {
+  /**
+   * 独立评审（第 1 轮）spec 失败项的回归守卫：§2.3 client 侧曾权威性地规定按
+   * `branch.oid + 分组计数 + generatedAt` 廉价对比——正是 P1 修复证明有损并替换掉的
+   * 公式（分组计数漏路径置换：host 按全量签名推新帧、client 判重丢帧 ⇒ 渲染滞后）。
+   * v1.3 归真后（同版次整体回填随之把 client 表改为 followStatus 流传输），该口径的
+   * 权威规定位置 = §2.3 流帧契约「client 侧消费契约」块 + host R2 行的字段面 + v1.3
+   * 修订记录。本守卫钉住三处，防有损公式随 spec 回改复活。
+   */
+  it('快照比对口径规定全量内容签名（剔除 generatedAt、粒度 ≥ host），有损公式不得回归', async () => {
+    const spec = await readFile(new URL('../../../docs/capability-spec.md', import.meta.url), 'utf8')
+    const lines = spec.split('\n')
+    // ① §2.3「client 侧消费契约」块：粒度规则（client ≥ host）+ 剔除 generatedAt +
+    //    两侧同粒度锚点（client snapshotSignature ≡ host frameSignature 的 snapshot 半）。
+    const clientContract = lines.find((line) => line.startsWith('**client 侧消费契约**'))
+    if (clientContract === undefined) throw new Error('§2.3「client 侧消费契约」块缺失——权威 spec 必须规定 client 侧快照比对（去重签名）口径')
+    for (const token of ['client 去重签名粒度必须 ≥ host', 'generatedAt', '同粒度', 'snapshotSignature', 'frameSignature']) {
+      expect(clientContract, `client 消费契约块须含「${token}」`).toContain(token)
+    }
+    // ② host R2 行的字段面：frameSignature = repoRoot + branch + 四组路径数组 + clean。
+    expect(
+      lines.find((line) => line.includes('四组路径数组') && line.includes('frameSignature')),
+      '§2.3 须有一处规定 frameSignature 字段面（四组路径数组，非分组计数）',
+    ).toBeDefined()
+    // ③ 修订记录 v1.3：归真记录（路径置换教训）在场。
+    const v13 = lines.find((line) => line.includes('**修订记录**：v1.3'))
+    if (v13 === undefined) throw new Error('spec 头部须有 v1.3 修订记录行（记录快照比对公式归真）')
+    expect(v13).toContain('快照比对')
+    expect(v13).toContain('路径置换')
+    // ④ 有损公式不得以现行口径回归：「分组计数」只许出现在修订记录（历史引述），
+    //    正文一律全量内容签名（路径置换 staged=[a.ts]→[b.ts] 计数不变 ⇒ 丢帧渲染滞后）。
+    for (const line of lines) {
+      if (!line.includes('分组计数')) continue
+      expect(line.startsWith('> **修订记录**'), '「分组计数」只许出现在修订记录（历史引述），不得回到正文口径').toBe(true)
+    }
   })
 })

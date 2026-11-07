@@ -4,10 +4,11 @@
  * keepMounted: true——图重算昂贵，隐藏不卸载，map §3.3）。
  *
  * 结构：错误/加载/空态条（unborn ⇒ graph.noCommits [清单 64]；log/refs 错误 ⇒
- * GitErrorNotice + 重试）→ @tanstack/react-virtual 行虚拟化列表（基线模块直接
+ * GitErrorNotice + 重试，重试按来源路由——refsError ⇒ refreshRefs，否则 reload）→
+ * @tanstack/react-virtual 行虚拟化列表（基线模块直接
  * import——map §3.7，不写 dsh.client.external；estimateSize = 行高 24，overscan 12
  * 照 ui-trajectory 生产参数）→ 选中提交的详情面板（commit-detail-panel，列表
- * 下半区固定高度滚动——虚拟行高恒定，不在行内展开）。
+ * 下半区固定高度滚动——虚拟行高恒定，不在行内展开；失败详情可重试，P2）。
  *
  * 分页（workflow ask §③）：滚动触发——可见范围末端进入 total-30 触发
  * `loadMore()`（single-writer 闸在 git-graph-store）；追加页后整表重跑布局
@@ -21,7 +22,7 @@ import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import { computeGraphLayout } from '../graph/lane-layout.js'
 import { bucketArrivals, GRAPH_ROW_HEIGHT, GraphLaneSvg } from '../graph/graph-svg.js'
-import { detailViewModel, formatCommitDate, rowRefChips } from '../graph-view-model.js'
+import { detailViewModel, formatCommitDate, graphNoticeRetry, rowRefChips } from '../graph-view-model.js'
 import type { NS } from '../locales.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import type { GitGraphState } from '../store/git-graph-store.js'
@@ -41,8 +42,10 @@ export interface GraphInjected {
   }
   /** 追加一页（single-writer 闸在 store）。 */
   loadMore(): void
-  /** 清窗重载（错误条重试动作）。 */
+  /** 清窗重载（错误条 log/仓库级来源的重试动作）。 */
   reload(): void
+  /** 重取 refs 快照（错误条 refs 来源的重试动作——P2 路由修复）。 */
+  refreshRefs(): void
   /** 详情/文件 patch 懒加载（path=null 列表态；path 给定 patch 态）。 */
   showCommit(oid: string, path: string | null): void
 }
@@ -58,7 +61,7 @@ export type GitGraphTabProps = PropsRuntime<'sidebar.right.pane.tab'>
  * @param props - 框架组合 props。
  */
 export function GitGraphTab(props: GitGraphTabProps): ReactNode {
-  const { t, useStore, actions, useGitGraph, useGitStatus, loadMore, reload, showCommit } = props
+  const { t, useStore, actions, useGitGraph, useGitStatus, loadMore, reload, refreshRefs, showCommit } = props
   const graph = useGitGraph((state) => state)
   const status = useGitStatus((state) => state)
   const selectedOid = useStore((state) => state.selectedOid)
@@ -96,12 +99,21 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
   const headLabel = head?.kind === 'branch' ? head.name : head?.kind === 'detached' ? 'HEAD' : null
 
   const unavailable = !status.repo.available && !status.repo.checking
-  const notice: GitErrorLike | null = graph.log.error ?? (unavailable ? status.statusError : null) ?? graph.refsError
+  // 顶部错误条装配 + 重试路由（纯决策半在 graph-view-model.graphNoticeRetry）：
+  // 优先序 log.error → 仓库级 statusError → refsError 与既有 `??` 链一致。
+  const noticeRoute = graphNoticeRetry({
+    logError: graph.log.error,
+    statusError: unavailable ? status.statusError : null,
+    refsError: graph.refsError,
+  })
+  const notice: GitErrorLike | null = noticeRoute.notice
   const loading = graph.log.refreshing && graph.log.commits.length === 0
   const empty = !loading && graph.log.commits.length === 0 && !unavailable
   const selectedState = selectedOid !== null ? graph.details[selectedOid] : undefined
 
   // 选中即拉详情（列表态）；store reset 后选择残留时同样补拉。
+  // 刻意只在「槽缺席」时触发：error 槽存在时若也触发会失败循环（fetch→error→effect）；
+  // error 槽的重试走详情面板的重试位（onRetry）与 reloadLog 清槽后的重选（store 半）。
   useEffect(() => {
     if (selectedOid !== null && graph.details[selectedOid] === undefined) showCommit(selectedOid, null)
   }, [selectedOid, graph.details, showCommit])
@@ -130,7 +142,16 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
     <div className='dsh-git-graph' data-git-graph-tab='' data-git-graph-rows={String(total)}>
       {notice !== null && (
         <div className='dsh-git-graph__notice'>
-          <GitErrorNotice error={notice} t={t} onAction={() => { reload() }} />
+          <GitErrorNotice
+            error={notice}
+            t={t}
+            onAction={() => {
+              // 重试按来源路由（P2）：refsError ⇒ 只重取 refs（清窗重载修不好 refs
+              // 故障，还白丢已加载窗口）；log/仓库级 ⇒ 清窗重载。
+              if (noticeRoute.source === 'refs') refreshRefs()
+              else reload()
+            }}
+          />
         </div>
       )}
       {loading && <p className='dsh-git-graph__status' data-git-graph-status='loading'>{t('graph.loading')}</p>}
@@ -210,6 +231,8 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
             fallbackSubject: commitByOid.get(selectedOid)?.subject ?? '',
           })}
           t={t}
+          // 失败详情重试（P2）：对 error 槽重发列表态拉取（store 清槽重拉）。
+          onRetry={() => { showCommit(selectedOid, null) }}
           onFileClick={(path) => {
             if (detailPath === path) {
               actions.openDetailPath(null)

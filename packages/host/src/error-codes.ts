@@ -96,14 +96,40 @@ export function sanitizeStderr(stderr: string, maxChars = 16 * 1024): string {
   return redacted.length <= maxChars ? redacted : redacted.slice(-maxChars)
 }
 
-/** spec §1.0.5 分类规则认识的 stderr 关键词簇。 */
-export type GitStderrClass = 'auth-failed' | 'push-rejected' | 'pull-diverged' | undefined
+/**
+ * spec §1.0.5 分类规则认识的 stderr 关键词簇（network 簇为 M6 remote-ops 任务口径
+ * 续补——spec §1.0.5 未列，登记见 PORTING.md M6 行）。
+ */
+export type GitStderrClass = 'auth-failed' | 'push-rejected' | 'pull-diverged' | 'network' | undefined
+
+/**
+ * 分类器簇表（顺序敏感：认证最先——auth stderr 可能同时含 network 措辞；rejected
+ * 先于 diverged——`non-fast-forward` 提示簇与 `Not possible to fast-forward` 措辞
+ * 不同不重叠，但 [rejected] 行优先给出拒绝语义）。**单一事实源**：M6 起强版正则
+ * （/i + `[remote rejected]` + network 簇）曾另持于 remote-ops.ts（REMOTE_STDERR_
+ * PATTERNS），与本弱版事实分叉——已收敛为这一份，remote-ops.ts 的
+ * classifyRemoteStderr 改为消费本分类器（仅做词汇映射）。关键词依据：spec §1.0.5
+ * 关键词簇 + M6 本机实测补 `[remote rejected]`（pre-receive 拒绝的实际 stderr 不含
+ * 字面 `[rejected]`）+ network 簇（curl 传输层措辞）。正则不带 g 标志（`test` 无状态）。
+ */
+export const STDERR_PATTERNS: ReadonlyArray<{
+  kind: Exclude<GitStderrClass, undefined>
+  pattern: RegExp
+}> = Object.freeze([
+  { kind: 'auth-failed', pattern: /Authentication failed|could not read Username|Permission denied \(publickey\)/i },
+  { kind: 'push-rejected', pattern: /\[rejected\]|\[remote rejected\]|non-fast-forward/i },
+  { kind: 'pull-diverged', pattern: /Not possible to fast-forward/i },
+  {
+    kind: 'network',
+    pattern: /Could not resolve host|Failed to connect|Connection timed out|Network is unreachable|Connection reset by peer|SSL connect error/i,
+  },
+])
 
 /** 非零退出的 stderr 关键词分类（spec §1.0.5：其余 → undefined，由调用方落 git/git-error）。 */
 export function classifyStderr(stderr: string): GitStderrClass {
-  if (/Authentication failed|could not read Username|Permission denied \(publickey\)/.test(stderr)) return 'auth-failed'
-  if (/\[rejected\]|non-fast-forward/.test(stderr)) return 'push-rejected'
-  if (/Not possible to fast-forward/.test(stderr)) return 'pull-diverged'
+  for (const { kind, pattern } of STDERR_PATTERNS) {
+    if (pattern.test(stderr)) return kind
+  }
   return undefined
 }
 
@@ -121,6 +147,13 @@ export function gitRunError(op: string, exitCode: number | null, stderr: string,
   }
   if (kind === 'pull-diverged') {
     return gitError('git/git-error', `git ${op}: fast-forward refused`, { op, exitCode, stderr: clean, truncated })
+  }
+  if (kind === 'network') {
+    // 传输层失败：仍落兜底码，但 message 注记 (network)——remote-ops remoteOpFallback
+    // 同款口径（同步引擎的 network 类经此汇入同一形状）。
+    return gitError('git/git-error', `git ${op} failed (network) (exit ${String(exitCode)})`, {
+      op, exitCode, stderr: clean, truncated,
+    })
   }
   return gitError('git/git-error', `git ${op} failed (exit ${String(exitCode)})`, { op, exitCode, stderr: clean, truncated })
 }

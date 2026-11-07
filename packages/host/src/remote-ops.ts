@@ -21,6 +21,8 @@
  *      任务口径）：先 sanitizeStderr（error-codes.ts 的脱敏正则）再分类，分类器导出
  *      供夹具单测；push-rejected 簇含 `[remote rejected]`（本机实测 pre-receive 拒绝
  *      的 stderr 不含字面 `[rejected]`，spec §1.0.5 关键词簇漏该形态——M6 用例补齐）。
+ *      2026-11-07：簇正则单一事实源收敛至 error-codes.ts（STDERR_PATTERNS，原
+ *      REMOTE_STDERR_PATTERNS 移除），本模块 classifyRemoteStderr 仅做词汇映射消费。
  * SPDX-License-Identifier: MIT
  */
 
@@ -62,7 +64,8 @@
  * 的两侧都用本地分支名（此时无 upstream 可拆，spec §1.5-3）。
  */
 
-import { assertGitOk, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
+import { assertGitOk, classifyStderr, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
+import type { GitStderrClass } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { GitRunResult } from './git-runner.ts'
 import type { StatusEngine } from './status.ts'
@@ -75,34 +78,27 @@ import type { FetchOptions, PushOptions } from './types.ts'
 export type RemoteStderrClass = 'authentication' | 'network' | 'push-rejected' | 'diverged' | undefined
 
 /**
- * 分类器簇（顺序敏感：认证最先——auth stderr 可能同时含 network 措辞；
- * push-rejected 先于 diverged——`non-fast-forward` 提示簇与 `Not possible to
- * fast-forward` 措辞不同不重叠，但 [rejected] 行优先给出拒绝语义）。
- * 关键词依据：spec §1.0.5 关键词簇 + 本机实测补 `[remote rejected]`（pre-receive
- * 拒绝的实际形态）+ network 簇（curl 传输层措辞，任务口径四类之二）。
+ * 单一分类器 kind（error-codes.ts 词汇）→ 远端同步词汇：auth-failed → authentication、
+ * pull-diverged → diverged；push-rejected / network 同词汇直通。
  */
-export const REMOTE_STDERR_PATTERNS: ReadonlyArray<{
-  kind: Exclude<RemoteStderrClass, undefined>
-  pattern: RegExp
-}> = Object.freeze([
-  { kind: 'authentication', pattern: /Authentication failed|could not read Username|Permission denied \(publickey\)/i },
-  { kind: 'push-rejected', pattern: /\[rejected\]|\[remote rejected\]|non-fast-forward/i },
-  { kind: 'diverged', pattern: /Not possible to fast-forward/i },
-  {
-    kind: 'network',
-    pattern: /Could not resolve host|Failed to connect|Connection timed out|Network is unreachable|Connection reset by peer|SSL connect error/i,
-  },
-])
+function toRemoteStderrKind(kind: Exclude<GitStderrClass, undefined>): Exclude<RemoteStderrClass, undefined> {
+  switch (kind) {
+    case 'auth-failed': return 'authentication'
+    case 'pull-diverged': return 'diverged'
+    default: return kind
+  }
+}
 
 /**
  * 对**已脱敏**的 stderr 分类（调用方先过 sanitizeStderr——任务口径 ②「stderr 先
- * 脱敏再分类」；凭证关键词正则不依赖未脱敏文本）。导出供夹具单测。
+ * 脱敏再分类」）。簇正则单一事实源在 error-codes.ts（STDERR_PATTERNS：/i +
+ * `[remote rejected]` + network 簇，M6 实测修订；原 REMOTE_STDERR_PATTERNS 与
+ * error-codes 弱版 classifyStderr 事实分叉，已收敛删除），本函数只做词汇映射，
+ * 顺序语义（认证最先、rejected 先于 diverged）由该表保证。导出供夹具单测。
  */
 export function classifyRemoteStderr(stderr: string): RemoteStderrClass {
-  for (const { kind, pattern } of REMOTE_STDERR_PATTERNS) {
-    if (pattern.test(stderr)) return kind
-  }
-  return undefined
+  const kind = classifyStderr(stderr)
+  return kind === undefined ? undefined : toRemoteStderrKind(kind)
 }
 
 /** 拒绝原因提取：`! [remote rejected] main -> main (pre-receive hook declined)` → 括号体。 */

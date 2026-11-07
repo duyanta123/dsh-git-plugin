@@ -68,7 +68,7 @@ class FakeGraphRpc implements GitGraphRpcFace, Pick<GitRpcFace, 'followStatus' |
   logPlan: RemoteResult<LogPage>[] = []
   /** log 挂起门：出现即挂起；flushLogGates() 放行。 */
   logGates: Array<() => void> = []
-  detailPlan: Map<string, RemoteResult<CommitDetail>> = new Map()
+  detailPlan: Map<string, RemoteResult<CommitDetail>[]> = new Map()
   refsPlan: RemoteResult<RefsSnapshot> = { ok: true, value: { refs: [], head: { kind: 'unborn', name: null, oid: null } } }
 
   async log(options: LogOptions): Promise<RemoteResult<LogPage>> {
@@ -92,7 +92,8 @@ class FakeGraphRpc implements GitGraphRpcFace, Pick<GitRpcFace, 'followStatus' |
 
   async getCommitDetail(options: ShowOptions): Promise<RemoteResult<CommitDetail>> {
     this.detailCalls.push({ ...options })
-    const planned = this.detailPlan.get(`${options.oid}|${options.path ?? ''}`)
+    const queue = this.detailPlan.get(`${options.oid}|${options.path ?? ''}`)
+    const planned = queue?.shift()
     if (planned === undefined) throw new Error(`FakeGraphRpc: unexpected detail call ${options.oid}|${options.path ?? ''}`)
     return planned
   }
@@ -291,14 +292,14 @@ describe('showCommit（详情列表态 / 文件 patch 态 splice）', () => {
   it('列表态缓存命中不重发；path 态 splice 带 patch 文件回缓存', async () => {
     const { rpc, source, store } = makeHarness()
     rpc.logPlan = [{ ok: true, value: page([commitInfo('a')], false) }]
-    rpc.detailPlan.set('a|', { ok: true, value: baseDetail })
-    rpc.detailPlan.set('a|f1.txt', {
+    rpc.detailPlan.set('a|', [{ ok: true, value: baseDetail }])
+    rpc.detailPlan.set('a|f1.txt', [{
       ok: true,
       value: {
         ...baseDetail,
         files: [{ ...baseDetail.files[0]!, patch: 'patch-f1' }],
       },
-    })
+    }])
     source.store.update((draft) => {
       draft.status = {
         repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'a', abbrevOid: 'a', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
@@ -326,8 +327,8 @@ describe('showCommit（详情列表态 / 文件 patch 态 splice）', () => {
   it('path 态失败保基座（文件行回落占位）；基座未就绪时先等基座', async () => {
     const { rpc, source, store } = makeHarness()
     rpc.logPlan = [{ ok: true, value: page([commitInfo('a')], false) }]
-    rpc.detailPlan.set('a|', { ok: true, value: baseDetail })
-    rpc.detailPlan.set('a|f1.txt', { ok: false, error: { code: 'git/git-error', message: 'boom' } })
+    rpc.detailPlan.set('a|', [{ ok: true, value: baseDetail }])
+    rpc.detailPlan.set('a|f1.txt', [{ ok: false, error: { code: 'git/git-error', message: 'boom' } }])
     source.store.update((draft) => {
       draft.status = {
         repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'a', abbrevOid: 'a', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
@@ -342,6 +343,72 @@ describe('showCommit（详情列表态 / 文件 patch 态 splice）', () => {
     expect(slot?.state).toBe('ready')
     expect(slot?.detail?.files[0]?.patch).toBeNull() // patch 失败：保基座 null patch
     expect(slot?.pendingPath).toBeNull()
+    store.dispose()
+  })
+
+  it('error 槽可重试：再次 showCommit 清失败槽并重发拉取；成功后回到缓存命中（P2 卡死修复）', async () => {
+    const { rpc, source, store } = makeHarness()
+    rpc.logPlan = [{ ok: true, value: page([commitInfo('a')], false) }]
+    rpc.detailPlan.set('a|', [
+      { ok: false, error: { code: 'git/git-error', message: 'boom' } },
+      { ok: true, value: baseDetail },
+    ])
+    source.store.update((draft) => {
+      draft.status = {
+        repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'a', abbrevOid: 'a', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
+        staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+      }
+    })
+    await flush()
+    await store.showCommit('a')
+    const failed = store.store.getSnapshot().details['a']
+    expect(failed?.state).toBe('error')
+    expect(failed?.error?.code).toBe('git/git-error')
+    expect(rpc.detailCalls).toHaveLength(1)
+    // 重试：缓存命中守卫对 error 槽放行 → 失败槽被清除（置 loading 后落地）+ 重发。
+    await store.showCommit('a')
+    expect(rpc.detailCalls).toHaveLength(2)
+    const retried = store.store.getSnapshot().details['a']
+    expect(retried?.state).toBe('ready')
+    expect(retried?.error).toBeUndefined()
+    expect(retried?.detail).toBe(baseDetail)
+    // 重试成功后的 ready 槽恢复缓存命中（不重发）。
+    await store.showCommit('a')
+    expect(rpc.detailCalls).toHaveLength(2)
+    store.dispose()
+  })
+
+  it('reloadLog 清理失败详情槽（成功缓存保留）；重选失败行重新拉取（P2 配套半）', async () => {
+    const { rpc, source, store } = makeHarness()
+    rpc.logPlan = [
+      { ok: true, value: page([commitInfo('a'), commitInfo('b')], false) },
+      { ok: true, value: page([commitInfo('a'), commitInfo('b')], false) },
+    ]
+    rpc.detailPlan.set('a|', [{ ok: true, value: baseDetail }])
+    rpc.detailPlan.set('b|', [
+      { ok: false, error: { code: 'git/timeout', message: 'slow' } },
+      { ok: true, value: { ...baseDetail, commit: commitInfo('b') } },
+    ])
+    source.store.update((draft) => {
+      draft.status = {
+        repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'a', abbrevOid: 'a', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
+        staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+      }
+    })
+    await flush()
+    await store.showCommit('a') // ready 缓存
+    await store.showCommit('b') // 失败槽
+    expect(store.store.getSnapshot().details['a']?.state).toBe('ready')
+    expect(store.store.getSnapshot().details['b']?.state).toBe('error')
+    await store.reloadLog()
+    const details = store.store.getSnapshot().details
+    expect(details['a']?.state).toBe('ready')
+    expect(details['a']?.detail).toBe(baseDetail) // 成功缓存保留（同引用，不失效）
+    expect(details['b']).toBeUndefined() // 失败槽已清
+    // 重选失败行：槽缺席 → 重新拉取成功（「失败后重选不再触发」的 store 半）。
+    await store.showCommit('b')
+    expect(rpc.detailCalls.filter((call) => call.oid === 'b')).toHaveLength(2)
+    expect(store.store.getSnapshot().details['b']?.state).toBe('ready')
     store.dispose()
   })
 })

@@ -53,9 +53,14 @@ function makeService(workspaceOverride: string, subprocess: SubprocessFace = loc
   return { service, spawns }
 }
 
-/** status 引擎（engine 级缓存/去重断言用；cacheTtlMs 可控）。 */
-function makeEngine(workspaceOverride: string, cacheTtlMs: number, record?: SpawnRecord[]): StatusEngine {
-  const face = record === undefined ? localSubprocess() : localSubprocess(record)
+/** status 引擎（engine 级缓存/去重断言用；cacheTtlMs 可控；subprocess 可注入包装替身）。 */
+function makeEngine(
+  workspaceOverride: string,
+  cacheTtlMs: number,
+  record?: SpawnRecord[],
+  subprocess?: SubprocessFace,
+): StatusEngine {
+  const face = subprocess ?? (record === undefined ? localSubprocess() : localSubprocess(record))
   const runner = new GitRunner(face, 'git', {
     timeoutMs: 15_000, outputMaxBytes: DEFAULT_OUTPUT_MAX_BYTES,
   }, READONLY_PREFIX)
@@ -390,5 +395,166 @@ describe('<2s 缓存与失效、并发去重（engine 级）', () => {
     engine.invalidate()
     const third = await engine.current()
     expect(third.availability).toBe('ready')
+  })
+})
+
+describe('竞态回归（P2-1 信号串扰 / P2-2 失效不感知）', () => {
+  it('P2-1：并发双调用一方 abort 只拒绝自己，另一方必须成功（共享扫描不链接调用方 signal）', async () => {
+    const repo = await baseRepo('dshgit-st-race-signal-')
+    const spawns: SpawnRecord[] = []
+    const engine = makeEngine(repo, 0, spawns)
+    const callerA = new AbortController()
+    const callerB = new AbortController()
+    const promiseA = engine.current(callerA.signal)
+    const promiseB = engine.current(callerB.signal)
+    // 立即挂接 A 的结局（防 unhandledRejection），再同步 abort——abort 必然落在扫描
+    // 在飞窗口内（同步先于任何 git 子进程收尾）。
+    const settledA = promiseA.then(
+      (state) => { throw new Error(`A should have been aborted, got availability=${state.availability}`) },
+      (cause: unknown) => cause,
+    )
+    callerA.abort()
+    const stateB = await promiseB
+    if (stateB.availability !== 'ready') throw new Error(`unreachable: ${stateB.availability}`)
+    // B 必须拿到真实世界的就绪快照（world 重读对照），而非被 A 的 abort 连坐拒绝。
+    expect(stateB.snapshot.repoRoot).toBe(repo)
+    expect(stateB.snapshot.clean).toBe(true)
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' })).toBe('')
+    // 去重保持：abort 的一方不得把共享扫描打掉重扫（一次扫描 = 1 条 porcelain=v2）。
+    expect(statusSpawnCount(spawns)).toBe(1)
+    // A 自己的取消仍然落地：仅 A 的 Promise 以调用方 abort（普通 Error）拒绝。
+    const causeA = await settledA
+    expect(causeA).toBeInstanceOf(Error)
+    expect((causeA as Error).message).toMatch(/aborted/)
+  })
+
+  it('P2-2：invalidate 清空在飞去重——写后 fresh 读取看到写后世界；写前迟到完成不回填缓存', async () => {
+    const repo = await baseRepo('dshgit-st-race-invalidate-')
+    const spawns: SpawnRecord[] = []
+    // 一次性闸门：扣住首次 status 本体（--porcelain=v2）的 done，把「写前扫描仍在飞」
+    // 变成确定性事实；闸门只咬一次，写后 fresh 扫描不受影响（真 git + 真仓库不变）。
+    let release!: () => void
+    const gateOpen = new Promise<void>((resolveGate) => { release = resolveGate })
+    let armGate!: () => void
+    const gateArmed = new Promise<void>((resolveArmed) => { armGate = resolveArmed })
+    let gated = false
+    const inner = localSubprocess(spawns)
+    const face: SubprocessFace = {
+      resolveExecutable: (command, env, signal) => inner.resolveExecutable(command, env, signal),
+      spawn(spec) {
+        const handle = inner.spawn(spec)
+        if (!gated && (spec.argv as readonly string[]).includes('--porcelain=v2')) {
+          gated = true
+          armGate()
+          return { ...handle, done: gateOpen.then(() => handle.done) }
+        }
+        return handle
+      },
+    }
+    const engine = makeEngine(repo, 60_000, undefined, face)
+    const pending = engine.current() // 写前扫描启动（status 本体随即被闸门扣住）
+    pending.catch(() => {}) // 防御：失败路径上不让共享 Promise 的拒绝变成 unhandledRejection
+    await gateArmed // 确定性：写前扫描的 status 本体已 spawn 且被扣住（仍在飞）
+
+    // 写世界（真实 fs 写 + world 重读确认落盘）。
+    await writeFile(join(repo, 'tracked.txt'), 'written-during-scan\n', 'utf8')
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }))
+      .toContain(' M tracked.txt')
+
+    // afterWrite() 语义：写后失效 → fresh 守卫读取必须看到写后世界。
+    engine.invalidate()
+    const freshPromise = engine.current(undefined, { fresh: true })
+    // 不先放闸门：新代码下 fresh 是独立扫描（闸门只咬写前那一次），能独立完成；
+    // 旧代码下 fresh 去重到被扣住的写前扫描 → 看门狗快速失败（而非 60s 超时挂死）。
+    const fresh = await Promise.race([
+      freshPromise,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error('fresh 读取被去重到被闸门扣住的写前扫描（P2-2 回归）'))
+        }, 10_000)
+        timer.unref() // 不拖住 worker 退出
+      }),
+    ])
+    release() // 放行写前扫描：其完成必须晚于 fresh 的缓存回填（纪元守卫的判定前提）
+    if (fresh.availability !== 'ready') throw new Error(`unreachable: ${fresh.availability}`)
+    expect(fresh.snapshot.clean).toBe(false)
+    expect(fresh.snapshot.unstaged.some(change => change.path === 'tracked.txt')).toBe(true)
+    // fresh 没有去重到写前扫描，而是自己扫的：porcelain=v2 共两次（写前 1 + fresh 1）。
+    expect(statusSpawnCount(spawns)).toBe(2)
+
+    // 写前扫描迟到完成：照常交付给写前等待方（按读取起点线性化），但（纪元守卫）
+    // 不得回填 TTL 缓存——否则写后缓存被写前世界污染。
+    const stale = await pending
+    expect(stale.availability).toBe('ready')
+    const cachedAfter = await engine.current() // TTL 内非 fresh 读取
+    expect(cachedAfter).toBe(fresh)
+    if (cachedAfter.availability !== 'ready') throw new Error(`unreachable: ${cachedAfter.availability}`)
+    expect(cachedAfter.snapshot.clean).toBe(false)
+  })
+
+  it('评审追加（P2-2 前半窗）：写已落盘而 invalidate 未及执行时，fresh 守卫不去重到写前在飞扫描', async () => {
+    const repo = await baseRepo('dshgit-st-race-window-')
+    const spawns: SpawnRecord[] = []
+    // 一次性闸门（同 P2-2）：扣住首次 porcelain=v2 的 done，制造确定性的「写前在飞」
+    // 普通扫描（如客户端 status()）；闸门只咬一次，fresh 自扫不受影响。
+    let release!: () => void
+    const gateOpen = new Promise<void>((resolveGate) => { release = resolveGate })
+    let armGate!: () => void
+    const gateArmed = new Promise<void>((resolveArmed) => { armGate = resolveArmed })
+    let gated = false
+    const inner = localSubprocess(spawns)
+    const face: SubprocessFace = {
+      resolveExecutable: (command, env, signal) => inner.resolveExecutable(command, env, signal),
+      spawn(spec) {
+        const handle = inner.spawn(spec)
+        if (!gated && (spec.argv as readonly string[]).includes('--porcelain=v2')) {
+          gated = true
+          armGate()
+          return { ...handle, done: gateOpen.then(() => handle.done) }
+        }
+        return handle
+      },
+    }
+    const engine = makeEngine(repo, 60_000, undefined, face)
+    const pending = engine.current() // 写前扫描启动（status 本体随即被闸门扣住）
+    pending.catch(() => {}) // 防御：失败路径上不让共享 Promise 的拒绝变成 unhandledRejection
+    await gateArmed
+
+    // 并发写落盘（真实 fs 写 + world 重读确认）；此刻 afterWrite()→invalidate() 尚未
+    // 执行（index.ts 写方法尾部 logWrite/结果装配的 await 间隙）——正是评审指出的窗口。
+    await writeFile(join(repo, 'tracked.txt'), 'written-before-invalidate\n', 'utf8')
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }))
+      .toContain(' M tracked.txt')
+
+    // 窗口内的 fresh 守卫读取：不得去重到被扣住的写前扫描，必须自扫见写后世界。
+    const freshPromise = engine.current(undefined, { fresh: true })
+    // 修复前代码在窗口内仍按 inFlight 查表去重 → fresh 扣死在闸门上 → 看门狗快速失败。
+    const fresh = await Promise.race([
+      freshPromise,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error('窗口内 fresh 读取被去重到写前在飞扫描（评审追加回归）'))
+        }, 10_000)
+        timer.unref() // 不拖住 worker 退出
+      }),
+    ])
+    release()
+    if (fresh.availability !== 'ready') throw new Error(`unreachable: ${fresh.availability}`)
+    expect(fresh.snapshot.clean).toBe(false)
+    expect(fresh.snapshot.unstaged.some(change => change.path === 'tracked.txt')).toBe(true)
+    // fresh 自扫而非去重：porcelain=v2 共两次（写前 1 + fresh 1）。
+    expect(statusSpawnCount(spawns)).toBe(2)
+
+    // 写前扫描迟到完成：照常交付给写前等待方。此间无 invalidate，其按既有 TTL 契约
+    // 回填（写后失效由 afterWrite 驱动，见下）——本用例不断言中间缓存内容。
+    const stale = await pending
+    expect(stale.availability).toBe('ready')
+
+    // 窗口闭合：迟到的 afterWrite()→invalidate() 清掉写前回填，世界收敛到写后。
+    engine.invalidate()
+    const converged = await engine.current()
+    if (converged.availability !== 'ready') throw new Error(`unreachable: ${converged.availability}`)
+    expect(converged.snapshot.clean).toBe(false)
+    expect(converged.snapshot.unstaged.some(change => change.path === 'tracked.txt')).toBe(true)
   })
 })
