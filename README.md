@@ -1,7 +1,7 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-发布版本 **v0.1.2**，由三部分组成（pnpm workspace）：
+发布版本 **v0.1.2**（代码定稿；尚未打 tag/发 npm，随 V2 首版一并发布），由三部分组成（pnpm workspace）：
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
@@ -54,7 +54,19 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
   engines `>=0.2.1-rc.5` **匹配** 0.2.2 预发布线（这些宿主会放行装载）；npm 默认口径下 engines **不匹配**
   任何 0.2.2 预发布（semver 实测 false）——alpha 线的安装期兼容由 peer 显式 OR 式承载（`^0.2.1-rc.5 ||
   ^0.2.2-alpha.2` 在两口径下均匹配 alpha.2/alpha.3/rc.1）。其中 0.2.2-rc.1（npm next）与 0.2.2-alpha.3
-  属 peer 面**数学覆盖但未逐符号对照**——发布前须各做一轮快查（硬要求），完成前不宣称覆盖。
+  已于 2026-11-07 各完成一轮逐符号快查，**均 pass**：消费面 = grep 派生插件 host/client src 全部
+  `@deepseek-ai/*` 导入（49 行 import：host 18 符号 + client 22 符号 + 6 个 type-only 模块面），两版各于系统
+  临时区 `npm install` 取证后逐符号读 `lib/types/*.d.ts` 对照——插件消费的全部符号在两版均存在且形状兼容
+  （含 `declare module` 合并面 RemoteErrorDetailsMap / LlmRequestPurposeMap / MessageSourceMap /
+  LocaleNamespaceMap / SlotMap / cordis Context；dsh-app-boot engines-first 实证——`engines.dsh` 在场即单独
+  裁决、peerDependencies 不参与，semver.satisfies('0.2.2-rc.1', '>=0.2.1-rc.5', {includePrerelease:true})
+  实测 true）。**未验证缺口（如实登记，不据此宣称运行期覆盖）**：① web shell 运行期注入面未证实——npm
+  产物无 PLATFORM_MODULES 静态表，dsh-client-store / dsh-client-ui-slots / dsh-client-ui-primitives 三包
+  不在 dsh 元包依赖树内（符号已从 registry 单装同版验证存在且同形），「运行期由 shell 提供这三包」未验证；
+  ② 未对插件跑对两版的整体 tsc 编译（`declare module` 合并兼容性系读两侧声明判定，非编译验证）；③ 插件
+  自生成的 `packages/typert-protocol` 再导出符号未普查（在 grep 派生范围外）。升级出路：0.2.2 线装载判定按
+  engines-first 放行，但运行期兼容的实测基准仍只有 0.2.1-rc.5——缺口证伪时出路 = 回退声明下限
+  0.2.1-rc.5，并以 verify 矩阵真机列复验后再放开。
 - **engines 不被 0.1.x 强制（上游缺口，如实登记）**：0.1.x 宿主不读 `engines.dsh`（已实证），声明收紧
   对它们没有运行时强制力——低于下限的旧宿主可能静默装上插件、在装载期才拒载，只能靠本段口径自律。
 
@@ -136,7 +148,7 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
 pnpm --dir dsh-git-plugin install         # workspace 安装
 pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 三工程 tsc
 pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + git-bundle 一致性检查
-pnpm --dir dsh-git-plugin test            # vitest run（29 文件；用例数以实跑回填——解析器快照、真仓库集成、合规守卫）
+pnpm --dir dsh-git-plugin test            # vitest run（30 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
 pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 双包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
 pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 git-bundle 安装 → dump-config 两行 → web → status() ready → HTML 含两包；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
 ```
@@ -178,7 +190,7 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
 - **GCM（Git Credential Manager）提示**：网络命令带 `GIT_TERMINAL_PROMPT=0`
   （`packages/host/src/git-runner.ts:48`）——不会在终端挂起等输入。桌面环境首次
   push/pull/fetch 私有远端时，Git Credential Manager 可能弹出认证窗口，**在弹窗里完成认证即可**；
-  无 GCM 的环境直接得到 `git/auth-failed` 域错误（stderr 已脱敏，`packages/host/src/error-codes.ts:104`）。
+  无 GCM 的环境直接得到 `git/auth-failed` 域错误（stderr 已脱敏，`packages/host/src/error-codes.ts:86`）。
 - **AI 提交信息需配置 LLM 路由**：未配置 `llmProvider`/`llmModel`（且会话无模型捕获）时，
   `git/generateCommitMessage` 返回 `git/llm-route-unresolved`——端点已服务，属确定性域错误。
 - **事件传输 = 轮询 + 写后失效**：dsh 对出树插件无事件广播（spec §②），变更高峰期角标
@@ -195,10 +207,11 @@ release.yml 在每次 `v*` 标签发布前按同口径复跑门禁（typecheck/t
 
 | 门禁 | 命令 | 结果 |
 |---|---|---|
-| typecheck | `pnpm --dir dsh-git-plugin run typecheck` | 待实跑回填（v0.1.0 首发 exit 0） |
-| test | `pnpm --dir dsh-git-plugin run test` | 待实跑回填（29 文件；用例数以实跑回填） |
-| build | `pnpm --dir dsh-git-plugin run build` | 待实跑回填（host typert/remote 产物 + client bundle + git-bundle 一致性检查；bundle 体积以实跑回填） |
-| verify:install | `pnpm --dir dsh-git-plugin run verify:install` | 待实跑回填——两相门禁：working-copy 相（全新 profile 单条安装 → dump-config git/ui-git 两行 → web boot → status() ready → HTML 含两包）+ clean-clone 相（git clone 本仓库 → frozen-lockfile 安装 + build → 同一断言链）；待修复后首跑实测刷新 |
+| typecheck | `pnpm --dir dsh-git-plugin run typecheck` | **exit 0**（2026-11-07 前置修复批实测；v0.1.0 首发 exit 0） |
+| test | `pnpm --dir dsh-git-plugin run test` | **用例全过**（2026-11-07 实测；现树 30 文件 = 13 host + 15 client + 2 root；用例数未知——实跑输出未记总数） |
+| build | `pnpm --dir dsh-git-plugin run build` | **exit 0**（2026-11-07 实测；client bundle 281426 bytes，`wc -c packages/client-ui/lib/client.js`——构建日志曾按字符数误记 256568；host typert/remote 产物 + git-bundle 一致性检查同跑通过） |
+| check:locale | `pnpm --dir dsh-git-plugin run check:locale` | **exit 0**（2026-11-07 实测） |
+| verify:install | `pnpm --dir dsh-git-plugin run verify:install` | **dev-tree 列两相 PASS=true**（working-copy 相 + clean-clone 相，2026-11-07 实测）；npm 列与现成可执行列未跑（如实标注）——两相门禁：working-copy 相（全新 profile 单条安装 → dump-config git/ui-git 两行 → web boot → status() ready → HTML 含两包）+ clean-clone 相（git clone 本仓库 → frozen-lockfile 安装 + build → 同一断言链） |
 
 ## 7. 许可
 

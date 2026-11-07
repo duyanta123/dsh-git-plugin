@@ -4,13 +4,14 @@
 > 输入（本会话全文读过）：
 > - `docs/feature-checklist.md`（67 项权威需求，v1 = 分期表第 v1 行，`feature-checklist.md:105`，含多仓库口径注 `feature-checklist.md:109`）
 > - `docs/host-capability-map.md`（宿主机制权威，下称【map】，引用格式 `host-capability-map.md:行号`）
-> - `docs/dsh-git-plugin-research-report.md` 第 2 章（F1–F6 定义 `:27-34`）与第 5 章（技术方案 `:112-342`）（下称【报告】）
-> - `docs/prior-session-conclusions.md`（六条改进意见 `:15-30`；F7 提交图可行性与复用边界 `:46-64`）（下称【前次】）
+> - 外层工作区 `research/dsh-git-plugin-research-report.md`（未入库，仅本机）第 2 章（F1–F6 定义 `:27-34`）与第 5 章（技术方案 `:112-342`）（下称【报告】）
+> - 外层工作区 `research/prior-session-conclusions.md`（未入库，仅本机；六条改进意见 `:15-30`；F7 提交图可行性与复用边界 `:46-64`）（下称【前次】）
 > - `docs/ported-sources/SOURCES.md`（移植源登记与许可，下称【SRC】，引用格式 `SOURCES.md:行号`）
 >
 > **用户决议（本 spec 的硬前提）**：host 包名 `dsh-gitkit`，client 包名 `dsh-gitkit-ui`，**pnpm workspace 双包**，本地发布就绪（`file:`/`link:` 安装 + npm publish 均可直接进行）。
 >
 > **修订记录**：v1.1（2026-10-30）按评审修订六项阻断问题——B1 untracked diff 命令修正 + exit 1 白名单（本机实测 exit 129/1）；B2 client 包预留 remote-client 产物位并写明两种 spike 结局；B3 push 改显式 refspec（裸 `git push` 在 `push.default=matching` 下实测一次推多分支）；B4 status 摘除 `git diff --check` 步（冲突标记展示移交 FileDiffView）；B5 watcher `ignored` 改函数谓词（chokidar@5 内置 matcher 对字符串做整串相等比较，实读其 dist 证实）；B6 refs 取 peeled oid（annotated tag 实测 `objectname`≠`*objectname`）。
+> **修订记录**：v1.3（2026-11-07）随 P1 丢帧修复归真 §2.3 client 表「快照比对」行（实现：`packages/client-ui/src/client/store/git-status-source.ts` `snapshotSignature`）——原行规定按 `branch.oid + 分组计数 + generatedAt` 廉价对比：分组计数漏**路径置换**（`staged=[a.ts]→[b.ts]` 计数不变 ⇒ host R2 按全量签名判有变化推新帧、client 判重丢帧 ⇒ 渲染滞后）；`generatedAt` 每次重算必变、按字面入比则永判不等（实现——含修复前——实际始终剔除，原行此半连实现字面都未符合）。现行 = 内容签名比对（剔除 `generatedAt`），字段面 `repoRoot + branch + 四组路径数组（staged/unstaged/untracked/conflicted）+ clean`，与 host `watcher.frameSignature` 的 snapshot 半同粒度。回归：`packages/client-ui/tests/git-status-source.spec.ts`「snapshotSignature 纳入四组路径数组」「路径置换且计数不变 ⇒ 不丢帧、新路径进状态」+「快照比对口径守卫」用例。**同版次（2026-11-07）整体回填：对齐 v0.1.2 实现状态**（逐条核实 2026-11-07 全量审查漂移清单）——① §1.9 方法总表 13→16：补 `ping`/`identity`/`followStatus` 三行、端点名 `show`→`getCommitDetail`（§1.8 标题同改；实现 `packages/host/src/index.ts:151` `REMOTE_METHODS`、`index.ts:619-631`）。② §1.0.5 错误码目录 14→21：补 `session-workspace-unresolved`/`no-paths`/`bad-request`/`hook-failed`/`no-branch`/`dirty-worktree`/`choose-remote` 七码（权威 = `packages/host/src/error-codes.ts:41-69` `RemoteErrorDetailsMap` 键集；任务口径记『13→20』——实数 spec 侧原 14、实现侧 21，两侧各差 1，以键集为准）。③ §2.3 补 followStatus 流帧契约 R1–R6（权威 = `packages/host/src/watcher.ts:33-46` + `index.ts:665-690`；client 侧 = `packages/client-ui/src/client/store/git-status-source.ts:77-87,99-126`——**client 去重签名粒度必须 ≥ host**，两侧现为同粒度的剔除 `generatedAt` 全量内容签名），§2.3 client 表传输行同步归真（流取代 client 自轮询，`git-status-source.ts:90-166`）。④ §1.0.2 Config 归真：`repoRoot` → `workspaceOverride` + session `header.cwd` 记忆、**无 process.cwd 回落**（`packages/host/src/workspace.ts:113-135`；§1.0.7 repo 发现行同改）；补 `gitCommand`/`llmMaxInputBytes` 与 min/max/step 钳制（`index.ts:160-178`；`llmMaxInputBytes` 默认 262_144 = `message-gen.ts:112`）；Config 位置 = `packages/host/src/index.ts:95-148`。⑤ §1.0.1 `inject = ['subprocess']`（`index.ts:158`），fs/llm 为可选结构切片（`readFsFace` `index.ts:723-733` / `readLlmFace` `index.ts:697-707`；fs 缺席降级 R6 纯轮询、llm 缺席调用时落 `git/llm-failed`）。⑥ 已登记偏离并入正文（§1.3/§1.4/§1.5/§1.6/§1.8/§1.0.7，实现证据见各节 v1.3 注记）：paths=[] 拒绝 `git/no-paths`（`mutations.ts:236`）；`discard(options: DiscardOptions)` 三守卫签名（`types.ts:223-227`、`mutations.ts:140-225`）；unmerged 前置拒绝 `git/bad-request`（`mutations.ts:197,211-214`）；`GIT_LITERAL_PATHSPECS=1` 环境形态（`git-runner.ts:52`；`--literal-pathspecs` 子命令位实测非法 `diff.ts:15-17`）；`git/hook-failed` 单列域码（`commit.ts:210-223`）；`CommitResult.message` 回读（`commit.ts:164-178`）；上游解析改 porcelain v2 branch 头三态推导（`remote-ops.ts:121-125`）；多 remote 落 `git/choose-remote`（`remote-ops.ts:430`）；pull 加 `git/dirty-worktree` 前置（`remote-ops.ts:250-261`）；getCommitDetail = log -1 + commitDiff（merge 第一父两树 / 根提交 `--root`，`graph.ts:283-320` + `diff.ts:317-360`）；log/refs/getCommitDetail 无 host 缓存、失效下放 client（`graph.ts:25,195`、`index.ts:634-642`、client `git-graph-store.ts:134-144`）；fetch 解析链 origin 优先 → 恰一个 remote（`remote-ops.ts:410-431`）。
 > **修订记录**：v1.2（2026-11-07）按实现偏离归真修订（NOTICE.md:42 既定偏离记录）——① watcher 实现为宿主 `ctx.fs.watch` 能力面（三目标 `.git/index`/`.git/HEAD`/`repoRoot`，depth:0 非递归；宿主 watch 回调不带内容路径）：事件路径防线 = 150ms 防抖 + R2 帧内容比对、嵌套目录变更只能靠 R4 兜底轮询捕获、fs 能力缺席降级纯轮询（R6）；§2.3 原案（插件自带 chokidar@5 递归 watcher）废弃、原案引用语保留于 §2.3 主表。② §0.4-9『dependencies 对齐 fs-local chokidar 版本』决议失效——chokidar `^5.0.0` 移入 devDependencies（唯一消费者 tests/support.ts 的 chokidarFsFace 测试替身），运行时依赖零 chokidar（§6 host 模板 dependencies/devDependencies 已同步）。③ vendored `packages/typert-protocol` 的 cordis peer 维持 `~4.0.6-alpha.1` 不动（owner 裁决 2026-11-05：副本零发布面——release.yml 只发 dsh-gitkit/dsh-gitkit-ui 两包、运行时从 registry 装官方同名 npm 包，放宽无生效面且破坏『未改动副本』四处登记）。④ §6 模板 engines 样例同步 0.1.2 定稿口径 `>=0.2.1-rc.5`（下限 = 唯一做过逐符号源码级对照的已发布版本，npm dist-tags latest；真机装载为发版前置门禁）。
 >
 > dsh 树内源码（`D:\DeepSeekHarness\...`）的行号一律**转引自【map】**，本会话未直接重读 dsh 源码；凡【map】标 ✅核 的条目是该图作者的核对结论，本文沿用并标注出处。
@@ -44,8 +45,8 @@
 | 25 | push / pull 基础（`:40`） | `git.push` / `git.pull`（ff-only）/ `git.fetch` | sync.spec |
 | 26 | 首推自动 set-upstream（`:41`） | `git.push({setUpstream:true})`（无 upstream 时结构化报错引导） | sync.spec |
 | 31 | Commit Graph（`:48`） | `git.log`/`git.refs` + `GitGraphTab` + `computeGraphLayout` | graph-layout.spec |
-| 32 | 提交详情（`:49`） | `git.show({oid})` | log-refs-show.spec |
-| 33 | 每提交文件变更对比（`:50`） | `git.show({oid, path})` | log-refs-show.spec |
+| 32 | 提交详情（`:49`） | `git.getCommitDetail({oid})`（v1.3 归真端点名，原 show） | log-refs-show.spec |
+| 33 | 每提交文件变更对比（`:50`） | `git.getCommitDetail({oid, path})` | log-refs-show.spec |
 | 44 | 危险操作审批（v1 子集=push/discard 确认，`:63`） | Tier C 权限级 + 二次确认框架 | —（UI + §1.0.4） |
 | 47 | 右上角悬浮入口+角标（`:68`） | `GitHeaderButton` @ `conversation.session.header.utilities` | loader-smoke（装载） |
 | 48 | 提交/推送按钮（`:69`） | 对话框 Commit / Commit & Push；菜单 Push/Pull/Fetch | —（UI） |
@@ -103,28 +104,29 @@
 #### 1.0.1 服务骨架
 
 ```ts
-// dsh-gitkit src/index.ts —— 形态依据【map】§2.1（host-capability-map.md:124-144）
+// dsh-gitkit packages/host/src/index.ts —— 形态依据【map】§2.1（host-capability-map.md:124-144）；v0.1.2 实装同形
 import type { Context } from '@deepseek-ai/cordis'
-import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol' // 包名待核实（§0.4-2）
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import z from '@deepseek-ai/schemastery'
-import type { GitPluginConfig } from './types.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Context { git: GitService }
 }
 
 export default class GitService extends TypertRemoteService {
-  static inject = ['subprocess', 'fs', 'llm'] as const   // 全部依赖就绪才激活（host-capability-map.md:131）
-  static Config: z<GitPluginConfig> = GitConfigSchema
+  static inject = ['subprocess'] as const   // 仅 subprocess 门控激活（v1.3 归真，index.ts:158）；fs/llm 见下方切片注
+  static Config: z<Config> = z.object({ /* …见 §1.0.2（Config 与服务同类同文件，index.ts:95-178） */ })
 
-  constructor(ctx: Context, config: GitPluginConfig) {
-    super(ctx, 'git')           // serviceKey = Cordis 注册名 = wire namespace
-    // …内部模块组装（runner/status/watcher/repo 解析）
+  constructor(ctx: Context, config: Config) {
+    super(ctx, 'git')           // serviceKey = Cordis 注册名 = wire namespace（源码字面量——typert-generator 契约，index.ts:192-194）
+    // …内部模块组装（四实例 runner/workspace/status/diff/mutations/commit/remote-ops/message-gen/graph/watcher）
   }
   // 只有 @Remote 装饰的方法暴露给 client（host-capability-map.md:146-149；报告 :192 的"public 自动暴露"已被 D3 纠正）
-  // …@Remote 方法见 §1.1–1.8
+  // …@Remote 方法见 §1.1–1.9（16 个，REMOTE_METHODS index.ts:151）
 }
 ```
+
+**inject 归真（v1.3）**：`static inject = ['subprocess']`（`packages/host/src/index.ts:158`）。fs/llm **不进 inject**——以可选结构切片在构造期 `ctx.get('fs')` / `ctx.get('llm')` 结构化读取（`ctx.get` 先例同 subprocess 的取用，`index.ts:196-198`），缺席或形状不符返回 undefined、**不阻断服务激活**：fs 缺席 → watcher 直接走 R6 纯轮询（`readFsFace` `index.ts:723-733`、`watcher.ts:314-316`）；llm 缺席 → `generateCommitMessage` 调用时落 `git/llm-failed {stage:'call'}`（`readLlmFace` `index.ts:697-707`、`message-gen.ts:479-485`）。
 
 硬规则（来自【map】，施工时逐条对照）：
 
@@ -137,56 +139,51 @@ export default class GitService extends TypertRemoteService {
 #### 1.0.2 Host Config（schemastery；client 半 Config 不生效——`host-capability-map.md:114`，所以全部运行期配置在 host）
 
 ```ts
-// dsh-gitkit src/types.ts
-export interface GitPluginConfig {
-  /** 仓库根。空串 = 自动发现：对宿主进程 cwd 跑 `rev-parse --show-toplevel`（【map】§4.1 禁用 locateGitWorkspace，host-capability-map.md:287） */
-  repoRoot: string
-  /** 快速命令超时：status/diff/log/refs/show/stage/unstage/discard */
-  fastTimeoutMs: number          // 默认 30_000（沿【报告】5.3.1 statusTimeoutMs 量级，dsh-git-plugin-research-report.md:183）
+// dsh-gitkit packages/host/src/index.ts（v1.3 归真：Config 与服务同类同文件——
+// interface index.ts:95-148 + static Config schema index.ts:160-178；不再放 types.ts）
+export interface Config {
+  /** git 可执行文件名或绝对路径；经 `subprocess.resolveExecutable` 解析（index.ts:96-97）。 */
+  gitCommand?: string                    // 默认 'git'
+  /** 快速命令超时：status/diff/log/refs/getCommitDetail/stage/unstage/discard/identity/ping */
+  fastTimeoutMs?: number                 // 默认 30_000（沿【报告】5.3.1 statusTimeoutMs 量级）；step(1) min 1_000 max 3_600_000
   /** commit 超时：pre-commit hook 可能慢 */
-  commitTimeoutMs: number        // 默认 120_000
+  commitTimeoutMs?: number               // 默认 120_000；step(1) min 1_000 max 3_600_000
   /** 网络命令超时：push/pull/fetch */
-  networkTimeoutMs: number       // 默认 120_000（沿【报告】pushTimeoutMs，:184）
-  /** AI 提交信息 LLM 调用超时 */
-  llmTimeoutMs: number           // 默认 60_000
+  networkTimeoutMs?: number              // 默认 120_000（沿【报告】pushTimeoutMs）；step(1) min 1_000 max 3_600_000
   /** 单条 git 命令 stdout 字节上限（溢出保尾部 + truncated，【map】§4.1，host-capability-map.md:278） */
-  outputMaxBytes: number         // 默认 8_388_608
-  /** diff/show 单文件 patch 上限（字节），超过置 oversized（[清单 59]） */
-  diffFilePatchMaxBytes: number  // 默认 262_144
-  /** diff/show 单次调用 patch 总预算（字节），超过截断（opencode patchBudget 语义，SOURCES.md:68） */
-  diffTotalPatchMaxBytes: number // 默认 2_097_152
-  /** log 每页默认条数（client 可传更小） */
-  logDefaultLimit: number        // 默认 500
-  /** log 单页上限（GitLens getGraph 默认 5000，SOURCES.md:108） */
-  logMaxLimit: number            // 默认 5_000
-  /** host 文件监听开关（宿主 ctx.fs.watch 三目标 depth:0 监听 + 兜底轮询，见 §2.3；v1.2 归真） */
-  watchEnabled: boolean          // 默认 true
+  outputMaxBytes?: number                // 默认 8_388_608；step(1) min 1_024
+  /** diff/getCommitDetail 单文件 patch 上限（字节），超过置 oversized（[清单 59]） */
+  diffFilePatchMaxBytes?: number         // 默认 262_144；step(1) min 1
+  /** diff/getCommitDetail 单次调用 patch 总预算（字节），超过截断（opencode patchBudget 语义，SOURCES.md:68） */
+  diffTotalPatchMaxBytes?: number        // 默认 2_097_152；step(1) min 1
+  /**
+   * 工作区钉死（绝对目录）。空串 = 自动：最近顶层会话回合的 `session.header.cwd`
+   * （`turn/start` 时机记忆、realpath 规范化，workspace.ts:100-105）。
+   * 都没有 ⇒ `git/session-workspace-unresolved`。**无 process.cwd 回落**（v1.3 归真——
+   * 原「repoRoot，空串对宿主进程 cwd 自动发现」语义废弃：解析链只有两级，workspace.ts:113-135）。
+   */
+  workspaceOverride?: string             // 默认 ''
   /** fs 事件防抖（ZCode DEBOUNCE_MS=150，SOURCES.md:36） */
-  debounceMs: number             // 默认 150
-  /** 兜底轮询间隔（ZCode useGitAutoRefresh 60s，SOURCES.md:40） */
-  pollIntervalMs: number         // 默认 60_000
-  /** LLM 路由覆盖；空 = 从 request/header 捕获（§0.4-5） */
-  llmProvider: string            // 默认 ''
-  llmModel: string               // 默认 ''
+  debounceMs?: number                    // 默认 150；step(1) min 0 max 60_000
+  /** 兜底轮询间隔（ZCode useGitAutoRefresh 60s，SOURCES.md:40）。**必需项**：宿主 watch depth:0 不递归，嵌套目录编辑只有轮询能捕获（index.ts:123-127） */
+  pollIntervalMs?: number                // 默认 60_000；step(1) min 1 max 3_600_000
+  /** host 文件监听开关（宿主 ctx.fs.watch 三目标 depth:0 监听 + 兜底轮询，见 §2.3；v1.2 归真）。false = 纯轮询，info 级日志不算 R6 故障（watcher.ts:308-312） */
+  watchEnabled?: boolean                 // 默认 true
+  /** AI 提交信息 LLM 调用超时 */
+  llmTimeoutMs?: number                  // 默认 60_000；step(1) min 1_000 max 3_600_000
+  /** LLM 路由覆盖；**两者都非空才成对生效**，否则用 host 侧缓存的最近 request/header 路由（§0.4-5；index.ts:132-138） */
+  llmProvider?: string                   // 默认 ''
+  llmModel?: string                      // 默认 ''
+  /** 组装完成的 LLM 输入字节硬顶（任务口径；超限 ⇒ `git/llm-failed {stage:'trim'}`，不静默二次裁剪——message-gen.ts:469-478；默认值常量 message-gen.ts:112） */
+  llmMaxInputBytes?: number              // 默认 262_144；step(1) min 1_024 max 16_777_216
+  /** log 每页默认条数（client 传非有限 limit 时回落） */
+  logDefaultLimit?: number               // 默认 500；step(1) min 1 max 100_000
+  /** log 单页上限（GitLens getGraph 默认 5000，SOURCES.md:108；limit 钳制上界） */
+  logMaxLimit?: number                   // 默认 5_000；step(1) min 1 max 100_000
 }
 
-export const GitConfigSchema: z<GitPluginConfig> = z.object({
-  repoRoot: z.string().default(''),
-  fastTimeoutMs: z.number().default(30_000),
-  commitTimeoutMs: z.number().default(120_000),
-  networkTimeoutMs: z.number().default(120_000),
-  llmTimeoutMs: z.number().default(60_000),
-  outputMaxBytes: z.number().default(8 * 1024 * 1024),
-  diffFilePatchMaxBytes: z.number().default(256 * 1024),
-  diffTotalPatchMaxBytes: z.number().default(2 * 1024 * 1024),
-  logDefaultLimit: z.number().default(500),
-  logMaxLimit: z.number().default(5_000),
-  watchEnabled: z.boolean().default(true),
-  debounceMs: z.number().default(150),
-  pollIntervalMs: z.number().default(60_000),
-  llmProvider: z.string().default(''),
-  llmModel: z.string().default(''),
-})
+// schema = `static Config`（index.ts:160-178）：全部字段可选 + .default()；数值字段
+// 带 .step(1) 与上表 min/max 钳制（v1.3 补录——原 spec 无钳制）。
 ```
 
 默认值合并发生在 schema 校验时（`host-capability-map.md:113`）。v1 不用 `.volatile()`（config 变更走 fiber 重载即可，`host-capability-map.md:187`）。
@@ -287,6 +284,7 @@ export interface RefInfo {
   fullName: string             // refs/heads/main、refs/remotes/origin/main、refs/tags/v1
   shortName: string            // main、origin/main、v1
   oid: string                  // **peeled 提交 oid**：annotated tag 取 %(*objectname)，其余取 %(objectname)——图装饰按此匹配 commit.oid（§1.8）
+  upstreamTrack: string | null // 本地分支的 upstream 跟踪态（`%(upstream:track)` 原文：'[gone]'/'[ahead N]'/'[behind N]'；null = 无 upstream/已同步/非 local-branch）——v1.3 补录（任务口径扩展，一次随 refs 取回、逐分支 rev-list 不做；信息性字段 v1 图 UI 不渲染；types.ts:172-181）
 }
 export interface RefsSnapshot {
   refs: RefInfo[]
@@ -301,6 +299,7 @@ export interface CommitDetail {
   commit: CommitInfo
   files: DiffFile[]            // numstat（path 模式下含该文件 patch）
   totalTruncated: boolean
+  refs: RefInfo[]              // 指向本提交的 refs（peeled oid == commit.oid 过滤）——v1.3 补录（任务口径扩展；详情面板 ref chips，types.ts:193-205）
 }
 
 // ---------- 写操作结果 ----------
@@ -308,9 +307,16 @@ export interface StageResult   { staged: number }
 export interface UnstageResult { unstaged: number }
 export interface DiscardResult { discarded: number }   // tracked restore + untracked clean 合计文件数
 
+/** git.discard 入参（v1.3 归真——原单参 `discard(paths)` 签名废弃；三重守卫见 §1.3。types.ts:214-227、mutations.ts:140-225） */
+export interface DiscardOptions {
+  paths: string[]
+  acknowledged: boolean        // C 级二次确认旗标（[清单 12]）；false ⇒ git/bad-request（'unacknowledged'），零命令执行
+  baseRevision: string | null  // 乐观并发基线 = 发起请求时持有的 HEAD 全 oid；null = 不参与校验；过期 ⇒ git/bad-request（'stale-base-revision'），零命令执行
+}
+
 export interface CommitOptions {
   message: string
-  amend: boolean               // [清单 19]
+  amend: boolean               // [清单 19]；amend + 全空白 message = --no-edit 路（保留原消息，不走 empty-message 守卫——commit.ts:129-135）
   skipHooks: boolean           // [清单 20] → --no-verify
 }
 export interface CommitResult {
@@ -318,6 +324,7 @@ export interface CommitResult {
   shortOid: string
   branch: string | null
   amended: boolean
+  message: string              // 提交后回读的最终 message（`git show -s --format=%B` 去尾换行——commit-msg hook 改写/--no-edit 后的权威值；v1.3 补录，commit.ts:164-178、types.ts:237-248）
 }
 
 export interface PushOptions {
@@ -347,15 +354,31 @@ export interface GeneratedCommitMessage {
 }
 
 // ---------- log/refs/show 入参 ----------
-export interface LogOptions  { limit: number; skip: number }     // limit 钳到 [1, logMaxLimit]；skip ≥ 0
+export interface LogOptions  { limit: number; skip: number }     // limit 钳到 [1, logMaxLimit]（非有限数回落 logDefaultLimit，graph.ts:83-90）；skip ≥ 0
 export interface ShowOptions { oid: string; path: string | null } // path=null：仅 meta+numstat；path 给定：含该文件 patch
+
+// ---------- ping / identity / followStatus 流帧（v1.3 回填；types.ts:17-40, 289-320） ----------
+export interface GitPingResult { ok: true; gitVersion: string }   // `git --version` stdout 首行（index.ts:262-278）
+export type GitIdentityScope = 'merged' | 'local' | 'global' | 'system'
+export interface GitIdentityResult {
+  name: string | null; email: string | null  // 未设置（exit 1 / 空串值）⇒ null
+  missing: string[]; complete: boolean       // 不抛 identity-missing——查询面返回状态，抛码职责在 commit 前置校验（index.ts:288-289）
+  workspace: string; workspaceSource: 'workspace-override' | 'session'
+}
+/** 帧推送原因（R1–R5；R6 是降级模式非帧——types.ts:289-297、watcher.ts:33-46） */
+export type GitStatusFrameReason = 'initial' | 'change' | 'mutation' | 'poll' | 'manual'
+export type GitStatusFrame =
+  | { kind: 'status'; reason: GitStatusFrameReason; snapshot: GitStatusSnapshot }
+  | { kind: 'error';  reason: GitStatusFrameReason; error: GitFrameError }  // 错误以帧通告不断流
+export interface GitFrameError { code: string; message: string }            // wire 面 code+message；完整 details 走 `git status` 的 RemoteError
+export type GitFollowCommand = { type: 'refresh' }                          // R5 上行命令；未知 type 被 host 忽略（前向兼容）
 ```
 
 #### 1.0.4 权限分级（对齐【报告】5.3.7，`dsh-git-plugin-research-report.md:275-280`；[清单 44/50]）
 
 | 级 | 定义 | 方法 |
 |---|---|---|
-| **A 只读静默** | 不改仓库状态；自动刷新轮询可随时调；UI 无提示（后台 loading 指示除外） | `status` `diff` `log` `refs` `show` |
+| **A 只读静默** | 不改仓库状态；自动刷新轮询可随时调；UI 无提示（后台 loading 指示除外） | `status` `diff` `log` `refs` `getCommitDetail`（v1.3 归真：端点名 show）+ `ping` `identity` `followStatus`（v1.3 补录，`index.ts:151,262-313,665`） |
 | **B 轻提示** | 改仓库状态但低危/可逆（stage⇄unstage 互逆；fetch 只更新 remote-ref）；UI 触发处给瞬时轻提示（toast/行内状态），无需对话框；结果可从 UI 立即看出并可逆 | `stage` `unstage` `fetch` `generateCommitMessage` |
 | **C 必须 UI 显式确认** | 丢弃内容 / 改写历史 / 影响远程；只能由带明确动作语义的按钮触发，按钮文案即确认；其中 discard 还要**二次确认对话框**（[清单 12/44/50]）；diverged push 追加确认（§3.4） | `commit`（含 amend） `push` `pull` `discard` |
 
@@ -381,11 +404,27 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/git-error':         { op: string; exitCode: number | null; stderr: string; truncated: boolean } // 兜底
     'git/llm-route-unresolved': Record<string, never>
     'git/llm-failed':        { stage: 'trim' | 'call' | 'parse'; reason: string }
+    // —— v1.3 补录七码（权威键集 = packages/host/src/error-codes.ts:41-69 RemoteErrorDetailsMap；目录 14→21）——
+    'git/session-workspace-unresolved': Record<string, never>                // workspaceOverride 与 session cwd 都解析不出（workspace.ts:113-135）
+    'git/no-paths':          { op: string }                                  // stage/unstage/discard 空路径数组——拒绝整仓副作用（mutations.ts:236）
+    'git/bad-request':       {                                               // discard 三守卫失败（mutations.ts:211-225）
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable'
+      /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
+      paths: string[]
+      /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
+      expected: string | null
+      /** stale-base-revision 时 = 最新 HEAD oid（unborn 为 null），其余 null。 */
+      actual: string | null
+    }
+    'git/hook-failed':       { op: string; exitCode: number | null; stderr: string; truncated: boolean } // commit 的 hook 拒绝（details 与 git-error 同构；commit.ts:210-223）
+    'git/no-branch':         { state: 'detached' | 'unborn' }                // push/pull 的 detached/unborn 前置拒绝（remote-ops.ts:376-385）
+    'git/dirty-worktree':    { branch: string | null; pathCount: number }    // pull 脏区前置拒绝（remote-ops.ts:250-261）
+    'git/choose-remote':     { remotes: string[] }                           // 多 remote 且无 origin（remote-ops.ts:430）
   }
 }
 ```
 
-分类规则：非零退出先按 stderr 关键词分类（`Authentication failed`/`could not read Username`/`Permission denied (publickey)` → `git/auth-failed`；`[rejected]`/`non-fast-forward` → `git/push-rejected`；`Not possible to fast-forward` → `git/pull-diverged`），其余非零退出 → `git/git-error`（携带 exitCode + stderr 16KiB 尾部 + truncated，沿【map】§4.1 stderr 保留策略 `host-capability-map.md:278`）。gateway 保留码透传：`gateway/service-unavailable`（UI 重试）、`gateway/cancelled`、`gateway/input-invalid`（client 容忍陌生码，`host-capability-map.md:172`）。
+分类规则（簇表单一事实源 = `STDERR_PATTERNS`，`packages/host/src/error-codes.ts:115-126`；**stderr 先脱敏再分类/入 details**——凭证形 token/password 键值与 URL userinfo 打码，`sanitizeStderr` `error-codes.ts:86-97`，v1.3 补录）：`Authentication failed`/`could not read Username`/`Permission denied (publickey)` → auth-failed 簇；`[rejected]`/`[remote rejected]`（pre-receive 拒绝的实际 stderr 不含字面 `[rejected]`，M6 本机实测补齐）/`non-fast-forward` → push-rejected 簇；`Not possible to fast-forward` → pull-diverged 簇；传输层措辞（`Could not resolve host`/`Failed to connect`/`Connection timed out`/`Network is unreachable`/`Connection reset by peer`/`SSL connect error`）→ network 簇（v1.3 补录）。簇到域码的映射分语境（v1.3 归真）：commit 的非零退出先测 hook 输出（stderr 含 `hook` 措辞 ⇒ `git/hook-failed`，`commit.ts:210-223`）；sync 引擎把 push-rejected/diverged 簇落 `git/push-rejected`/`git/pull-diverged`（`remote-ops.ts:212-233,306-333`）；通用 `gitRunError` 工厂只把 auth-failed 落独立码，rejected/diverged/network 簇仍落 `git/git-error` 兜底（message 带簇注记，`error-codes.ts:137-159`）。其余非零退出 → `git/git-error`（携带 exitCode + stderr 16KiB 尾部 + truncated，沿【map】§4.1 stderr 保留策略 `host-capability-map.md:278`）。gateway 保留码透传：`gateway/service-unavailable`（UI 重试）、`gateway/cancelled`、`gateway/input-invalid`（client 容忍陌生码，`host-capability-map.md:172`）。
 
 #### 1.0.6 日志约定
 
@@ -398,17 +437,17 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 
 - 抄 dsh 树内先例组合：`client-ui-forge/src/git.ts` 的 `runGit`（~50 行）+ `workspace-changes/src/git.ts` 的常量/env（【map】§4.1 组装建议，`host-capability-map.md:283-285`）。
 - 读命令前缀 `GIT_PREFIX = ['--no-optional-locks', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']`（`host-capability-map.md:283`；`/dev/null` 无平台分支，【map】§4.5 `host-capability-map.md:316`）；**写命令不套** hooksPath 禁用与 `--no-optional-locks`（保留用户 hook 与正常锁，`host-capability-map.md:285`）。
-- 全部命令 env：`GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`LC_ALL=C` + 15 项 ambient `GIT_*` tombstone + `GIT_NO_LAZY_FETCH=1`（forge `GIT_ENV`，`host-capability-map.md:283`）；Codex `safe.bareRepository=explicit` 注入为 `-c` 参数（SOURCES.md:52）。
-- argv 数组注入，绝不 shell；路径参数加 `--literal-pathspecs`（【报告】:247）；超时 `AbortSignal.any(caller, AbortSignal.timeout(cfg))`；stdout 溢出保尾部 + truncated；Windows 终止走 `taskkill /PID /T /F`（`host-capability-map.md:276-279`）。
+- 全部命令 env：`GIT_CONFIG_COUNT=0`、`GIT_TERMINAL_PROMPT=0`、`LC_ALL=C` + 15 项 ambient `GIT_*` tombstone + `GIT_NO_LAZY_FETCH=1` + `GIT_OPTIONAL_LOCKS=0` + **`GIT_LITERAL_PATHSPECS=1`**（v1.3 补录后两项；GIT_ENV 全表 `git-runner.ts:41-54`；forge `GIT_ENV`，`host-capability-map.md:283`）；Codex `safe.bareRepository=explicit` 注入为 `-c` 参数且为**全部实例共用**（`SAFE_BARE_PREFIX` `git-runner.ts:56-61`；SOURCES.md:52）。**四实例装配**（v1.3 补录）：readonly（READONLY_PREFIX + fastTimeoutMs）/ write（WRITE_PREFIX + fast）/ commit（WRITE_PREFIX + commit）/ network（WRITE_PREFIX + network）——写/提交/网络实例不套 hooksPath 禁用与 `--no-optional-locks`（`git-runner.ts:64-79`、`index.ts:199-206`）。
+- argv 数组注入，绝不 shell；路径字面量以 env `GIT_LITERAL_PATHSPECS=1` 承载（v1.3 归真——`git-runner.ts:52`，dsh workspace-changes git.ts:195 同款；`--literal-pathspecs` 写在**子命令位**对 `git diff` 实测非法 exit 129，`diff.ts:15-17`；mutations 另在 **git 全局位**（`git --literal-pathspecs add --`）加挂旗标双保险，`mutations.ts:23-25,43-44`）；超时 `AbortSignal.any(caller, AbortSignal.timeout(cfg))`；stdout 溢出保尾部 + truncated；Windows 终止走 `taskkill /PID /T /F`（`host-capability-map.md:276-279`）。
 - git 发现：`ctx.subprocess.resolveExecutable('git', undefined, signal)`（`host-capability-map.md:289`）；失败 → `git/git-error`（op='resolve-git'）+ UI 友好提示（[清单 54]）。
-- repo 发现：对 `repoRoot || process.cwd()` 跑 `git rev-parse --show-toplevel`；"exit 128 + not a git repository → null" 范式（forge git.ts:99-103，`host-capability-map.md:287`）。失败 → 各方法抛 `git/no-repository`。
+- repo 发现（v1.3 归真）：工作区解析两级链——`Config.workspaceOverride`（非空 ⇒ 钉死；路径不存在 = 解析失败，不回落）→ 最近顶层会话 `session.header.cwd`（`turn/start` 时机记忆，realpath 规范化）→ 都没有 ⇒ `git/session-workspace-unresolved`（`workspace.ts:113-135`）——**无 process.cwd 回落**（原「repoRoot || process.cwd()」语义废弃）；"exit 128 + not a git repository" 范式（forge git.ts:99-103，`host-capability-map.md:287`）仍适用，命中 ⇒ 各方法抛 `git/no-repository`（commit 先显式探测，`commit.ts:89-97`）。
 - 已知风险：`GIT_TERMINAL_PROMPT=0` 下 Windows Git Credential Manager 仍可能弹 GUI 窗口（【前次】:23）——写进 push/fetch 错误路径的 UI 提示文案。
 
 ---
 
 ### 1.1 `git.status` — 工作区快照 [清单 1/5/6/24/64/65]
 
-- 权限 **A**；超时 `fastTimeoutMs`；幂等；并发去重：进行中的扫描共享同一 Promise（Codex status.rs 并发去重语义，SOURCES.md:53）。
+- 权限 **A**；超时 `fastTimeoutMs`；幂等；<2s TTL 快照缓存（`STATUS_CACHE_TTL_MS=1_500`，`status.ts:61`）+ 在飞扫描去重：进行中的扫描共享同一 Promise（Codex status.rs 并发去重语义，SOURCES.md:53；写守卫的 `fresh` 读取绕 TTL 缓存且不参与在飞去重——`status.ts:97-121`，v1.3 补录）。
 
 ```ts
 @Remote()
@@ -423,7 +462,7 @@ async status(signal?: AbortSignal): Promise<GitStatusSnapshot>
 2. 并发：`git diff --cached --numstat -z --find-renames`、`git diff --numstat -z --find-renames`（ZCode :876/:882，SOURCES.md:33）——回填 `additions/deletions/binary`。
 
 > **v1.1 修订（B4）**：原第 3 步 `git diff --check`（采集冲突标记路径）已**删除**——strict codec 会丢弃编译类型未声明的字段（`host-capability-map.md:158`），其采集结果无法过线且无 host 内消费者；status 是最热路径（150ms 防抖 + 60s 轮询 + client 3s 轮询，§2.3），不为此多 spawn 一条无产出命令。[清单 6] 的两半分工：**冲突文件检测** = porcelain XY 码（上面第 1 步，权威信号）；**冲突标记展示** = `FileDiffView` 高亮 diff 内容中的 `<<<<<<<` / `=======` / `>>>>>>>` 行（纯函数 `flagConflictRows`，client/tests/diff-view.spec 覆盖）。
-- 错误：`git/no-repository`；watcher 未启动时本调用即真值来源（§2）。
+- 错误：`git/no-repository`、`git/session-workspace-unresolved`、`git/timeout`、`git/git-error`；watcher 未订阅时本调用即真值来源（§2.3）。
 - 日志：debug。
 
 ### 1.2 `git.diff` — 工作区 / 暂存双路 [清单 2/3/59]
@@ -443,7 +482,7 @@ async diff(scope: DiffScope, path: string | null, signal?: AbortSignal): Promise
 
 ### 1.3 `git.stage` / `git.unstage` / `git.discard` [清单 9/12]
 
-- 权限：stage/unstage **B**，discard **C**（UI 二次确认）；超时 `fastTimeoutMs`。
+- 权限：stage/unstage **B**，discard **C**（UI 二次确认）；超时 `fastTimeoutMs`（write 实例，WRITE_PREFIX）。
 
 ```ts
 @Remote()
@@ -451,17 +490,18 @@ async stage(paths: string[], signal?: AbortSignal): Promise<StageResult>
 @Remote()
 async unstage(paths: string[], signal?: AbortSignal): Promise<UnstageResult>
 @Remote()
-async discard(paths: string[], signal?: AbortSignal): Promise<DiscardResult>
+async discard(options: DiscardOptions, signal?: AbortSignal): Promise<DiscardResult>   // v1.3 归真：单参 paths 签名废弃（DiscardOptions 见 §1.0.3）
 ```
 
-| 方法 | 命令 | 要点 |
+| 方法 | 命令（路径字面量 = env `GIT_LITERAL_PATHSPECS=1` + git 全局位 `--literal-pathspecs` 双保险，§1.0.7） | 要点 |
 |---|---|---|
-| stage | `git add --literal-pathspecs -- <paths...>`；`paths=[]` ⇒ `git add -A`（【报告】:261） | untracked 路径也走 add（暂存新文件） |
-| unstage | `git restore --staged --literal-pathspecs -- <paths>`；**unborn 分支回落 `git rm --cached -- <paths>`**（【报告】:262；[清单 64]） | 先用 status 的 unborn 状态选路 |
-| discard | tracked ⇒ `git restore --literal-pathspecs -- <paths>`；untracked ⇒ `git clean -fd --literal-pathspecs -- <paths>`（【报告】:263） | 混合列表拆两批；unmerged 路径 restore 会非零退出 → `git/git-error`，UI 文案提示先解决冲突（[清单 49]） |
+| stage | `git --literal-pathspecs add -- <paths...>`（去重保序） | untracked 路径也走 add（暂存新文件）；**`paths=[]` ⇒ `git/no-paths {op}`**（v1.3 归真——拒绝整仓副作用，**不做 `git add -A` 静默扩权**【报告】:261 原案废弃；任务口径，`mutations.ts:76-79,236`） |
+| unstage | `git --literal-pathspecs restore --staged -- <paths>`；**unborn 分支回落 `git rm --cached -- <paths>`**（[清单 64]）；极老 git（restore 缺失）回落 `git reset HEAD -- <paths>`（v1.3 补录，`mutations.ts:104-138`） | 先 fresh status 的 unborn 状态选路；不在暂存视图内的路径按 no-op 跳过（幂等重击不报错——本机实测 restore --staged 对未知路径 exit 1 "did not match"） |
+| discard | 三重守卫全过后：tracked ⇒ `git --literal-pathspecs restore --worktree -- <paths>`、untracked ⇒ `git --literal-pathspecs clean -fd -- <paths>`（混合列表拆两批，**先 restore 后 clean**——不可逆删除只在实际回退成功后发生） | **三重守卫**（v1.3 归真，`mutations.ts:140-225`）：① `acknowledged === true`（C 级确认旗标，[清单 12]）；② `baseRevision` == 最新 HEAD oid（乐观并发，unborn/null 不参与）；③ 逐路径路由（fresh status：untracked → clean / worktree 变更 → restore / 其余拒绝）。任一守卫失败 ⇒ `git/bad-request`，**零命令执行** |
 
-- 结果计数以命令实际处理为准，写后**立即触发一次内部 refresh**（§2.3 失效矩阵）。
-- 错误：`git/no-repository`、`git/git-error`。
+- **unmerged（conflicted）路径前置拒绝**（v1.3 归真——原案「restore 非零退出 → git/git-error」废弃）：守卫 ③ 把 conflicted / 仅暂存条目（Y='.'）/ 未知路径归入 `git/bad-request { reason:'not-discardable', paths }`（`mutations.ts:197,211-214`），UI 文案提示先解决冲突（[清单 49]）。
+- 结果计数以命令实际处理为准，写后失效：status 缓存作废 + R3 mutation 帧（§2.3）。
+- 错误：`git/no-paths`、`git/bad-request`（discard 守卫）、`git/no-repository`、`git/session-workspace-unresolved`、`git/timeout`、`git/git-error`。
 - 日志：info（`pathCount`）。
 
 ### 1.4 `git.commit` — 含 amend 与空提交保护 [清单 11/15/17/19/20/55/64]
@@ -473,19 +513,20 @@ async discard(paths: string[], signal?: AbortSignal): Promise<DiscardResult>
 async commit(options: CommitOptions, signal?: AbortSignal): Promise<CommitResult>
 ```
 
-前置校验（顺序执行，任一失败即抛对应码，不执行 commit）：
+前置校验（顺序执行，任一失败即抛对应码，不执行 commit；v0.1.2 实测顺序 = 仓库发现 → 身份 → 空提交 → 消息，`commit.ts:86-139`）：
 
-1. 身份检查 [清单 55]：`git config --get user.name` 与 `git config --get user.email`，任一为空 ⇒ `git/identity-missing { missing }`（Windows 新机最常见，`feature-checklist.md:79`）。
-2. 空提交保护：非 amend 时，`git diff --cached --quiet` 退出码 0（staged 为空）⇒ `git/nothing-staged`；amend 时允许空 staged（仅改写 message）。
-3. `message` 为空/全空白 ⇒ `git/empty-message`。
+0. 仓库发现（v1.3 补录）：先跑 `git rev-parse --show-toplevel`，"exit 128 + not a git repository" ⇒ `git/no-repository { probed }`（`commit.ts:89-97`——身份查询在仓外也能读到全局配置，须先钉住仓库前提）。
+1. 身份检查 [清单 55]：`git config --get user.name` 与 `git config --get user.email`（exit 1 = 键未设置、exit 0 + 空串值 = 空值，同 `identity` 查询面语义），任一缺失 ⇒ `git/identity-missing { missing }`（Windows 新机最常见，`feature-checklist.md:79`）。
+2. 空提交保护：非 amend 时，`git diff --cached --quiet` 退出码 0（staged 为空）⇒ `git/nothing-staged`；amend 时允许空 staged（仅改写 message）。unborn 仓库同命令可用（对空树隐式比较，本机实测——无需 unborn 特判，`commit.ts:113-127`）。
+3. `message` 为空/全空白 ⇒ `git/empty-message`；**但 amend + 全空白 = `--no-edit` 路（保留原消息不改写），不走该守卫**（v1.3 归真，`commit.ts:129-135`）。Conventional Commits 格式校验为非阻断 warn（[清单 17] 由 client 提示，host 不拒绝）。
 
 执行：
 
-- 命令 `git commit -F -`，message 经 **stdin** 传入（避免 `-m` 转义/换行问题，【报告】:265）；`ctx.subprocess.spawn` 的 stdin 支持未核实（§0.4-4），**回落方案：`-F <临时文件>`（`ctx.fs` 写入、进程结束后删除）**。
-- `options.amend` ⇒ 追加 `--amend`；`options.skipHooks` ⇒ 追加 `--no-verify`；否则**保留用户 hook**（写命令不套 hooksPath 禁用，`host-capability-map.md:285`；[清单 20]）。
-- hook 失败：非零退出且 stderr 含 hook 输出 ⇒ `git/git-error`（stderr 原样进 details，UI 可读展示 [清单 20/49]）；hook 超时 ⇒ `git/timeout { op:'commit' }`。
-- 成功后 `git rev-parse --verify HEAD` 取 oid，`git rev-parse --abbrev-ref HEAD` 取分支（detached ⇒ null）。
-- 写后失效：status + log + refs + show 缓存全部失效（§2.3）。
+- 命令 `git commit -F -`，message 经 **stdin** 传入（避免 `-m` 转义/换行问题，【报告】:265；runner stdin 面已实装，`commit.ts:153-159`）。`--no-edit` 路不带 `-F`（本机实测：两者同给时 stdin 空消息会覆盖 `--no-edit` 并以 "Aborting commit due to empty commit message" 中止，`commit.ts:141-151`）。
+- `options.amend` ⇒ 追加 `--amend`；`options.skipHooks` ⇒ 追加 `--no-verify`；否则**保留用户 hook**（commit 实例不套 hooksPath 禁用，`host-capability-map.md:285`；[清单 20]）。
+- hook 失败（v1.3 归真——**单列域码 `git/hook-failed`**，不再落 git-error）：非零退出且 stderr 含 hook 措辞 ⇒ `git/hook-failed`（details 与 git-error 同构 `{op, exitCode, stderr, truncated}`，stderr 脱敏后进 details，UI 可读展示 [清单 20/49]；`commit.ts:210-223`）；hook 超时 ⇒ `git/timeout { op:'commit' }`。
+- 成功后回读三件（v1.3 补录）：`git rev-parse --verify HEAD` 取 oid、`git rev-parse --abbrev-ref HEAD` 取分支（输出 'HEAD' ⇒ null）、**`git show -s --format=%B HEAD` 回读最终 message**（commit-msg hook 改写 / `--no-edit` 保留后的权威值，去尾换行进 `CommitResult.message`——不信入参；`commit.ts:164-178`）。
+- 写后失效（v1.3 归真）：status 缓存作废 + R3 mutation 帧（§2.3）——log/refs/getCommitDetail **无 host 缓存**，其失效由 client 状态订阅承担（branch.oid 变化 → reload，§1.8）。
 - 日志：info（op/ durationMs/amend；不含 message 正文）。
 
 ### 1.5 `git.push` — set-upstream 与 diverged 检测 [清单 25/26/44/67]
@@ -499,13 +540,13 @@ async push(options: PushOptions, signal?: AbortSignal): Promise<PushResult>
 
 流程（【前次】改进第 3 条的失败路径全覆盖，`:23`）：
 
-1. 解析 upstream：`git rev-parse --abbrev-ref --symbolic-full-name @{u}` 失败 ⇒ 分支无 upstream：
-   - `options.setUpstream=false` ⇒ **`git/no-upstream { branch }`**（client 据此提供"设置 upstream 并推送"入口，[清单 26]，不静默自动 set-upstream——首次推送目标属 Tier C 决策）；
-   - `options.setUpstream=true` ⇒ 确定 remote/branch：当前分支 `git branch --show-current`；remote 取 `git config --get branch.<name>.remote`，为空时：恰有一个 remote ⇒ 用之；多个 ⇒ `origin` 存在用 `origin`，否则 **`git/no-remote { remotes }`**。
-2. diverged 预检 [清单 67]：有 upstream 时 `git rev-list --left-right --count <upstream>...HEAD`（输出 `behind\tahead`，注意列序）；`ahead>0 && behind>0` ⇒ **`git/diverged { ahead, behind }`**，不执行 push（v1 不提供 force push——[清单 27] 是 v2）。client 引导 fetch/pull。
-3. 执行——**禁止裸 `git push`，一律显式 remote + 全量 refspec**：`git push <remote> refs/heads/<remoteBranch>:refs/heads/<remoteBranch>`；set-upstream 路径 `git push --set-upstream <remote> refs/heads/<branch>:refs/heads/<branch>`（ZCode :1654，SOURCES.md:33）。**本机实测（git 2.55.0.windows.2，本地 bare 远端）**：裸 `git push origin` 在 `push.default=matching` 下一次 `--dry-run` 输出**两行** ref 更新（`feature -> feature` 与 `master -> master`），即一次"推送按钮"推送全部分支；显式 refspec 只推目标分支。裸 push 属于对 Tier C 动作的静默扩权——runner 的 env 净化只 tombstone ambient `GIT_*` 环境变量，**不隔离用户 `~/.gitconfig`**。`<remote>`/`<remoteBranch>` 从已解析 upstream（形如 `origin/main`）拆分，**不**用本地分支名（防本地名 ≠ 上游名时推错目标）；set-upstream 路径的 `<branch>` 用本地分支名（此时无 upstream 可拆）。
-4. 远端拒绝：stderr 含 `[rejected]`/`non-fast-forward` ⇒ `git/push-rejected`；凭证失败关键词 ⇒ `git/auth-failed`（stderr 原样回传；GCM 弹窗风险写进 UI 提示，§1.0.7）。
-5. 日志：info（setUpstream）。
+0. detached/unborn 前置拒绝（v1.3 补录）：⇒ **`git/no-branch { state: 'detached'|'unborn' }`**（`remote-ops.ts:376-385`——`git/no-upstream` 的 hint 'set-upstream' 对该态是误导动作）。
+1. 上游三态判定（v1.3 归真——原逐命令 `git rev-parse --abbrev-ref --symbolic-full-name @{u}` 形态废弃）：由 fresh status 快照的 **porcelain v2 branch 头三态推导**（`remote-ops.ts:121-125`）——`# branch.upstream` 缺失 = **no-upstream**；存在而 `# branch.ab` 缺失 = **gone**（upstream 配置在、远端跟踪引用不在；本机实测 gone 态 `@{u}` 类解析 exit 128 ⇒ **gone 态严禁 rev-list**）；两者都在 = **normal**。分派：
+   - no-upstream / gone：`options.setUpstream=false` ⇒ **`git/no-upstream { branch, hint:'set-upstream' }`**（gone 复用同码同 hint——client 的"设置 upstream 并推送"动作即治愈路径，[清单 26]，不静默自动 set-upstream——首次推送目标属 Tier C 决策）；`setUpstream=true` ⇒ set-upstream 路：remote 取 `git config --get branch.<name>.remote`，为空时进 remote 解析链（**origin 存在即默认 → 恰一个 remote** → 零个 ⇒ `git/no-remote` / 多个 ⇒ **`git/choose-remote { remotes }`**——v1.3 归真：原「多个 ⇒ origin 存在用 origin，否则 git/no-remote」中多 remote 且无 origin 的分支改落 choose-remote，`remote-ops.ts:410-431`）。
+2. diverged 预检 [清单 67]（仅 normal 态）：`git rev-list --left-right --count <upstream>...HEAD`（输出 `behind\tahead`，注意列序）；`ahead>0 && behind>0` ⇒ **`git/diverged { branch, upstream, ahead, behind }`**，不执行 push（v1 不提供 force push——[清单 27] 是 v2）。client 引导 fetch/pull。
+3. 执行——**禁止裸 `git push`，一律显式 remote + 全量 refspec**：`git push <remote> refs/heads/<remoteBranch>:refs/heads/<remoteBranch>`；set-upstream 路径 `git push --set-upstream <remote> refs/heads/<branch>:refs/heads/<branch>`（ZCode :1654，SOURCES.md:33）。**本机实测（git 2.55.0.windows.2，本地 bare 远端）**：裸 `git push origin` 在 `push.default=matching` 下一次 `--dry-run` 输出**两行** ref 更新（`feature -> feature` 与 `master -> master`），即一次"推送按钮"推送全部分支；显式 refspec 只推目标分支。裸 push 属于对 Tier C 动作的静默扩权——runner 的 env 净化只 tombstone ambient `GIT_*` 环境变量，**不隔离用户 `~/.gitconfig`**。normal 路径的 `<remote>`/`<remoteBranch>` 取 `branch.<name>.remote` + `branch.<name>.merge`（剥 `refs/heads/` 前缀——权威配置面；**upstream 短名首段拆分仅作回落**——remote 名含 '/' 时短名拆分会错，v1.3 补录，`remote-ops.ts:195-202`），**不**用本地分支名（防本地名 ≠ 上游名时推错目标）；set-upstream 路径的两侧都用本地分支名（此时无 upstream 可拆）。ZCode 的 `remote.pushDefault` 段不在解析链（任务口径未列，`remote-ops.ts:12-13`）。
+4. 远端拒绝（v1.3 归真——脱敏后分类）：rejected 簇（`[rejected]`/`[remote rejected]`/`non-fast-forward`）⇒ `git/push-rejected`（reason 取括号体）；凭证失败簇 ⇒ `git/auth-failed`（脱敏 stderr 回传；GCM 弹窗风险写进 UI 提示，§1.0.7）；network 簇 ⇒ `git/git-error` message 带 (network) 注记（`remote-ops.ts:212-233`）。
+5. 日志：info（setUpstream/remote/branch）。
 
 ### 1.6 `git.pull` / `git.fetch` [清单 25]
 
@@ -518,8 +559,8 @@ async pull(signal?: AbortSignal): Promise<PullResult>
 async fetch(options: FetchOptions, signal?: AbortSignal): Promise<FetchResult>
 ```
 
-- **pull**：无 upstream ⇒ `git/no-upstream`；先 diverged 预检（同 §1.5-2）⇒ 分叉即 **`git/pull-diverged`**（v1 只做 ff，merge/rebase UI 是 v3，[清单 28/29] 不设计）；执行 `git pull --ff-only`；`Not possible to fast-forward` ⇒ 同样映射 `git/pull-diverged`。成功返回新旧 oid。
-- **fetch**：remote 解析 `options.remote` → upstream 的 remote → 恰一个 remote → `origin` → 否则 `git/no-remote`；执行 `git fetch --prune <remote>`；凭证失败 ⇒ `git/auth-failed`（[清单 58] 的"凭证失败可读提示"部分在 v1 由本错误路径覆盖，定时 fetch 本身是 v2）。
+- **pull**：detached/unborn ⇒ `git/no-branch`（v1.3 补录）；**脏区前置拒绝 ⇒ `git/dirty-worktree { branch, pathCount }`**（v1.3 补录，任务口径——fresh 快照非 clean 即拒，pathCount = staged/unstaged/untracked/conflicted 去重合计；ff 更新会写工作区文件，脏区下失败形态不可读——前置拒绝零副作用，`remote-ops.ts:250-261`）；无 upstream / gone ⇒ `git/no-upstream`（gone 的治愈是 fetch 重建跟踪引用，而非 pull）；先 diverged 预检（同 §1.5-2，仅 normal 态）⇒ 分叉即 **`git/pull-diverged`**（v1 只做 ff，merge/rebase UI 是 v3，[清单 28/29] 不设计）；执行 `git pull --ff-only --no-rebase`（`--no-rebase` 钉死 merge 语义：runner 不隔离用户 `~/.gitconfig` 的 `pull.rebase=true`，裸 `--ff-only` 会被 rebase 改写历史——v1.3 补录，`remote-ops.ts:291-296`）；运行期 `Not possible to fast-forward` ⇒ 重跑一次 rev-list 取真实 ahead/behind 后落同码 `git/pull-diverged`（重读失败回落 git-error 兜底，`remote-ops.ts:306-333`）。成功返回新旧 oid。
+- **fetch**（remote 解析链次序 v1.3 归真——**origin 优先于「恰一个」**）：`options.remote` 显式 → `branch.<name>.remote`（**gone 态也读**——fetch 正是重建跟踪引用的治愈操作；值为 '.' 指向本仓库内分支，对 fetch 无意义跳过）→ **`origin` 存在即默认** → 恰一个 remote → 零个 ⇒ `git/no-remote` / 多个 ⇒ **`git/choose-remote { remotes }`**（`remote-ops.ts:344-356,410-431`）；detached/unborn 合法（fetch 不依赖当前分支）。执行 `git fetch --prune <remote>`；`pruned` = stdout/stderr 含 `[deleted]` prune 行；凭证失败 ⇒ `git/auth-failed`（[清单 58] 的"凭证失败可读提示"部分在 v1 由本错误路径覆盖，定时 fetch 本身是 v2）。
 
 ### 1.7 `git.generateCommitMessage` [清单 16/17]
 
@@ -532,14 +573,16 @@ async generateCommitMessage(signal?: AbortSignal): Promise<GeneratedCommitMessag
 
 - 无 staged ⇒ `git/nothing-staged`（生成只基于 staged diff，[清单 16]/【报告】F5 `:33`）。
 - 裁剪常量沿用 ZCode（SOURCES.md:35，gitCommitMessageGenerator.ts:10-20）：最多 20 文件 / 8 个 diff / 总 12k 字符 / 单文件 2k / 消息上限 1k。v1 **不带会话上下文**（ZCode 的 12 条 4k 上下文需要会话事件面，未核实，§0.4-5；v1 已知简化）。
-- LLM 调用照 `session-title-llm` 范式（【map】§4.3，`host-capability-map.md:302`）：输入字节上限调用方自检 → `prepareCall(config, signal)` → 流式组装 → finish 解释；`purpose` 是封闭联合，一次性辅助调用省略（`host-capability-map.md:304`）。
+- LLM 调用照 `session-title-llm` 范式（【map】§4.3，`host-capability-map.md:302`）：输入字节上限调用方自检 → `prepareCall(config, signal)` → 流式组装 → finish 解释；`purpose` 是封闭联合，一次性辅助调用省略（`host-capability-map.md:304`）。v1.3 补录：自检对象 = **组装完成品 input** 的字节长，硬顶 = `Config.llmMaxInputBytes`（默认 262_144），超限 ⇒ `git/llm-failed {stage:'trim'}` **不静默二次裁剪**（`message-gen.ts:469-478`）；llm 服务缺席同码落 `{stage:'call'}`（§1.0.1 切片注）。
 - 路由解析（【报告】:83 已被 D10 纠正，`host-capability-map.md:303`）：`Config.llmProvider/llmModel` 显式优先；否则用 host 侧缓存的最近 `request/header` 路由（payload 形状 §0.4-5 核实）；都没有 ⇒ `git/llm-route-unresolved`。
 - prompt 要求输出单行 Conventional Commits；返回前用移植的 `CONVENTIONAL_COMMIT_RE`（ZCode :20）置 `conventional` 标志，**不阻断**（[清单 17] 由 client 提示）。
 - 失败：`git/llm-failed { stage }`；调用前后记可观测日志（对齐标题生成器的 request 事件惯例，【报告】:273）。
 
-### 1.8 `git.log` / `git.refs` / `git.show` — 提交图数据层 [清单 31/32/33]
+### 1.8 `git.log` / `git.refs` / `git.getCommitDetail` — 提交图数据层 [清单 31/32/33]
 
-- 权限 **A**；超时 `fastTimeoutMs`；分页 single-writer 语义在 client store 层实施（§3.3.4，GitLens graphSession 契约 SOURCES.md:106）。
+（v1.3 归真：wire 端点名 `show` → **`getCommitDetail`**——workflow 任务口径，`index.ts:619-631`；本节标题与签名同步。）
+
+- 权限 **A**；超时 `fastTimeoutMs`；**host 无缓存、幂等实跑**（v1.3 补录，`graph.ts:25,195`——§1.9 三行无失效列）；分页 single-writer 语义在 client store 层实施（§3.3.4，GitLens graphSession 契约 SOURCES.md:106）。
 
 ```ts
 @Remote()
@@ -547,30 +590,37 @@ async log(options: LogOptions, signal?: AbortSignal): Promise<LogPage>
 @Remote()
 async refs(signal?: AbortSignal): Promise<RefsSnapshot>
 @Remote()
-async show(options: ShowOptions, signal?: AbortSignal): Promise<CommitDetail>
+async getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<CommitDetail>
 ```
 
 - **log**：`git log --topo-order --pretty=format:%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%b%x1e -n <limit+1> --skip <skip>`（字段分隔 0x1f、记录分隔 0x1e，`%b` 内换行不破坏解析；命令形态对齐【前次】F7 数据层 `:51`）。`limit` 钳到 `[1, logMaxLimit]`；取 `limit+1` 条判 `hasMore`。unborn HEAD：git 退出非零且 stderr 含 `does not have any commits yet` ⇒ 返回空页（`commits:[], hasMore:false`，不抛错——[清单 64]）。refs 装饰不进 log（`refs()` 单独取，client 合并）。
-- **refs**：`git for-each-ref --format=%(objectname)%09%(*objectname)%09%(refname)%09%(refname:short) refs/heads refs/remotes refs/tags` + `git symbolic-ref --quiet --short HEAD`（opencode vcs/git.ts:260，SOURCES.md:69）。**`RefInfo.oid` 必须取 peeled 值**：`%(*objectname)` 非空（annotated tag ⇒ tag 对象而非 commit）用之，否则回落 `%(objectname)`——**本机实测（annotated `git tag -a v1`）**：`objectname`=tag 对象、`*objectname`=commit，两者不等；非 tag ref 的 `*objectname` 为空串。只取 `%(objectname)` 会让 annotated tag 永远装饰不到提交图（`GraphGraphTab` 按 `ref.oid == commit.oid` 匹配 chips，[清单 31] 失败）。symbolic-ref 失败 ⇒ detached（oid 取 `git rev-parse HEAD`）；unborn ⇒ `head.kind='unborn'`。
-- **show**：meta + `git show --no-color --numstat -z --find-renames --format=… <oid>`（numstat → `files`）；`options.path` 非空时追加该文件 patch（预算同 §1.2，[清单 33]）。binary/超大处理同 `DiffFile` 语义。
+- **refs**：`git for-each-ref --format=%(objectname)%09%(*objectname)%09%(refname)%09%(refname:short)%09%(upstream:track) refs/heads refs/remotes refs/tags`（v1.3 归真：**单次查询含第 5 字段 `%(upstream:track)`**——`REF_PRETTY_FORMAT` `graph.ts:74`；local-branch 的 upstream 跟踪态 `[gone]`/`[ahead N]`/`[behind N]` 一次取回，逐分支 rev-list 不做，进 `RefInfo.upstreamTrack`）+ symbolic-ref/rev-parse 双命令并行判 head 三态（branch/detached/unborn；`index.ts:594-599`、opencode vcs/git.ts:260，SOURCES.md:69）。**`RefInfo.oid` 必须取 peeled 值**：`%(*objectname)` 非空（annotated tag ⇒ tag 对象而非 commit）用之，否则回落 `%(objectname)`——**本机实测（annotated `git tag -a v1`）**：`objectname`=tag 对象、`*objectname`=commit，两者不等；非 tag ref 的 `*objectname` 为空串。只取 `%(objectname)` 会让 annotated tag 永远装饰不到提交图（`GraphGraphTab` 按 `ref.oid == commit.oid` 匹配 chips，[清单 31] 失败）。symbolic-ref 失败 ⇒ detached（oid 取 `git rev-parse HEAD`）；unborn ⇒ `head.kind='unborn'`。
+- **getCommitDetail**（v1.3 归真命令形态；原 `git show --numstat` 单命令形态废弃）：meta = `git log -1 --pretty=format:<LOG_PRETTY_FORMAT> <oid>`（同 log 记录格式，`graph.ts:283-320`）；文件清单/单文件 patch = DiffEngine.commitDiff（`diff.ts:317-360`）：先 `git rev-list --parents -n 1 <oid>` 判父——非根提交（含 merge）取**第一父两树** `git diff <p1> <oid> --numstat/--name-status -z --find-renames`（merge 对比第一父即避开 combined-diff 默认空输出）、根提交取 `git diff-tree --root -r … --no-commit-id`；`options.path` 非空时 patch 只取该文件（预算同 §1.2，[清单 33]）。binary/超大处理同 `DiffFile` 语义。**refs 过滤**（任务口径）：全量单次 for-each-ref 后按 peeled oid == commit.oid 过滤进 `CommitDetail.refs`（annotated tag 已在解析时落到 RefInfo.oid，直接相等匹配；`graph.ts:34-36`）。单文件 patch 失败降级 `patch:null` 不炸整体；修订无效（128 bad revision）⇒ `git/git-error`。
 
 ### 1.9 方法总表
 
+v1.3 归真：总表 13 → **16** 行（权威 = `REMOTE_METHODS`，`packages/host/src/index.ts:151`）；「写后失效」列按实现归真——host 只缓存 status（diff/getCommitDetail 无缓存实跑、log/refs 无缓存），写后失效 = status 缓存作废 + R3 帧（§2.3），log/refs/getCommitDetail 的缓存失效在 client 侧（§1.8）。
+
 | 方法 | 权限 | 超时 | 写后失效（§2.3） | 主要错误码 |
 |---|---|---|---|---|
-| status | A | fast | —（自身即真值） | no-repository |
-| diff | A | fast | — | no-repository, git-error |
-| stage | B | fast | status+diff | no-repository, git-error |
-| unstage | B | fast | status+diff | no-repository, git-error |
-| discard | C | fast | status+diff | no-repository, git-error |
-| commit | C | commit | status+diff+log+refs+show | identity-missing, nothing-staged, empty-message, timeout, git-error |
-| push | C | network | status+refs | no-upstream, no-remote, diverged, push-rejected, auth-failed, timeout |
-| pull | C | network | status+diff+log+refs+show | no-upstream, pull-diverged, auth-failed, timeout |
-| fetch | B | network | status+refs | no-remote, auth-failed, timeout |
-| generateCommitMessage | B | llm | — | nothing-staged, llm-route-unresolved, llm-failed, timeout |
-| log | A | fast | — | no-repository（unborn 返回空页不抛错） |
-| refs | A | fast | — | no-repository |
-| show | A | fast | — | no-repository, git-error |
+| ping | A | fast | — | gateway/internal（非域码路径——失败抛普通 Error 折叠，message 保留；`index.ts:262-278`） |
+| identity | A | fast | — | session-workspace-unresolved, timeout, git-error（**不抛 identity-missing**——查询面返回状态） |
+| status | A | fast | —（自身即真值；<2s TTL 缓存 + 在飞去重） | no-repository, session-workspace-unresolved, timeout, git-error |
+| diff | A | fast | —（无缓存） | no-repository, session-workspace-unresolved, timeout, git-error |
+| followStatus | A | —（流生命周期） | —（自身即真值） | 帧错误投影 no-repository / session-workspace-unresolved / git-error（**不断流**，§2.3） |
+| stage | B | fast | status 缓存作废 + R3 帧 | no-paths, no-repository, session-workspace-unresolved, timeout, git-error |
+| unstage | B | fast | status 缓存作废 + R3 帧 | no-paths, no-repository, session-workspace-unresolved, timeout, git-error |
+| discard | C | fast | status 缓存作废 + R3 帧 | no-paths, bad-request, no-repository, session-workspace-unresolved, timeout, git-error |
+| commit | C | commit | status 缓存作废 + R3 帧（log/refs/getCommitDetail 无 host 缓存） | no-repository, identity-missing, nothing-staged, empty-message, hook-failed, session-workspace-unresolved, timeout, git-error |
+| push | C | network | status 缓存作废 + R3 帧 | no-branch, no-upstream, no-remote, choose-remote, diverged, push-rejected, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
+| pull | C | network | status 缓存作废 + R3 帧 | no-branch, dirty-worktree, no-upstream, pull-diverged, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
+| fetch | B | network | status 缓存作废 + R3 帧 | no-remote, choose-remote, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
+| generateCommitMessage | B | llm | — | nothing-staged, no-repository, session-workspace-unresolved, llm-route-unresolved, llm-failed, timeout, git-error |
+| log | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error（unborn 返回空页不抛错） |
+| refs | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error |
+| getCommitDetail | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error（单文件 patch 失败降级 patch:null 不炸整体） |
+
+> v1.3 补录三行的形态注记：`ping` = `git --version` 存活探测（cwd 取临时目录根，避开宿主进程 cwd 偶然性；`index.ts:262-278`）；`identity` = user.name/email 作用域查询（`scope?: 'merged'|'local'|'global'|'system'`，缺省合并视图；exit 1 = 缺失 → null；`index.ts:291-333`）；`followStatus` = **stream 模式**（`@Remote({mode:'stream'})`，返回类型直接写 `RemoteStream<GitStatusFrame, GitFollowCommand>`、**不可 Promise 包装**——生成器 analyzer 只解 Iterable/AsyncIterable/RemoteStream 三种直接返回，本机 build 实测；上行 `refresh` 命令 = R5 manual；`index.ts:665-690`），帧契约 R1–R6 见 §2.3。
 
 ---
 
@@ -595,15 +645,30 @@ async show(options: ShowOptions, signal?: AbortSignal): Promise<CommitDetail>
 | 定时兜底 | `pollIntervalMs`（默认 60s）轮询重算 | ZCode useGitAutoRefresh 60s（SOURCES.md:40） |
 | 生命周期 | watcher 与定时器挂宿主 ctx，`ctx.effect` 清理（`host-capability-map.md:187`） | 【map】§4.2 |
 
-**client 侧**（host 快照不推送，所以轮询是 transport；【map】§2.5 结论 `host-capability-map.md:181-182`）：
+**followStatus 流帧契约（R1–R6，v1.3 回填；权威 = `packages/host/src/watcher.ts:33-46` 与 `index.ts:665-690`）**——「host 推送」的 v1 承载是 `followStatus` 流方法（typert stream 模式；事件转发 allowlist 无 `git/*` 依旧成立，§2.1）：client 打开一条逻辑流，host 按以下规则推 `GitStatusFrame`（`status` 帧 / `error` 帧——**错误以帧通告不断流**，仓库后续就绪照常推 status 帧；`GitFrameError` 只带 wire 面 code+message，完整 details 走 `git status` 的 RemoteError；流帧类型见 §1.0.3，types.ts:289-320）：
+
+| 帧 | 触发 | 规则 |
+|---|---|---|
+| R1 initial | 订阅建立 | 无条件推当前快照/错误帧（不经 R2 门），并充当 R2 首个基线（`watcher.ts:345-352`） |
+| R2 change | watch 防抖触发 | 重算后与上一帧**内容签名**比对（剔除 `generatedAt` 的全量结构比对——`frameSignature` 字段面 = repoRoot + branch + 四组路径数组 + clean，`watcher.ts:100-115`），未变化不推 |
+| R3 mutation | 本插件写操作完成 | 写 RPC 尾部 `afterWrite()` → `notifyMutation()` → 重算推帧（reason='mutation'，同样受 R2 约束——净效果为零的写不产生帧；`index.ts:639-642`、`watcher.ts:242-248`） |
+| R4 poll | `pollIntervalMs` 定时兜底 | 定时重算推帧（reason='poll'；**嵌套目录内文件编辑只能靠它捕获**——宿主 watch depth:0 不递归） |
+| R5 manual | client 上行 `{type:'refresh'}` | 重算并**无条件**推帧（reason='manual'——唯一旁路 R2 的原因，客户端失步重同步用；上行经流 uplink 单消费者面，未知 type 忽略前向兼容；`watcher.ts:237-240`、`index.ts:672-690`） |
+| R6（降级模式，非帧） | fs watch 不可用 | 能力缺失 / watch 拒绝 / 抛错 / 回调报错 ⇒ 仅 warn 一次 → 关全部 watch 转纯轮询（后续失效回调被忽略，不再产生 'change' 帧——只剩 R4）；`watchEnabled=false` 是显式意图，info 级日志不算 R6 故障（`watcher.ts:308-316,432-479,490-499`） |
+
+同防抖窗内多触发合并为一次重算时取最强原因落帧（优先序 mutation > manual > change > poll，`watcher.ts:97-98`）。订阅引用计数：0→1 启动（轮询定时器 + 首个 ready 帧解析出 repoRoot 后开三目标 watch），1→0 全关（`watcher.ts:265-335`）。
+
+**client 侧消费契约**（`packages/client-ui/src/client/store/git-status-source.ts`）——代际丢帧（`reset()`/`dispose()` 递增代际并 dispose 旧句柄，旧流迟到帧一律丢弃，绝不覆盖新代际状态）、revision 去重（**内容签名与上一接受帧相同的帧被丢弃**：不写 store、不 bump revision、不触发渲染——R5 无条件帧与 R1 重放由此幂等；错误帧落 `statusError` + `repo.available` 投影，`git/no-repository`/`git/session-workspace-unresolved` ⇒ 不可用，流不断开）、R5 = `refresh()` 走上行 `{type:'refresh'}`（流未开退化为重开流）、connection/reset = 全清（回到 checking）+ 立即重订（`git-status-source.ts:9-25,99-126,168-203`）。**client 去重签名粒度必须 ≥ host 帧签名粒度**（client 粗于 host 会把 host 判「有变化」的帧误判重复丢弃 ⇒ 渲染滞后——P1 丢帧修复的教训，见修订记录 v1.3 首段）：两侧现为**同粒度**——同为剔除 `generatedAt` 的全量内容签名（client `snapshotSignature` `git-status-source.ts:77-87` ≡ host `frameSignature` 的 snapshot 半 `watcher.ts:100-115`）。
+
+**client 侧传输归真**（v1.3——transport = 常开 followStatus 流，**client 不再自设 3s/30s 轮询**，兜底轮询在 host 侧 R4；实现 = `git-status-source.ts:90-166`）：
 
 | 触发 | 动作 |
 |---|---|
-| 周期轮询 | 前台每 3s、页面隐藏每 30s 调 `git.status()`（常量在 client 包；header 角标"秒级"目标【前次】:36 的量级） |
-| 任一 Tier B/C RPC 成功返回 | 立即重拉 status + 按 §1.9 失效列清缓存 |
-| `ctx.on('connection/reset')` | 全缓存清空 + 立即重拉（`host-capability-map.md:182`） |
-| 窗口聚焦 | 立即重拉 status |
-| 快照比对 | 新旧快照按 `branch.oid + 分组计数 + generatedAt` 做廉价对比，未变化不触发渲染 |
+| apply 挂载完成（remote.git 命名空间就绪后） | 打开首代流（`start()`；流正常收尾保持既有状态，等 reset/refresh 重开） |
+| 任一 Tier B/C RPC 成功返回 | 状态源 `refresh()`（上行 R5 manual——host 重算无条件推帧；先本地乐观失效 diff 缓存不等网络，`git-changes-store.ts:172-180`）+ 按 §1.9 失效列清 client 缓存（log/refs/getCommitDetail 的失效 = 状态订阅 branch.oid 变化 → reload，§1.8） |
+| `ctx.on('connection/reset')` | 全缓存清空（回到 checking）+ 立即重开流（新代际；旧代际帧全部丢弃；`index.ts:88-92`） |
+| 窗口聚焦 | `refresh()`（R5 manual）——**v0.1.2 未实装聚焦监听**（原案行，保留为设计意图；实测无 focus/visibilitychange 监听） |
+| 帧去重（revision 丢帧） | 见上方 client 侧消费契约——内容签名相同不写不计数；粒度必须 ≥ host（同上） |
 
 ### 2.4 未来事件迁移预案（不做实现）
 

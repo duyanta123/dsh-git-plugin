@@ -25,7 +25,7 @@ Run from the repository root. The README's `pnpm --dir dsh-git-plugin …` form 
 pnpm install                 # workspace install
 pnpm run typecheck           # build:host (typert generation) then tsc for root/host/client
 pnpm run build               # host bundle + typert artifacts + client bundle + git-bundle checks
-pnpm test                    # vitest run (29 spec files; case count: backfill from an actual run)
+pnpm test                    # vitest run (30 spec files; case count: unknown, not captured from a run)
 pnpm exec vitest run packages/host/tests/status.spec.ts   # one file
 pnpm exec vitest run -t "substring of test name"          # one test by name
 pnpm run check:locale        # zh/en key+placeholder parity and no bare JSX strings
@@ -102,7 +102,7 @@ The client bundle is not built by tsdown. `scripts/build-client.mjs` uses rolldo
 
 ## Tests and verification
 
-- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 29 files total (13 host, 14 client, 2 root compliance guards); the case count is backfilled from an actual run (earlier docs recorded two disagreeing figures — assert neither until a run fixes it). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
+- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 30 files total (13 host, 15 client, 2 root compliance guards); the case count is unknown — not captured from a run (earlier docs recorded two disagreeing figures — assert neither). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
 - Host tests create real temporary git repositories and assert the world by re-reading it (`packages/host/tests/support.ts` provides `scratchRepo`, `git`, a real-spawn `SubprocessFace`, and a chokidar-backed fs face). Client tests use fake RPC faces and view-model assertions.
 - `verify:load` covers the deep path (both packages installed, real host, RPC round-trips for status/commit/graph/AI negative path). `verify:install` is the release gate and runs **two phases**: `working-copy` (fresh `DSH_HOME`/profile → single `file:` git-bundle install → dump-config two id lines → web boot → `git/status` ready → served HTML contains both packages) and `clean-clone` (`git clone` of this repo at committed HEAD → `pnpm install --frozen-lockfile` + `pnpm run build` inside the clone → the same assertion chain; `DSH_VERIFY_INSTALL_SKIP_CLONE=1` skips it, which CI sets explicitly — the clean-clone phase stays a local release-gate concern). Both scripts take their column from `scripts/verify-target.mjs`: default = dev-tree column (CLI source entry from `DSH_TREE`, strict assertions), `DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm column (npm view probe + temp-prefix install, relaxed assertions with WARN), `DSH_BIN=<pkgRoot>/lib/bin.js` = prebuilt-binary column (setting both → exit 1); exit codes 0=pass / 1=fail / 2=skip (npm column: missing npm-cli.js or failed view/install without `DSH_VERIFY_ALLOW_SKIP=1`; with ALLOW the run exits 0 but the RESULT line reads `outcome=SKIPPED-ALLOWED` — a skip is never recorded as a pass). Both create a temporary `DSH_HOME`, kill host process trees, and clean up.
 
@@ -124,9 +124,9 @@ packages/host/src/        index.ts (service, @Remote, Config, REMOTE_METHODS)
 packages/host/tests/      support.ts + 13 specs
 packages/client-ui/src/client/  index.ts (apply), remote/mount.ts, locales.ts, ui-model.ts,
                           store/*, components/*, graph/*, diff/*, m13/*
-packages/client-ui/tests/ 14 specs
+packages/client-ui/tests/ 15 specs
 scripts/                  build-client.mjs (bundle + git-bundle check) check-locale.mjs
-                          verify-load.mjs verify-install.mjs
+                          verify-load.mjs verify-install.mjs verify-target.mjs verify-release-tarball.mjs
 tests/                    skeleton.spec.ts licenses.spec.ts
 docs/                     capability-spec.md feature-checklist.md host-capability-map.md
                           ported-sources/SOURCES.md

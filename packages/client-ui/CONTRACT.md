@@ -1,7 +1,7 @@
 # dsh-gitkit-ui — `dsh.client` 契约字段对照 map（+ 目标清单样例包）
 
 > 骨架阶段产出。权威来源：`docs/capability-spec.md` §⑦（下称【spec §⑦】）与
-> `docs/notes/real-host-install-startup-test.md`（下称【runbook】）。凡标「runbook §x」
+> 外层工作区 `research/notes/real-host-install-startup-test.md`（未入库，仅本机；下称【runbook】）。凡标「runbook §x」
 > 或「manifest.ts:y」者为该 runbook 实读 dsh 源码的转引；【spec §⑦】内再转引
 > host-capability-map.md 的行号以「spec 转引」标注。
 > 现行 `package.json` 是骨架最小可安装形态；本文件 §4 是「最小插件」阶段的**目标样例清单**

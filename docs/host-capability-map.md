@@ -1,7 +1,7 @@
 # dsh 宿主能力地图（dsh-git 插件施工版）
 
 > 收敛自六路读者笔记 + 调研报告，2026-10-29。用途：后续施工（建包 / RPC / UI / 基础设施 / 调试 / 移植）只看这一份即可定位机制与证据。
-> 来源材料：`docs/notes/plugin-form.md`（下称【形态】）、`docs/notes/rpc-services.md`（【RPC】）、`docs/notes/ui-slots.md`（【UI】）、`docs/notes/infra.md`（【基建】）、`docs/notes/real-host-install-startup-test.md`（【宿主调试】）、`docs/ported-sources/SOURCES.md`（【移植源】）、调研报告 `docs/dsh-git-plugin-research-report.md`（【报告】）。
+> 来源材料（除【移植源】外均在**外层工作区 `research/`** 下，未入库、仅本机）：`research/notes/plugin-form.md`（下称【形态】）、`research/notes/rpc-services.md`（【RPC】）、`research/notes/ui-slots.md`（【UI】）、`research/notes/infra.md`（【基建】）、`research/notes/real-host-install-startup-test.md`（【宿主调试】）、`docs/ported-sources/SOURCES.md`（【移植源】）、调研报告 `research/dsh-git-plugin-research-report.md`（【报告】）。
 
 **版本口径**（重要，影响所有行号引用）：
 

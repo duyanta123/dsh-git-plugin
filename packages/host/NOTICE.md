@@ -4,8 +4,10 @@
 > spec §5.1；本文件是仓库内随施工维护的工作副本。
 > 工作流通用约定提到的 PORTING.md 自 ⑤ status 引擎模块（2026-10-31）起建立于本目录
 > （A/B/C 级定义与本模块登记行）；历史登记仍以本文件 §2 为准，两表互为镜像索引。
-> **当前状态（v0.1.0 发布定稿，2026-11-01）**：v1 全部模块（④-A–④-L）落地并过门禁；
-> 新增 `git-bundle/`（`dsh-gitkit-bundle` 单一 file: 安装薄包，见 §7）；
+> **当前状态（v0.1.2 / V2 前置口径，2026-11-07）**：v1 全部模块（④-A–④-L）落地并过门禁，代码定稿 0.1.2
+> （四 manifest 同版）——尚未打 tag / 未发 npm，**发布随 V2 首版一并打出**；2026-11-07 前置修复批已落
+> （P1 client 丢帧修复等，见 `docs/capability-spec.md` 修订记录 v1.2/v1.3）。
+> 此前状态（v0.1.0 发布定稿，2026-11-01）：新增 `git-bundle/`（`dsh-gitkit-bundle` 单一 file: 安装薄包，见 §7）；
 > 本项目许可自 MIT 改定为 Apache-2.0（发布 ask 决议，见 §4 与 THIRD_PARTY_NOTICES.md §1）。
 > 此前状态（F7 提交图全链模块后）：host `graph.ts`（log/refs/getCommitDetail，ZCode A 级 + GitLens C 级对照）与 client `graph/lane-layout.ts`（自研 G1–G5）+ `graph/graph-svg.tsx` + `graph-view-model.ts` + `store/git-graph-store.ts`/`graph-tab-store.ts` + `components/git-graph-tab.tsx`/`commit-detail-panel.tsx` 已落地；此前状态（F 变更面板模块后）：git-runner（四实例扩展）/ status-parser（v2 终态 +
 > v1 回退 + numstat）/ status（编排引擎）/ diff（diff 引擎）/ watcher（三目标 watch + 防抖 +
