@@ -54,6 +54,22 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     ]) {
       expect(keys.has(key), `缺 ${key}`).toBe(true)
     }
+    // V2 批次一管理面新码的 error.* 行（plan §3.4）+ 管理面对话框/菜单键组到齐。
+    for (const key of [
+      'error.branch-not-found', 'error.branch-not-merged', 'error.branch-exists',
+      'error.tag-exists', 'error.tag-not-found', 'error.worktree-failed',
+      'menu.push', 'menu.pull', 'menu.fetch', 'menu.branches', 'menu.branchCreate',
+      'menu.tagCreate', 'menu.worktree', 'menu.branchDelete',
+    ]) {
+      expect(keys.has(key), `缺 ${key}`).toBe(true)
+    }
+  })
+
+  it('V2 批次一清理：死键不复存在（P3-4/5 双删 + sync 占位键随转真移除）', () => {
+    const keys = new Set(Object.keys(gitZh))
+    for (const key of ['graph.head', 'changes.oversized', 'menu.sync', 'menu.placeholderHint']) {
+      expect(keys.has(key), `死键 ${key} 应已删除`).toBe(false)
+    }
   })
 
   it('词典值均为非空字符串（无占位对象/空文案）', () => {

@@ -53,6 +53,7 @@
 | `packages/host/src/sync.ts`（命令选择） | opencode `git.ts` / `vcs/git.ts` | `b6c43a52` | MIT | 语义学习，不整文件移植；逐段搬运时升级登记 | 计划中 |
 | `packages/host/src/commit.ts`（语义） | aider `repo.py` | `5dc9490b` | Apache-2.0 | 只学语义，Python 不移植 | 计划中 |
 | lane 布局算法 | pvigier 博客（教材） | 网页 | 文章可自由学习 | 自研实现（spec §5.5 声明行——PORTING.md F7 C 级：temporal 修复路径 + 活跃 lane 表 + 最小空闲位；gitamine/mhutchie 零代码） | 已实现（F7——`client-ui/src/client/graph/lane-layout.ts`） |
+| `packages/host/src/refs-admin.ts` | zai-org/ZCode `packages/services/src/git/repo/gitCliRepo.ts`（分支/标签管理命令的编排骨架语义：存在性预检 → 执行变更 → 写后失效） | `3c5b2276` | Apache-2.0 | **语义学习，零代码搬运**（C 级，PORTING.md「v2 批次一」行的镜像；文件头已注明）：与 ZCode 的关键差异 = 命令一律带 `--` 分隔符（选项注入防线）、存在性预检走 `rev-parse --verify --quiet` 并域码化（branch-exists / tag-exists / branch-not-found / tag-not-found，非 stderr 特征）、force 类动作（push `--force` / `-D` 删分支 / tag `-f` / worktree `--force`）双闸 = acknowledged 守卫最前、零命令执行、`git switch` 位置参数无 `--` 保护故 checkout 拆 `git branch --` + `git switch --` 两命令（非 `switch -C`）；`git remote -v` 行解析与 `git worktree list --porcelain` 块解析全自研（git 文档 + 本机 git 2.55.0.windows.2 实测，无任何来源代码搬运） | 已登记（v2 批次一 refs-admin 引擎，2026-11-08；PORTING.md C 级） |
 
 来源许可与版本细节以 `docs/ported-sources/SOURCES.md` 为准。
 

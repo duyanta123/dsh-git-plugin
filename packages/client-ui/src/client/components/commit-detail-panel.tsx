@@ -19,12 +19,14 @@
  * 语义见 git-graph-store 的 showCommit/reloadLog 注记）。
  */
 
+import { useState } from 'react'
+import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { errorNoticeView } from '../error-map.js'
 import type { ErrorAction } from '../error-map.js'
 import type { CommitDetailState } from '../store/git-graph-store.js'
-import type { DetailRow, DetailViewModel } from '../graph-view-model.js'
+import type { DetailRow, DetailRefChip, DetailViewModel } from '../graph-view-model.js'
 import { FileDiffView } from './FileDiffView.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 
@@ -47,11 +49,15 @@ export interface CommitDetailPanelProps {
   onFileClick(path: string): void
   /** 关闭面板（tab 侧 select(null)）。 */
   onClose(): void
+  /** tag chip 菜单：删除标签（V2 批次一 [30]；tab 侧确认后 tagDelete）。 */
+  onTagDelete(name: string): void
+  /** tag chip 菜单：在该提交打标签（tab 侧拉起 GitTagCreateDialog）。 */
+  onTagCreate(oid: string): void
 }
 
 /** 提交详情面板（提交图 tab 的选中态下半区）。 */
 export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
-  const { oid, state, view, t, onRetry, onFileClick, onClose } = props
+  const { oid, state, view, t, onRetry, onFileClick, onClose, onTagDelete, onTagCreate } = props
   // 详情错误槽的动作面（评审第 1 轮）：面板只服务 retry——仅当错误码的映射动作
   // **全为** retry（现状即 gateway/service-unavailable）时才把 onAction 交给
   // notice，动作行才渲染；携带 set-upstream/fetch/pull 的码（git/no-upstream、
@@ -77,13 +83,17 @@ export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
         {view.refs.length > 0 && (
           <p className='dsh-git-graph-detail__refs' data-git-graph-detail-refs=''>
             {view.refs.map((ref, index) => (
-              <span
-                key={`${ref}-${index}`}
-                className={ref.head ? 'dsh-git-graph-detail__ref dsh-git-graph-detail__ref--head' : 'dsh-git-graph-detail__ref'}
-                data-git-graph-detail-ref={ref.label}
-              >
-                {ref.label}
-              </span>
+              ref.tag
+                ? <TagChip key={`${ref.label}-${index}`} chip={ref} t={t} onTagDelete={onTagDelete} onTagCreate={() => { onTagCreate(oid) }} />
+                : (
+                    <span
+                      key={`${ref.label}-${index}`}
+                      className={ref.head ? 'dsh-git-graph-detail__ref dsh-git-graph-detail__ref--head' : 'dsh-git-graph-detail__ref'}
+                      data-git-graph-detail-ref={ref.label}
+                    >
+                      {ref.label}
+                    </span>
+                  )
             ))}
           </p>
         )}
@@ -185,5 +195,50 @@ function DetailFileRow(props: {
         <p className='dsh-git-graph-detail__note'>{t('changes.loadFailed')}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * tag chip（V2 批次一 [30]）：chip 本体 + 原语 Menu 浮层（删 tag / 从该提交打 tag
+ * ——plan §3.6）。挂详情面板的 refs 区（非虚拟化区）；log 行 refs chips 是行
+ * `<button>` 的内联 span，嵌套可交互菜单会产出 button-in-button 的非法 DOM 与
+ * 键盘走焦点环破坏——不挂（落点差异记 ModuleResult.openIssues）。
+ */
+function TagChip(props: {
+  chip: DetailRefChip
+  t: CommitDetailPanelProps['t']
+  onTagDelete(name: string): void
+  onTagCreate(): void
+}): ReactNode {
+  const { chip, t, onTagDelete, onTagCreate } = props
+  const [open, setOpen] = useState(false)
+  return (
+    <Menu
+      open={open}
+      anchor={
+        <button
+          type='button'
+          className='dsh-git-graph-detail__ref dsh-git-graph-detail__ref--tag'
+          data-git-graph-detail-ref={chip.label}
+          data-git-graph-detail-tag=''
+          aria-haspopup='menu'
+          aria-expanded={open}
+          onClick={() => { setOpen((value) => !value) }}
+        >
+          {chip.label}
+        </button>
+      }
+      portal
+      items={[
+        { id: 'tag-delete', label: t('tag.menuDelete') },
+        { id: 'tag-create', label: t('tag.menuCreateHere') },
+      ]}
+      onSelect={(id) => {
+        setOpen(false)
+        if (id === 'tag-delete') onTagDelete(chip.label)
+        else onTagCreate()
+      }}
+      onClose={() => { setOpen(false) }}
+    />
   )
 }

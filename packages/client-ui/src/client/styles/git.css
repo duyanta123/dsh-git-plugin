@@ -1041,3 +1041,307 @@
   --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
   --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
 }
+
+/* ══ V2 批次一管理面（分支/标签/worktree/推送对话框 + tag chip 菜单 + admin 错误面）
+ *    颜色纪律同全文件：只引宿主 --dsw-alias-* token，零色值字面量（tests/
+ *    css-token-guard.spec 守卫）══ */
+
+/* ── C1 header 按钮的 admin 错误面（菜单直跑动作失败后的浮动卡）── */
+.dsh-git-header-button {
+  /* 浮动错误卡的定位锚（既有规则追加——不影响 inline-flex 布局）。 */
+  position: relative;
+}
+
+.dsh-git-header-button__notice {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 320px;
+  max-width: 80vw;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px;
+}
+
+.dsh-git-header-button__notice-close {
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-header-button__notice-close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── 推送对话框（remote picker + force 勾选）── */
+.dsh-git-push-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-push-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-push-dialog__field-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-push-dialog__picker {
+  justify-content: flex-start;
+  text-align: left;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-push-dialog__picker:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-push-dialog__branch {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-push-dialog__note {
+  margin: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 6px 10px;
+}
+
+.dsh-git-push-dialog__force {
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+/* ── 新建分支 / 打标签对话框（表单骨架同构）── */
+.dsh-git-branch-create,
+.dsh-git-tag-create {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-branch-create__label,
+.dsh-git-tag-create__label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-branch-create__hint,
+.dsh-git-tag-create__hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-tag-create__target {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+/* ── worktree 管理对话框（列表区 + 新建区）── */
+.dsh-git-worktree-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-worktree-dialog__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dsh-git-worktree-dialog__empty {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-worktree-dialog__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--dsw-radius-sm);
+  padding: 3px 6px;
+}
+
+.dsh-git-worktree-dialog__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-worktree-dialog__row-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-worktree-dialog__row-branch {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  white-space: nowrap;
+}
+
+.dsh-git-worktree-dialog__row-remove {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-worktree-dialog__row-remove:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-worktree-dialog__row-remove:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-worktree-dialog__add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  padding-top: 10px;
+}
+
+.dsh-git-worktree-dialog__add-title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-xs-13-font-size);
+}
+
+.dsh-git-worktree-dialog__label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-worktree-dialog__hint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-worktree-dialog__modes {
+  display: flex;
+  gap: 4px;
+}
+
+.dsh-git-worktree-dialog__mode {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 3px 10px;
+}
+
+.dsh-git-worktree-dialog__mode[aria-pressed='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-worktree-dialog__picker-row {
+  display: flex;
+}
+
+.dsh-git-worktree-dialog__picker {
+  justify-content: flex-start;
+  text-align: left;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-worktree-dialog__picker:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-worktree-dialog__add-confirm {
+  align-self: flex-start;
+}
+
+/* ── 提交图详情面板：tag chip（原语 Menu 锚 = 按钮形态的 chip）── */
+.dsh-git-graph-detail__ref--tag {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dsh-git-graph-detail__ref--tag:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-graph__notice-dismiss {
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-graph__notice-dismiss:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}

@@ -112,7 +112,7 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
     expect(graph).toContain("aria-keyshortcuts='Enter'")
   })
 
-  it('菜单桩行已加载：仓库可用时 提交…/提交并推送… 可点、同步仍为占位', () => {
+  it('菜单行已加载：仓库可用时 v1 四动作可点、sync 占位已拆为推送/拉取/获取三真行 + 管理面扩行（V2 批次一）', () => {
     const state: GitStatusSourceState = {
       repo: { available: true, root: 'D:/repo', checking: false },
       status: {
@@ -126,13 +126,20 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
       streaming: true,
     }
     const items = headerMenuItems(headerViewModel(state))
-    expect(Object.fromEntries(items.map((item) => [item.id, { enabled: item.enabled, placeholder: item.placeholder }])))
+    expect(Object.fromEntries(items.map((item) => [item.id, { enabled: item.enabled }])))
       .toEqual({
-        'open-changes': { enabled: true, placeholder: false },
-        'open-graph': { enabled: true, placeholder: false },
-        'commit': { enabled: true, placeholder: false },
-        'commit-push': { enabled: true, placeholder: false },
-        'sync': { enabled: false, placeholder: true },
+        'open-changes': { enabled: true },
+        'open-graph': { enabled: true },
+        'commit': { enabled: true },
+        'commit-push': { enabled: true },
+        'push': { enabled: true },
+        'pull': { enabled: true },
+        'fetch': { enabled: true },
+        'branches': { enabled: true },
+        'branch-create': { enabled: true },
+        'tag-create': { enabled: true },
+        'worktree': { enabled: true },
+        'branch-delete': { enabled: true },
       })
   })
 })

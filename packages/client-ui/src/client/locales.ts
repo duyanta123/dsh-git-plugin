@@ -31,15 +31,23 @@ export const gitZh = {
   'header.unborn': '空仓库（尚无提交）',
   'header.noRepo': '不是 git 仓库',
   'header.badge': '{count} 处变更',
-  // ── menu：C1 菜单动作（打开变更面板 / 提交图 / 提交… / 提交并推送… / 同步占位）──
-  // ④-K 提交对话框模块：commit / commitPush 两动作接通对话框拉起（spec §3.1 [清单 48]
-  // 的前四项；推送/拉取/获取仍并入 sync 占位——写 UI 动作随同步模块接线，openIssues）。
+  // ── menu：C1 菜单动作（打开变更面板 / 提交图 / 提交… / 提交并推送… / 推送·拉取·获取
+  //    / 分支子菜单·新建分支·打标签·Worktree·删除分支——V2 批次一扩行）──
+  // ④-K 提交对话框模块：commit / commitPush 接通对话框拉起（spec §3.1 [清单 48]）。
+  // V2 批次一：v1 的 sync 占位行拆为 push/pull/fetch 三真行（plan §3.6），管理面
+  // 扩行（分支子菜单/新建分支/打标签/Worktree/删除分支）随之落词典。
   'menu.openChanges': '打开变更面板',
   'menu.graph': '提交图',
   'menu.commit': '提交…',
   'menu.commitPush': '提交并推送…',
-  'menu.sync': '同步',
-  'menu.placeholderHint': '该动作将在后续版本提供',
+  'menu.push': '推送',
+  'menu.pull': '拉取',
+  'menu.fetch': '获取',
+  'menu.branches': '分支',
+  'menu.branchCreate': '新建分支…',
+  'menu.tagCreate': '打标签…',
+  'menu.worktree': 'Worktree…',
+  'menu.branchDelete': '删除分支…',
   // ── problems：菜单头部的仓库摘要行（冲突计数 / 干净态） ──
   'problems.conflicted': '{count} 个冲突文件',
   'problems.clean': '工作区干净',
@@ -49,15 +57,16 @@ export const gitZh = {
   'tab.changes.title': 'Git 变更',
   'tab.graph.title': '提交图',
   // ── graph：GitGraphTab —— spec §4 graph 键组 + 详情面板（F7 提交图模块补齐） ──
+  // P3-4（v2 plan §10）：死键 'graph.head' 双删——无 t('graph.head') 调用；detached
+  // 判别值在消费方以字面量 'HEAD' 表达（graph-view-model rowRefChips 同注释）。
   'graph.loadMore': '加载更多提交…',
   'graph.noCommits': '没有提交。',
-  // 值保持 'HEAD'：git 保留名不作翻译，同时是 rowRefChips/detailViewModel 的
-  // detached 判别值（headLabel === 'HEAD' ⇒ detached）。
-  'graph.head': 'HEAD',
   'graph.loading': '加载中…',
   'graph.detail.files': '变更文件（{count}）',
   'graph.detail.totalTruncated': '变更文件清单超过预算，仅显示部分。',
   // ── changes：C2 GitChangesTab —— spec §4 changes 键组（种子全集）+ 组装所需动作/提示 ──
+  // P3-5（v2 plan §10）：死键 'changes.oversized' 双删——实际占位走 'diff.oversized'
+  // （FileDiffView.tsx 的占位形态）。
   'changes.staged': '已暂存',
   'changes.unstaged': '更改',
   'changes.untracked': '未跟踪',
@@ -65,7 +74,6 @@ export const gitZh = {
   'changes.empty': '工作区干净，没有变更。',
   'changes.emptyRepo': '空仓库：还没有任何提交。先暂存文件，完成首次提交。',
   'changes.binary': '二进制',
-  'changes.oversized': '差异超过大小上限，未加载。',
   'changes.truncated': '差异内容超过单文件上限，被截断。',
   'changes.loadFailed': '差异加载失败（超出本次预算或命令失败）。',
   'changes.stage': '暂存',
@@ -90,6 +98,48 @@ export const gitZh = {
   'confirm.push.diverged': '远程已包含本地没有的提交（落后 {behind}），推送前需要先合并远程改动。',
   'confirm.setUpstreamTitle': '设置 upstream 并推送',
   'confirm.setUpstreamMessage': '当前分支尚未建立 upstream。确认后将执行推送并建立跟踪（push --set-upstream）。',
+  // ── admin：V2 批次一管理面对话框（分支/标签/worktree/推送，plan §3.6）──
+  'branch.detached': 'HEAD 分离（{oid}）',
+  'branch.create.title': '新建分支',
+  'branch.create.nameLabel': '分支名',
+  'branch.create.startLabel': '起点（可选，缺省当前 HEAD）',
+  'branch.create.checkout': '创建后切换',
+  'branch.create.nameRequired': '分支名不能为空。',
+  'branch.delete.title': '删除分支',
+  'branch.delete.message': '将删除分支 {name}。未合并的提交会被 git 拒绝。',
+  'tag.create.title': '打标签',
+  'tag.create.nameLabel': '标签名',
+  'tag.create.messageLabel': '标注消息（可选，填写即创建 annotated tag）',
+  'tag.create.targetLabel': '目标提交',
+  'tag.create.nameRequired': '标签名不能为空。',
+  'tag.menuDelete': '删除标签…',
+  'tag.menuCreateHere': '在此提交打标签…',
+  'tag.delete.title': '删除标签',
+  'tag.delete.message': '将删除标签 {name}。',
+  'worktree.title': 'Worktree 管理',
+  'worktree.empty': '没有附加的 worktree。',
+  'worktree.detached': '（HEAD 分离）',
+  'worktree.bare': '（bare）',
+  'worktree.locked': '（锁定）',
+  'worktree.remove': '移除',
+  'worktree.removeTitle': '移除 worktree',
+  'worktree.removeMessage': '将移除 {path}。',
+  'worktree.removeForceMessage': '该 worktree 可能存在未提交的变更，强制移除无法撤销。',
+  'worktree.removeForce': '强制移除',
+  'worktree.addTitle': '新建 worktree',
+  'worktree.pathLabel': '路径',
+  'worktree.existingBranch': '现有分支',
+  'worktree.newBranch': '新建分支',
+  'worktree.branchLabel': '分支名',
+  'worktree.add': '创建',
+  'worktree.pathRequired': '路径不能为空。',
+  'worktree.branchRequired': '分支名不能为空。',
+  'push.title': '推送',
+  'push.remoteLabel': '远端',
+  'push.setUpstreamMissing': '当前分支尚未建立 upstream，将随推送建立跟踪。',
+  'push.force': '强制推送（覆盖远端）',
+  'push.forceMessage': '强制推送将用本地分支覆盖远端分支，远端独有的提交会丢失且无法恢复。',
+  'push.forceConfirmTitle': '确认强制推送',
   // ── commit：C4 GitCommitDialog —— spec §4 commit dialog 键组（种子全集，值随
   //    host locale/*.json 包资产同文案）+ ④-K 组件所需的动作/确认/计数扩充键 ──
   'commit.title': '提交',
@@ -134,6 +184,14 @@ export const gitZh = {
   'error.no-branch': '当前不在任何分支上（HEAD 分离或空仓库），无法执行该操作。',
   'error.dirty-worktree': '工作区有未提交的变更（{branch}），请先提交或暂存后再拉取。',
   'error.choose-remote': '存在多个远端且没有默认远端：{remotes}。请先指定要使用的 remote。',
+  // V2 批次一管理面新码（plan §3.4；bad-request 的 reason 联合扩值复用既有
+  // 'error.bad-request' 文案插值，不新增键）。
+  'error.branch-not-found': '分支 {name} 不存在。',
+  'error.branch-not-merged': '分支 {name} 存在未合并的提交，删除被拒绝。',
+  'error.branch-exists': '分支 {name} 已存在。',
+  'error.tag-exists': '标签 {name} 已存在。',
+  'error.tag-not-found': '标签 {name} 不存在。',
+  'error.worktree-failed': 'worktree 操作失败（{path}）。',
   'error.gateway-service-unavailable': 'git 服务尚未就绪，请重试。',
   'error.gateway': '请求失败（{code}）。',
   'error.action.setUpstream': '设置 upstream 并推送',
@@ -160,8 +218,14 @@ export const gitEn = {
   'menu.graph': 'Commit graph',
   'menu.commit': 'Commit…',
   'menu.commitPush': 'Commit & Push…',
-  'menu.sync': 'Sync',
-  'menu.placeholderHint': 'This action arrives in a later version',
+  'menu.push': 'Push',
+  'menu.pull': 'Pull',
+  'menu.fetch': 'Fetch',
+  'menu.branches': 'Branches',
+  'menu.branchCreate': 'New branch…',
+  'menu.tagCreate': 'Create tag…',
+  'menu.worktree': 'Worktree…',
+  'menu.branchDelete': 'Delete branch…',
   // ── problems ──
   'problems.conflicted': '{count} conflicted file(s)',
   'problems.clean': 'Working tree clean',
@@ -171,15 +235,17 @@ export const gitEn = {
   'tab.changes.title': 'Git changes',
   'tab.graph.title': 'Commit graph',
   // ── graph：GitGraphTab ──
+  // P3-4 (v2 plan §10): dead key 'graph.head' removed on both languages — no
+  // t('graph.head') call exists; the detached marker is the literal 'HEAD' at the
+  // consumers (rowRefChips/detailViewModel keep their own comment).
   'graph.loadMore': 'Loading more commits…',
   'graph.noCommits': 'No commits.',
-  // Kept as 'HEAD' (a reserved git name, untranslated) — also the detached marker
-  // consumed by rowRefChips/detailViewModel (headLabel === 'HEAD' ⇒ detached).
-  'graph.head': 'HEAD',
   'graph.loading': 'Loading…',
   'graph.detail.files': 'Changed files ({count})',
   'graph.detail.totalTruncated': 'The changed-file list was truncated by the budget.',
   // ── changes：C2 GitChangesTab ──
+  // P3-5 (v2 plan §10): dead key 'changes.oversized' removed — the actual placeholder
+  // is 'diff.oversized' (FileDiffView.tsx).
   'changes.staged': 'Staged',
   'changes.unstaged': 'Changes',
   'changes.untracked': 'Untracked',
@@ -187,7 +253,6 @@ export const gitEn = {
   'changes.empty': 'Working tree clean — no changes.',
   'changes.emptyRepo': 'Empty repository: no commits yet. Stage files and make the first commit.',
   'changes.binary': 'Binary',
-  'changes.oversized': 'Diff exceeds the size limit; not loaded.',
   'changes.truncated': 'The diff content exceeded the per-file limit and was truncated.',
   'changes.loadFailed': 'Diff failed to load (over budget or the command failed).',
   'changes.stage': 'Stage',
@@ -212,6 +277,48 @@ export const gitEn = {
   'confirm.push.diverged': 'The remote has commits the local branch does not (behind {behind}); merge remote changes before pushing.',
   'confirm.setUpstreamTitle': 'Set upstream and push',
   'confirm.setUpstreamMessage': 'The current branch has no upstream. Confirming will push and set up tracking (push --set-upstream).',
+  // ── admin：V2 批次一管理面对话框（branch/tag/worktree/push；en 与 zh 逐键对齐）──
+  'branch.detached': 'HEAD detached ({oid})',
+  'branch.create.title': 'New branch',
+  'branch.create.nameLabel': 'Branch name',
+  'branch.create.startLabel': 'Start point (optional; defaults to HEAD)',
+  'branch.create.checkout': 'Check out after creation',
+  'branch.create.nameRequired': 'Branch name must not be empty.',
+  'branch.delete.title': 'Delete branch',
+  'branch.delete.message': 'Delete branch {name}? Git rejects deleting unmerged commits.',
+  'tag.create.title': 'Create tag',
+  'tag.create.nameLabel': 'Tag name',
+  'tag.create.messageLabel': 'Annotation (optional; providing one creates an annotated tag)',
+  'tag.create.targetLabel': 'Target commit',
+  'tag.create.nameRequired': 'Tag name must not be empty.',
+  'tag.menuDelete': 'Delete tag…',
+  'tag.menuCreateHere': 'Create tag here…',
+  'tag.delete.title': 'Delete tag',
+  'tag.delete.message': 'Delete tag {name}?',
+  'worktree.title': 'Worktrees',
+  'worktree.empty': 'No linked worktrees.',
+  'worktree.detached': '(detached)',
+  'worktree.bare': '(bare)',
+  'worktree.locked': '(locked)',
+  'worktree.remove': 'Remove',
+  'worktree.removeTitle': 'Remove worktree',
+  'worktree.removeMessage': 'Remove {path}?',
+  'worktree.removeForceMessage': 'This worktree may have uncommitted changes; force removal cannot be undone.',
+  'worktree.removeForce': 'Force remove',
+  'worktree.addTitle': 'Add worktree',
+  'worktree.pathLabel': 'Path',
+  'worktree.existingBranch': 'Existing branch',
+  'worktree.newBranch': 'New branch',
+  'worktree.branchLabel': 'Branch name',
+  'worktree.add': 'Create',
+  'worktree.pathRequired': 'Path must not be empty.',
+  'worktree.branchRequired': 'Branch name must not be empty.',
+  'push.title': 'Push',
+  'push.remoteLabel': 'Remote',
+  'push.setUpstreamMissing': 'The branch has no upstream; tracking will be set up with this push.',
+  'push.force': 'Force push (overwrites the remote)',
+  'push.forceMessage': 'Force push overwrites the remote branch with the local one; commits unique to the remote are lost and cannot be recovered.',
+  'push.forceConfirmTitle': 'Confirm force push',
   // ── commit：C4 GitCommitDialog（en 与 zh 逐键对齐；种子值随 host locale/en.json）──
   'commit.title': 'Commit',
   'commit.placeholder': 'Commit message (Conventional Commits recommended)',
@@ -255,6 +362,14 @@ export const gitEn = {
   'error.no-branch': 'HEAD is detached or the repository is unborn; this operation needs a branch.',
   'error.dirty-worktree': 'The working tree of {branch} has uncommitted changes; commit or stage them before pulling.',
   'error.choose-remote': 'Multiple remotes exist and none is the default: {remotes}. Specify a remote first.',
+  // V2 batch-1 admin codes (plan §3.4); the bad-request reason union extension
+  // ('force-unacknowledged') reuses the existing 'error.bad-request' interpolation.
+  'error.branch-not-found': 'Branch {name} does not exist.',
+  'error.branch-not-merged': 'Branch {name} has unmerged commits; the delete was rejected.',
+  'error.branch-exists': 'Branch {name} already exists.',
+  'error.tag-exists': 'Tag {name} already exists.',
+  'error.tag-not-found': 'Tag {name} does not exist.',
+  'error.worktree-failed': 'The worktree operation failed ({path}).',
   'error.gateway-service-unavailable': 'The git service is not ready yet. Retry.',
   'error.gateway': 'The request failed ({code}).',
   'error.action.setUpstream': 'Set upstream and push',

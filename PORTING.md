@@ -16,6 +16,14 @@
 
 ## 2. 登记表（随施工推进；新条目追加在「历史条目」之后）
 
+### v2 批次一 refs-admin 引擎模块（2026-11-08）
+
+| 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |
+|---|---|---|---|---|---|
+| C | `packages/host/src/refs-admin.ts`（分支/标签/remote/worktree 管理面的变更编排纪律：先存在性预检再执行变更、变更后失效） | zai-org/ZCode `packages/services/src/git/repo/gitCliRepo.ts`（分支/标签管理命令的编排骨架语义：存在性预检 → 执行变更 → 写后失效） | `3c5b2276` | Apache-2.0 | **语义学习，零代码搬运**（docs/v2-implementation-plan.md §3.5；文件头已注明）。与 ZCode 的关键差异：命令一律带 `--` 分隔符（本机 git 2.55.0.windows.2 实测 `git branch -- --all` ⇒ git 自身拒绝非法名——选项注入防线）；存在性预检走 `rev-parse --verify --quiet refs/...`（exit 1 = 缺失）并域码化（branch-exists / tag-exists / branch-not-found / tag-not-found，非 stderr 特征映射）；force 类动作（push `--force` / `-D` 删分支 / tag `-f` / worktree `--force`）双闸 = acknowledged 守卫最前、零命令执行；`git switch` 位置参数无 `--` 保护（实测 `switch -c -- <name> <from>` exit 128 "only one reference expected"），checkout 拆 `git branch --` + `git switch --` 两命令（非 `switch -C`）。**解析器全自研**：`git remote -v` 行解析与 `git worktree list --porcelain` 块解析按 git 文档 + 本机实测自研（unborn 全零 oid 归 null、locked reason 自由文本不进 wire、未知属性行前向容忍、块锚缺失/非 newline 结尾契约错要响），无任何来源代码搬运 |
+
+（v2 批次一的 remote-ops.ts push 扩展（force/acknowledged/显式 remote 直查）、定时 fetch 编排（autoFetchIntervalMs + Cordis effect interval）与九个 `@Remote` 服务面接线为任务口径自研——沿用 M6 行已登记的 remote-ops 语义面内续写，无新增第三方对照来源，无登记义务。）
+
 ### ④-K 提交对话框模块（2026-11-01）
 
 | 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |

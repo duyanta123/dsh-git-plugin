@@ -250,6 +250,22 @@ export interface CommitResult {
 export interface PushOptions {
   /** [清单 26]；无 upstream 且 false ⇒ git/no-upstream。 */
   setUpstream: boolean
+  /**
+   * [清单 27] force push（v2 批次一）：`--force` 透传，语义即覆盖远端（diverged
+   * 预检跳过，upstream 存在性预检保留）。**双闸的 host 半**：force=true 且
+   * acknowledged!==true ⇒ `git/bad-request`（reason 'force-unacknowledged'），
+   * 零命令执行（discards acknowledged 守卫同款纪律）。
+   */
+  force?: boolean
+  /** force 的 C 级二次确认旗标（与 DiscardOptions.acknowledged 同范式）。 */
+  acknowledged?: boolean
+  /**
+   * [清单 57] 推送目标 remote 显式指定（推送对话框 remote picker 的 host 面）：
+   * 非空字符串 = 直查该 remote 存在性（不存在 ⇒ git/no-remote，details.remotes 带
+   * 全量清单），**不走** origin/唯一 remote 解析链（§3.10 预检顺序写死，避免与
+   * git/choose-remote 双轨报错）；null/缺省 = v1 缺省解析链不变。
+   */
+  remote?: string | null
 }
 
 export interface PushResult {
@@ -285,6 +301,141 @@ export interface GeneratedCommitMessage {
 export interface LogOptions { limit: number; skip: number }
 /** path=null：仅 meta+numstat；path 给定：含该文件 patch。 */
 export interface ShowOptions { oid: string; path: string | null }
+
+// ---------- refs 管理（v2 批次一：[清单 23/30] 分支与标签 + [清单 57] remote 列表 + [清单 62/68] worktree） ----------
+
+/** `git.branchCreate` 入参（[清单 23]）：from=null/缺省 = 当前 HEAD 为起点。 */
+export interface BranchCreateOptions {
+  /** 新分支名；非法名（git check-ref-format 口径）由 git 自身拒绝（exit 128 ⇒ git-error）。 */
+  name: string
+  /** 起点 revision（分支名/oid 等可解析修订）；null/缺省 = HEAD。 */
+  from?: string | null
+  /** true = 创建后立即检出（`git switch -c`；存在即拒 ⇒ git/branch-exists）。 */
+  checkout?: boolean
+}
+
+/** `git.branchCreate` 出参：oid = 新分支指向的提交（回读）；checkedOut = 是否已检出。 */
+export interface BranchCreateResult {
+  name: string
+  /** 回读 `refs/heads/<name>` 的 oid；创建成功后必然非 null（unborn 起点在 git 侧已被拒）。 */
+  oid: string | null
+  checkedOut: boolean
+}
+
+/** `git.branchSwitch` 出参：from = 切换前分支名（detached 时 null），to = 回读的切换后分支名。 */
+export interface BranchSwitchResult {
+  from: string | null
+  to: string
+}
+
+/** `git.branchDelete` 入参（[清单 23]）：force（= `-D`）需 acknowledged（双闸 host 半）。 */
+export interface BranchDeleteOptions {
+  name: string
+  /** true = `-D` 强删（未合并也删）；需 acknowledged=true，否则 git/bad-request 'force-unacknowledged'。 */
+  force?: boolean
+  /** force 的 C 级二次确认旗标。 */
+  acknowledged?: boolean
+}
+
+/** `git.branchDelete` 出参：wasMerged = 删除前该分支是否为 HEAD 的祖先（`merge-base --is-ancestor` 回读）。 */
+export interface BranchDeleteResult {
+  deleted: string
+  wasMerged: boolean
+}
+
+/** `git.tagCreate` 入参（[清单 30]）：message 非空 = annotated（`-a -m`）；force（= `-f`）需 acknowledged。 */
+export interface TagCreateOptions {
+  name: string
+  /** 打 tag 的目标 revision；null/缺省 = HEAD。 */
+  oid?: string | null
+  /** 非空 = annotated tag 的消息；null/缺省 = lightweight。 */
+  message?: string | null
+  /** true = `-f` 覆盖同名 tag；需 acknowledged=true，否则 git/bad-request 'force-unacknowledged'。 */
+  force?: boolean
+  /** force 的 C 级二次确认旗标。 */
+  acknowledged?: boolean
+}
+
+/** `git.tagCreate` 出参：oid = peeled 提交（`<tag>^{commit}` 回读，annotated/lightweight 同口径）。 */
+export interface TagCreateResult {
+  name: string
+  oid: string | null
+  annotated: boolean
+}
+
+/** `git.tagDelete` 出参。 */
+export interface TagDeleteResult { deleted: string }
+
+/** `git.remoteList` 的单个 remote（[清单 57]）：`git remote -v` 的 fetch/push 双 url。 */
+export interface RemoteInfo {
+  name: string
+  /** fetch url。 */
+  url: string
+  /**
+   * 显式配置且与 fetch 不同的 push url；null = push 缺省使用 fetch url（git 语义——
+   * 未显式配置时 `git remote -v` 也输出与 fetch 同值的 push 行，本处归一为 null）。
+   */
+  pushUrl: string | null
+}
+
+/** `git.remoteList` 出参。 */
+export interface RemoteListResult { remotes: RemoteInfo[] }
+
+/** `git.worktreeList` 的单个 worktree（[清单 62]；`git worktree list --porcelain` 解析）。 */
+export interface WorktreeInfo {
+  /** worktree 绝对路径（git 输出原样，正斜杠形态）。 */
+  path: string
+  /** HEAD oid；null = unborn（porcelain 全零 oid 归一）或 bare（无 HEAD 行）。 */
+  head: string | null
+  /** 本地分支短名（refs/heads/ 剥离）；null = detached / bare。 */
+  branch: string | null
+  /** porcelain `bare` 行（bare 主仓库）。 */
+  bare: boolean
+  /** porcelain `detached` 行。 */
+  detached: boolean
+  /** porcelain `locked` 行（reason 自由文本不进 wire，[清单 62] 只读展示布尔位）。 */
+  locked: boolean
+}
+
+/** `git.worktreeList` 出参。 */
+export interface WorktreeListResult { worktrees: WorktreeInfo[] }
+
+/**
+ * `git.worktreeAdd` 入参（[清单 68] per-ticket worktree 写面）：branch（检出**现有**
+ * 分支）与 newBranch（**新建**分支）互斥、至少给其一——违反 ⇒ git/bad-request
+ * （reason 'invalid-options'，防 `-b` 静默 DWIM 误建分支）。
+ */
+export interface WorktreeAddOptions {
+  /** 新 worktree 路径（绝对或相对仓库根）；已存在且非空 ⇒ git/worktree-failed。 */
+  path: string
+  /** 检出现有分支（互斥于 newBranch）。 */
+  branch?: string | null
+  /** 新建分支（`-b`，起点 HEAD；互斥于 branch）。 */
+  newBranch?: string | null
+}
+
+/** `git.worktreeAdd` 出参：path = 传给 git 的绝对路径；branch/head = 新 worktree 内回读。 */
+export interface WorktreeAddResult {
+  path: string
+  branch: string | null
+  head: string | null
+}
+
+/**
+ * `git.worktreeRemove` 入参（[清单 68]）：脏 worktree 删除需 force（git 自身拒绝 ⇒
+ * git/worktree-failed）；`--force` 仅随 acknowledged 透传（双闸 host 半）。
+ */
+export interface WorktreeRemoveOptions {
+  /** 要移除的 worktree 路径（绝对或相对仓库根）；不存在 ⇒ git/worktree-failed。 */
+  path: string
+  /** true = `--force`（脏 worktree 也删）；需 acknowledged=true。 */
+  force?: boolean
+  /** force 的 C 级二次确认旗标。 */
+  acknowledged?: boolean
+}
+
+/** `git.worktreeRemove` 出参：removed = 传给 git 的路径（与入参同形）。 */
+export interface WorktreeRemoveResult { removed: string }
 
 // ---------- followStatus 流帧（M9；spec §2 host 推送契约的 v1 落地面） ----------
 

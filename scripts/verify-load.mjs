@@ -53,6 +53,19 @@
  *         （oid 前进、clean 回真）→ git/commit 空 staged ⇒ git/nothing-staged
  *         （[清单 11] 守卫的真实宿主面）→ git/log({limit:1}) 返回新 HEAD（amend
  *         预填数据面）。
+ *      L. v2 批次一 refs 管理面九方法各一条真宿主 RPC 往返（docs/v2-implementation-plan.md
+ *         §3.7「verify-load 断言面扩展」硬前提——断言链 A–K 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖）：remoteList（夹具仓库补 origin 指向姊妹 bare）→
+ *         branchCreate（world 重读 refs/heads）→ branchCreate 重名 ⇒ git/branch-exists →
+ *         worktreeAdd（姊妹目录 newBranch；world 重读新 worktree 的 HEAD 符号引用）→
+ *         worktreeList（含主仓 + 新 worktree 两条目）→ branchSwitch（world 重读
+ *         symbolic-ref HEAD）→ tagCreate（annotated；world 重读 cat-file -t = tag）→
+ *         tagCreate 重名 ⇒ git/tag-exists → branchSwitch 回 main → branchDelete（-d，
+ *         wasMerged=true；world 重读 ref 消失）→ branchDelete 再删 ⇒ git/branch-not-found →
+ *         tagDelete（world 重读 tag 消失）→ tagDelete 再删 ⇒ git/tag-not-found →
+ *         git/push force 无 acknowledged ⇒ git/bad-request 'force-unacknowledged'
+ *         （[清单 27] 双闸 host 半的真宿主面）→ worktreeRemove（world 重读目录消失 +
+ *         list 回落单条目）→ worktreeRemove 再删 ⇒ git/worktree-failed。
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
@@ -80,7 +93,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -206,6 +219,10 @@ async function main() {
   execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load seed'], { cwd: fixtureRepo, stdio: 'ignore' })
   const seedOid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixtureRepo, encoding: 'utf8' }).trim()
   step(`identity fixture repo: ${fixtureRepo} (seed commit ${seedOid.slice(0, 7)}, local user verify-user <verify@example.com>)`)
+  // 断言 L 的姊妹面（v2 批次一）：origin 指向的本地 bare 远端 + worktreeAdd 目标目录
+  // （都放夹具仓库旁的固定派生名，finally 统一清理——不进 mkdtemp 随机名以保持可读诊断）。
+  const fixtureBare = `${fixtureRepo}-origin.git`
+  const fixtureWt = `${fixtureRepo}-wt`
 
   const home = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dsh-git-verify-'))
   const env = { ...process.env, DSH_HOME: home }
@@ -519,6 +536,147 @@ async function main() {
       `git/log(limit:1) should return the new HEAD: ${JSON.stringify(headPage)}`)
     step('log(limit:1) OK: amend-prefill data plane returns the new HEAD commit')
 
+    // ── 5.9 断言 L（v2 批次一 §3.7 verify-load 扩展）：refs 管理面九方法各一条真宿主
+    //        往返 + force 双闸负往返。world 重读纪律同 K：每个写断言后用独立 git 进程
+    //        重读 refs/HEAD/tag/目录，不信 RPC 自述。夹具仓库当前 HEAD = commitValue.oid
+    //        （main，clean）。
+    const fixtureNorm = (p) => String(p).replaceAll('\\', '/').toLowerCase()
+    // bare 目录须先存在——spawnSync 的 cwd 不存在会以 ENOENT 报错（首跑踩坑：误报
+    // "spawnSync git ENOENT"，与 git 可执行文件无关）。
+    mkdirSync(fixtureBare, { recursive: true })
+    execFileSync('git', ['init', '--bare', '-q', '-b', 'main'], { cwd: fixtureBare, stdio: 'ignore' })
+    execFileSync('git', ['remote', 'add', 'origin', fixtureBare], { cwd: fixtureRepo, stdio: 'ignore' })
+
+    const remoteList = await rpcCall(base.origin, apiCookie, 'git/remoteList', {})
+    assert(remoteList.ok === true, `git/remoteList failed: ${JSON.stringify(remoteList)}`)
+    assert(Array.isArray(remoteList.value?.remotes) && remoteList.value.remotes.length === 1,
+      `git/remoteList should list exactly the origin remote: ${JSON.stringify(remoteList.value)}`)
+    assert(remoteList.value.remotes[0]?.name === 'origin'
+      && fixtureNorm(remoteList.value.remotes[0]?.url) === fixtureNorm(fixtureBare)
+      && remoteList.value.remotes[0]?.pushUrl === null,
+      `git/remoteList origin entry wrong: ${JSON.stringify(remoteList.value.remotes[0])}`)
+    step(`remoteList RPC round-trip OK: origin → ${remoteList.value.remotes[0].url} (pushUrl null = 未显式配置)`)
+
+    const branchCreate = await rpcCall(base.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
+    assert(branchCreate.ok === true, `git/branchCreate failed: ${JSON.stringify(branchCreate)}`)
+    assert(branchCreate.value?.name === 'verify-branch' && branchCreate.value?.oid === commitValue.oid
+      && branchCreate.value?.checkedOut === false,
+      `git/branchCreate value wrong: ${JSON.stringify(branchCreate.value)}`)
+    const worldBranch = execFileSync('git', ['-C', fixtureRepo, 'rev-parse', '--verify', 'refs/heads/verify-branch'], { encoding: 'utf8' }).trim()
+    assert(worldBranch === commitValue.oid, `world re-read refs/heads/verify-branch mismatch: ${worldBranch}`)
+    step(`branchCreate RPC round-trip OK: verify-branch @ ${String(branchCreate.value.oid).slice(0, 7)}, world re-read matches`)
+
+    const branchExists = await rpcCall(base.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
+    assert(branchExists.ok === false && branchExists.error?.code === 'git/branch-exists',
+      `duplicate branchCreate should be git/branch-exists: ${JSON.stringify(branchExists)}`)
+    step('branchCreate duplicate OK: git/branch-exists (typed pre-check on the real host)')
+
+    const worktreeAdd = await rpcCall(base.origin, apiCookie, 'git/worktreeAdd', { options: { path: fixtureWt, newBranch: 'verify-wt' } })
+    assert(worktreeAdd.ok === true, `git/worktreeAdd failed: ${JSON.stringify(worktreeAdd)}`)
+    assert(worktreeAdd.value?.branch === 'verify-wt' && /^[0-9a-f]{40}$/.test(worktreeAdd.value?.head ?? ''),
+      `git/worktreeAdd value wrong: ${JSON.stringify(worktreeAdd.value)}`)
+    const worldWtBranch = execFileSync('git', ['-C', fixtureWt, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
+    assert(worldWtBranch === 'verify-wt', `world re-read worktree HEAD mismatch: ${worldWtBranch}`)
+    step(`worktreeAdd RPC round-trip OK: ${worktreeAdd.value.path} on verify-wt, world re-read matches`)
+
+    const worktreeList = await rpcCall(base.origin, apiCookie, 'git/worktreeList', {})
+    assert(worktreeList.ok === true && Array.isArray(worktreeList.value?.worktrees) && worktreeList.value.worktrees.length === 2,
+      `git/worktreeList should list main + new worktree: ${JSON.stringify(worktreeList.value)}`)
+    const wtEntry = worktreeList.value.worktrees.find((entry) => fixtureNorm(entry?.path) === fixtureNorm(fixtureWt))
+    const mainEntry = worktreeList.value.worktrees.find((entry) => fixtureNorm(entry?.path) === fixtureNorm(fixtureRepo))
+    assert(wtEntry?.branch === 'verify-wt' && wtEntry?.bare === false && wtEntry?.detached === false && wtEntry?.locked === false,
+      `worktreeList entry for the new worktree wrong: ${JSON.stringify(wtEntry)}`)
+    assert(mainEntry?.branch === 'main' && mainEntry?.head === commitValue.oid,
+      `worktreeList entry for the main worktree wrong: ${JSON.stringify(mainEntry)}`)
+    step('worktreeList RPC round-trip OK: main + verify-wt entries with branch/head/bare/detached/locked fields')
+
+    const branchSwitch = await rpcCall(base.origin, apiCookie, 'git/branchSwitch', { name: 'verify-branch' })
+    assert(branchSwitch.ok === true && branchSwitch.value?.from === 'main' && branchSwitch.value?.to === 'verify-branch',
+      `git/branchSwitch failed: ${JSON.stringify(branchSwitch)}`)
+    const worldHeadBranch = execFileSync('git', ['-C', fixtureRepo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
+    assert(worldHeadBranch === 'verify-branch', `world re-read HEAD after switch mismatch: ${worldHeadBranch}`)
+    step('branchSwitch RPC round-trip OK: main → verify-branch, world re-read matches')
+
+    const tagCreate = await rpcCall(base.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag', message: 'verify annotated tag' } })
+    assert(tagCreate.ok === true && tagCreate.value?.name === 'verify-tag' && tagCreate.value?.annotated === true
+      && /^[0-9a-f]{40}$/.test(tagCreate.value?.oid ?? ''),
+      `git/tagCreate failed: ${JSON.stringify(tagCreate)}`)
+    const worldTagType = execFileSync('git', ['-C', fixtureRepo, 'cat-file', '-t', 'verify-tag'], { encoding: 'utf8' }).trim()
+    assert(worldTagType === 'tag', `world re-read tag object type mismatch: ${worldTagType}`)
+    step(`tagCreate RPC round-trip OK: annotated verify-tag peeled @ ${String(tagCreate.value.oid).slice(0, 7)}, world re-read matches`)
+
+    const tagExists = await rpcCall(base.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag' } })
+    assert(tagExists.ok === false && tagExists.error?.code === 'git/tag-exists',
+      `duplicate tagCreate should be git/tag-exists: ${JSON.stringify(tagExists)}`)
+    step('tagCreate duplicate OK: git/tag-exists')
+
+    const switchBack = await rpcCall(base.origin, apiCookie, 'git/branchSwitch', { name: 'main' })
+    assert(switchBack.ok === true && switchBack.value?.to === 'main',
+      `git/branchSwitch back to main failed: ${JSON.stringify(switchBack)}`)
+    assert(execFileSync('git', ['-C', fixtureRepo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim() === 'main',
+      'world re-read HEAD should be back on main')
+    step('branchSwitch back to main OK')
+
+    // verify-branch 与 main 同指（K 链提交后未再前进）⇒ -d 可删（wasMerged=true）。
+    const branchDelete = await rpcCall(base.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
+    assert(branchDelete.ok === true && branchDelete.value?.deleted === 'verify-branch' && branchDelete.value?.wasMerged === true,
+      `git/branchDelete failed: ${JSON.stringify(branchDelete)}`)
+    let branchGone = false
+    try {
+      execFileSync('git', ['-C', fixtureRepo, 'rev-parse', '--verify', '--quiet', 'refs/heads/verify-branch'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch {
+      branchGone = true
+    }
+    assert(branchGone, 'world re-read: refs/heads/verify-branch should be gone after delete')
+    step('branchDelete RPC round-trip OK: verify-branch deleted (wasMerged=true), world re-read gone')
+
+    const branchMissing = await rpcCall(base.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
+    assert(branchMissing.ok === false && branchMissing.error?.code === 'git/branch-not-found',
+      `deleting a missing branch should be git/branch-not-found: ${JSON.stringify(branchMissing)}`)
+    step('branchDelete missing OK: git/branch-not-found')
+
+    const tagDelete = await rpcCall(base.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
+    assert(tagDelete.ok === true && tagDelete.value?.deleted === 'verify-tag',
+      `git/tagDelete failed: ${JSON.stringify(tagDelete)}`)
+    let tagGone = false
+    try {
+      execFileSync('git', ['-C', fixtureRepo, 'cat-file', '-e', 'verify-tag'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch {
+      tagGone = true
+    }
+    assert(tagGone, 'world re-read: verify-tag should be gone after delete')
+    step('tagDelete RPC round-trip OK: verify-tag deleted, world re-read gone')
+
+    const tagMissing = await rpcCall(base.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
+    assert(tagMissing.ok === false && tagMissing.error?.code === 'git/tag-not-found',
+      `deleting a missing tag should be git/tag-not-found: ${JSON.stringify(tagMissing)}`)
+    step('tagDelete missing OK: git/tag-not-found')
+
+    // force 双闸 host 半的真宿主面：force=true 无 acknowledged ⇒ git/bad-request
+    // 'force-unacknowledged'（守卫最前，零命令——夹具此时连 upstream 都没有也不影响）。
+    const forceUnack = await rpcCall(base.origin, apiCookie, 'git/push', {
+      options: { setUpstream: false, force: true, acknowledged: false },
+    })
+    assert(forceUnack.ok === false && forceUnack.error?.code === 'git/bad-request',
+      `force push without acknowledgement should be git/bad-request: ${JSON.stringify(forceUnack)}`)
+    assert(forceUnack.error?.details?.reason === 'force-unacknowledged',
+      `force-unacknowledged reason should cross the wire: ${JSON.stringify(forceUnack.error)}`)
+    step('push force guard OK: force without acknowledged rejected as git/bad-request force-unacknowledged')
+
+    const worktreeRemove = await rpcCall(base.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
+    assert(worktreeRemove.ok === true && fixtureNorm(worktreeRemove.value?.removed) === fixtureNorm(fixtureWt),
+      `git/worktreeRemove failed: ${JSON.stringify(worktreeRemove)}`)
+    assert(!existsSync(fixtureWt), `worktree directory should be gone after remove: ${fixtureWt}`)
+    const worktreeListAfter = await rpcCall(base.origin, apiCookie, 'git/worktreeList', {})
+    assert(worktreeListAfter.ok === true && worktreeListAfter.value?.worktrees?.length === 1,
+      `worktreeList should fall back to the main worktree only: ${JSON.stringify(worktreeListAfter.value)}`)
+    step('worktreeRemove RPC round-trip OK: directory gone, worktreeList back to 1 entry')
+
+    const worktreeMissing = await rpcCall(base.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
+    assert(worktreeMissing.ok === false && worktreeMissing.error?.code === 'git/worktree-failed',
+      `removing a missing worktree should be git/worktree-failed: ${JSON.stringify(worktreeMissing)}`)
+    step('worktreeRemove missing OK: git/worktree-failed')
+
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的
     //        strict codec 在网关拒绝非法值为 gateway/input-invalid；若仍是 SRC
@@ -584,6 +742,16 @@ async function main() {
       step(`removed identity fixture repo ${fixtureRepo}`)
     } catch (error) {
       console.warn(`[verify] WARN: could not remove fixture repo ${fixtureRepo}: ${error?.message ?? error}`)
+    }
+    for (const derived of [fixtureWt, fixtureBare]) {
+      try {
+        if (existsSync(derived)) {
+          rmSync(derived, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+          step(`removed fixture sibling ${derived}`)
+        }
+      } catch (error) {
+        console.warn(`[verify] WARN: could not remove fixture sibling ${derived}: ${error?.message ?? error}`)
+      }
     }
   }
   return { outcome, exit: exitCode }

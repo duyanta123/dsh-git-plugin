@@ -27,16 +27,27 @@
  * `RemoteResult`（ok:false 分支）——gateway 对
  * RemoteError 过线为 {ok:false,error}（map §2.4），载波层异常（连接缺失/服务未就绪）
  * 以 reject 到达，此处折叠为 `gateway/service-unavailable`（spec §1.0.1：UI 显示重试）。
+ *
+ * **V2 批次一（分支·标签·远端·worktree 管理面，2026-11-08）扩展**：host refs-admin
+ * 模块的 9 个新 @Remote 方法（branchCreate/branchSwitch/branchDelete/tagCreate/
+ * tagDelete/remoteList/worktreeList/worktreeAdd/worktreeRemove）四处同步——
+ * GitNamespaceFace + GitRpcFace + GIT_NAMESPACE_METHODS + createGitRpcClient 逐方法
+ * 包装块（变更链 §1 第 4 步；wire 类型 = v2-implementation-plan §3.2，import 面
+ * `dsh-gitkit/types`）。
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
 import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope, DiscardOptions, DiscardResult,
-  FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult,
-  GitIdentityScope, GitPingResult, GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult,
-  PushOptions, PushResult, RefsSnapshot, ShowOptions, StageResult, UnstageResult,
+  BranchCreateOptions, BranchCreateResult, BranchDeleteOptions, BranchDeleteResult,
+  BranchSwitchResult, CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope,
+  DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage,
+  GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult, GitStatusFrame,
+  GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
+  RemoteListResult, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions,
+  WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
 
 /**
@@ -92,6 +103,16 @@ interface GitNamespaceFace {
   log(options: LogOptions, signal?: AbortSignal): Promise<RemoteResult<LogPage>>
   refs(signal?: AbortSignal): Promise<RemoteResult<RefsSnapshot>>
   getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<RemoteResult<CommitDetail>>
+  /** V2 批次一管理面切片（host refs-admin 模块；plan §3.3 的 9 方法签名）。 */
+  branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCreateResult>>
+  branchSwitch(name: string, signal?: AbortSignal): Promise<RemoteResult<BranchSwitchResult>>
+  branchDelete(options: BranchDeleteOptions, signal?: AbortSignal): Promise<RemoteResult<BranchDeleteResult>>
+  tagCreate(options: TagCreateOptions, signal?: AbortSignal): Promise<RemoteResult<TagCreateResult>>
+  tagDelete(name: string, signal?: AbortSignal): Promise<RemoteResult<TagDeleteResult>>
+  remoteList(signal?: AbortSignal): Promise<RemoteResult<RemoteListResult>>
+  worktreeList(signal?: AbortSignal): Promise<RemoteResult<WorktreeListResult>>
+  worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeAddResult>>
+  worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeRemoveResult>>
 }
 
 /**
@@ -104,6 +125,9 @@ export const GIT_NAMESPACE_METHODS = [
   'stage', 'unstage', 'discard',
   'commit', 'push', 'pull', 'fetch', 'generateCommitMessage',
   'log', 'refs', 'getCommitDetail',
+  // V2 批次一管理面（host refs-admin 模块；plan §3.3）。
+  'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete',
+  'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove',
 ] as const
 
 /** 本模块消费的 RPC 面（spec §3.2 GitRpcClient 全量 = host REMOTE_METHODS 镜像；store/组件按切片消费）。 */
@@ -124,6 +148,16 @@ export interface GitRpcFace {
   log(options: LogOptions, signal?: AbortSignal): Promise<RemoteResult<LogPage>>
   refs(signal?: AbortSignal): Promise<RemoteResult<RefsSnapshot>>
   getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<RemoteResult<CommitDetail>>
+  /** V2 批次一管理面切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCreateResult>>
+  branchSwitch(name: string, signal?: AbortSignal): Promise<RemoteResult<BranchSwitchResult>>
+  branchDelete(options: BranchDeleteOptions, signal?: AbortSignal): Promise<RemoteResult<BranchDeleteResult>>
+  tagCreate(options: TagCreateOptions, signal?: AbortSignal): Promise<RemoteResult<TagCreateResult>>
+  tagDelete(name: string, signal?: AbortSignal): Promise<RemoteResult<TagDeleteResult>>
+  remoteList(signal?: AbortSignal): Promise<RemoteResult<RemoteListResult>>
+  worktreeList(signal?: AbortSignal): Promise<RemoteResult<WorktreeListResult>>
+  worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeAddResult>>
+  worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeRemoveResult>>
 }
 
 /** 载波层异常的折叠码（spec §1.0.1：服务未就绪 → gateway/service-unavailable → UI 重试）。 */
@@ -263,6 +297,70 @@ export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>):
     async getCommitDetail(options, signal) {
       try {
         return await (await namespace()).getCommitDetail(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V2 批次一管理面（host refs-admin 模块；plan §3.3）──
+    async branchCreate(options, signal) {
+      try {
+        return await (await namespace()).branchCreate(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async branchSwitch(name, signal) {
+      try {
+        return await (await namespace()).branchSwitch(name, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async branchDelete(options, signal) {
+      try {
+        return await (await namespace()).branchDelete(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async tagCreate(options, signal) {
+      try {
+        return await (await namespace()).tagCreate(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async tagDelete(name, signal) {
+      try {
+        return await (await namespace()).tagDelete(name, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async remoteList(signal) {
+      try {
+        return await (await namespace()).remoteList(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async worktreeList(signal) {
+      try {
+        return await (await namespace()).worktreeList(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async worktreeAdd(options, signal) {
+      try {
+        return await (await namespace()).worktreeAdd(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async worktreeRemove(options, signal) {
+      try {
+        return await (await namespace()).worktreeRemove(options, signal)
       } catch (cause) {
         return unavailableResult(cause)
       }

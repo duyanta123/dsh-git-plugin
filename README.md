@@ -5,14 +5,14 @@ dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
-| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：16 个 `@Remote` 方法（`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
+| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：25 个 `@Remote` 方法（v1 十六：`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`；V2 批次一九：`branchCreate`/`branchSwitch`/`branchDelete`/`tagCreate`/`tagDelete`/`remoteList`/`worktreeList`/`worktreeAdd`/`worktreeRemove`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
 | `packages/client-ui` | `dsh-gitkit-ui` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
 | `git-bundle` | `dsh-gitkit-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
 
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
 
-## 1. 功能清单（v1）
+## 1. 功能清单（v1 + V2 批次一）
 
 **看清（变更感知）**
 - 工作区快照：staged / unstaged / untracked / conflicted 四类变更 + ahead/behind + 分支/HEAD 字段（含 detached、unborn 首提交前、rename、二进制、中文路径）；
@@ -29,9 +29,19 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 
 **推送与同步**
 - push（含首次 `--set-upstream`）、pull、fetch（prune）；diverged 预检（`git/diverged` 带 ahead/behind）、非 ff pull 守卫（`git/pull-diverged`）、pre-receive 拒绝（`git/push-rejected`）、凭证失败分类（`git/auth-failed`，stderr 先脱敏）。
+- force push：推送对话框勾选 force → `GitConfirmDialog` danger 勾选二次确认 → host `acknowledged` 守卫（置于最前、零命令执行）。**force 会覆盖远端**——force 态跳过 diverged 预检（语义即覆盖远端），误用面由「UI danger 确认 + host acknowledged」双闸承担（方案 §3.10 注记）；
+- 多 remote 时由推送对话框选 remote（数据面 `remoteList`；单 remote 保持一步直推不回归）；
+- 定时 fetch：`autoFetchIntervalMs`（默认 300_000 = 5 分钟，`0` = 关）到点后台 fetch，失败仅记日志不投 UI，成功走写后失效刷新 ahead/behind；
+- header 菜单 push/pull/fetch 动作转真（v1 的 `sync` 占位行移除）。
 
 **提交图**
 - 提交图 tab：自研 lane 布局（时间序 topo + 活跃泳道，教材 = pvigier 博客，自研实现）、SVG 渲染、行虚拟化、分页加载（limit+1/hasMore）、提交详情（meta + numstat + 单文件 patch）、分支/标签装饰（annotated tag peeled 命中）。
+
+**分支 · 标签 · worktree（V2 批次一）**
+- 分支：新建（可勾选建后切换；存在即拒 `git/branch-exists`）、切换（header 菜单 branches 子菜单——当前分支打勾、detached 显短 oid、点击切换）、删除（未合并被 git 拒绝映射 `git/branch-not-merged`；`-D` 强删需 danger 确认双闸）；
+- 标签：创建（header 菜单 / 图 tab 提交行「在此打标签」；message 非空 = annotated，`-f` 覆盖需 danger 确认；非 force 重名预检 `git/tag-exists`）、删除（图 tab tag chip 菜单）；
+- worktree：列表（porcelain 解析；locked 显布尔位、unborn HEAD oid 归 null）、新增（检出已有分支或新建分支）、移除（脏 worktree 需 force + danger 确认双闸）；
+- 变更纪律：命令一律带 `--` 分隔符（选项注入防线）、变更前 `rev-parse --verify` 存在性预检并域码化（`git/branch-not-found` / `git/tag-not-found` / `git/worktree-failed` 可读提示）、变更后写后失效即时刷新。
 
 ## 2. 安装（用户形态）
 
@@ -134,6 +144,7 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
     workspaceOverride: 'D:/path/to/repo'   # 不依赖 session cwd，直接钉死工作区
     # fastTimeoutMs / commitTimeoutMs / networkTimeoutMs   # 三档超时（spec §1.0.2）
     # pollIntervalMs: 60000                # 兜底轮询间隔（嵌套目录变更靠它，见 §5）
+    # autoFetchIntervalMs: 300000          # 定时 fetch 间隔（0=关，默认 5 分钟，见 §1 推送与同步）
     # llmProvider / llmModel               # AI 提交信息的 LLM 路由（缺省 ⇒ git/llm-route-unresolved）
 ```
 
@@ -148,7 +159,7 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
 pnpm --dir dsh-git-plugin install         # workspace 安装
 pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 三工程 tsc
 pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + git-bundle 一致性检查
-pnpm --dir dsh-git-plugin test            # vitest run（30 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
+pnpm --dir dsh-git-plugin test            # vitest run（35 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
 pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 双包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
 pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 git-bundle 安装 → dump-config 两行 → web → status() ready → HTML 含两包；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
 ```

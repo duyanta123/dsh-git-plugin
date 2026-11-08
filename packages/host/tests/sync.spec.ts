@@ -16,6 +16,17 @@
  * 默认 → git/choose-remote、origin 默认、唯一 remote、显式入参）；
  * stderr 脱敏分类器夹具（authentication/network/push-rejected/diverged）。
  *
+ * v2 批次一扩展（docs/v2-implementation-plan.md §3.7）：force push 两例 [清单 27]
+ * （amend 改写历史后非 force ⇒ git/diverged、force+acknowledged 推平 bare 远端 +
+ * argv 断言；无 acknowledged ⇒ bad-request 'force-unacknowledged' 零命令）+ 显式
+ * remote 直查（[清单 57]：存在即推该远端 world 重读，不存在 ⇒ git/no-remote 带
+ * details.remotes 全量）+ 定时 fetch 用例 [清单 58]（短 interval 触发后台 fetch →
+ * status world 重读 behind 刷新；autoFetchOnce 失败面仅 warn 不抛——no-remote 确定性）。
+ * 批次一独立评审修复（medium）：diverged 预检基线 = 实际推送目标 `<remote>/<remoteBranch>`
+ * ——与旧 upstream 分叉不伪拒显式非 upstream 远端的非 force 推送（无 tracking 引用 =
+ * 不预检）；对照半：与**选定**远端分叉仍 ⇒ git/diverged 且 details.upstream 指向选定
+ * 远端的目标分支。
+ *
  * **认证失败未自动化真实凭证**（任务口径如实标注）：真实凭证失败需要响应 401 的
  * HTTP 远端，离线不可复现；认证路径以分类器夹具单测覆盖（真实世界 stderr 文本进
  * 夹具），另以 connection-refused 的 http 远端 E2E 落 network 类 → git-error 兜底
@@ -73,7 +84,7 @@ interface Harness {
 
 function makeService(
   workspaceOverride: string,
-  overrides: { record?: SpawnRecord[]; networkTimeoutMs?: number } = {},
+  overrides: { record?: SpawnRecord[]; networkTimeoutMs?: number; autoFetchIntervalMs?: number } = {},
 ): Harness {
   const record = overrides.record ?? []
   const ctx = new Context() as never
@@ -86,6 +97,8 @@ function makeService(
     networkTimeoutMs: overrides.networkTimeoutMs ?? 20_000,
     outputMaxBytes: 1_048_576,
     workspaceOverride,
+    // 缺省 0 = 定时 fetch 关闭（既有用例语义不变）；定时 fetch 用例显式给短间隔。
+    autoFetchIntervalMs: overrides.autoFetchIntervalMs ?? 0,
   })
   return { service, record }
 }
@@ -113,7 +126,10 @@ interface World {
 }
 
 /** 标准世界：bare 远端 + 单提交工作仓库（origin 指向 bare，无 upstream）。 */
-async function makeWorld(name: string, overrides: { record?: SpawnRecord[] } = {}): Promise<World> {
+async function makeWorld(
+  name: string,
+  overrides: { record?: SpawnRecord[]; autoFetchIntervalMs?: number } = {},
+): Promise<World> {
   const bare = await makeBare(name)
   const repo = await scratchRepo(`dshgit-sync-${name}-repo-`, cleanups, { name: 't', email: 't@example.com' })
   await writeFile(join(repo, 'a.txt'), 'base\n', 'utf8')
@@ -393,6 +409,146 @@ describe('git.push — 上游三态与 set-upstream（spec §1.5）', () => {
   })
 })
 
+// ---------- push force / 显式 remote（v2 批次一 [清单 27/57]） ----------
+
+describe('git.push force 与显式 remote — [清单 27/57]（v2 批次一）', () => {
+  it('force 无 acknowledged → git/bad-request force-unacknowledged，零命令、bare 不变', async () => {
+    const world = await makeWorld('force-noack')
+    await world.harness.service.push({ setUpstream: true })
+    const bareBefore = refOid(world.bare, 'refs/heads/main')
+    world.harness.record.length = 0
+    const { code, details } = await rejectionOf(() => world.harness.service.push({ setUpstream: false, force: true }))
+    expect(code).toBe('git/bad-request')
+    expect((details as { reason: string }).reason).toBe('force-unacknowledged')
+    // 守卫在最前：零命令执行（B3/discard acknowledged 同款纪律）。
+    expect(world.harness.record).toHaveLength(0)
+    // world 重读：bare main 未动。
+    expect(refOid(world.bare, 'refs/heads/main')).toBe(bareBefore)
+  })
+
+  it('amend 改写历史：非 force ⇒ git/diverged（预检在场）；force+acknowledged 推平 bare 远端（world 重读 + argv 含 --force）', async () => {
+    const world = await makeWorld('force-amend')
+    await world.harness.service.push({ setUpstream: true })
+    const originalHead = headOid(world.repo)
+    await writeFile(join(world.repo, 'a.txt'), 'amended\n', 'utf8')
+    git(world.repo, 'add', 'a.txt')
+    git(world.repo, 'commit', '-q', '--amend', '-m', 'base (amended)')
+    const amendedHead = headOid(world.repo)
+    expect(amendedHead).not.toBe(originalHead)
+
+    // 非 force：diverged 预检拦截（证明 force 跳过的是真实存在的预检）。
+    const diverged = await rejectionOf(() => world.harness.service.push({ setUpstream: false }))
+    expect(diverged.code).toBe('git/diverged')
+    expect(refOid(world.bare, 'refs/heads/main')).toBe(originalHead)
+
+    // force + acknowledged：成功推平；world 重读 bare main == amend 后 HEAD。
+    const result = await world.harness.service.push({ setUpstream: false, force: true, acknowledged: true })
+    expect(result.remote).toBe('origin')
+    expect(result.setUpstreamUsed).toBe(false)
+    expect(refOid(world.bare, 'refs/heads/main')).toBe(amendedHead)
+    expect(refOid(world.bare, 'refs/heads/main')).toBe(headOid(world.repo))
+    // argv 断言：--force 在场（仍是显式 remote + 全量 refspec，非裸 push）。
+    const pushSpawn = findArgv(world.harness.record, '--force')
+    expect(pushSpawn).toBeDefined()
+    expect(pushSpawn!.argv.filter(arg => arg === 'push' || arg === '--force' || arg === 'origin' || arg.startsWith('refs/heads/')))
+      .toEqual(['push', '--force', 'origin', 'refs/heads/main:refs/heads/main'])
+  })
+
+  it('显式 remote 直查（[清单 57]）：存在即推该远端（world 重读）；不存在 ⇒ git/no-remote（details.remotes 全量）', async () => {
+    const world = await makeWorld('push-explicit')
+    await world.harness.service.push({ setUpstream: true })
+    const second = await makeBare('push-explicit-second')
+    git(world.repo, 'remote', 'add', 'upstream', second)
+    world.harness.record.length = 0
+    const local = await commitFile(world.repo, 'b.txt', 'second\n', 'feat: second')
+
+    const result = await world.harness.service.push({ setUpstream: false, remote: 'upstream' })
+    expect(result.remote).toBe('upstream')
+    // world 重读：second bare 的 main == 本地 HEAD（origin bare 未动）。
+    expect(refOid(second, 'refs/heads/main')).toBe(local)
+    expect(refOid(world.bare, 'refs/heads/main')).not.toBe(local)
+    const pushSpawn = lastArgv(world.harness.record, 'push')
+    expect(pushSpawn).toBeDefined()
+    expect(pushSpawn!.argv).toContain('upstream')
+
+    // 不存在的 remote：直查拒绝（不走 choose-remote 分叉，§3.10 预检顺序写死）。
+    const missing = await rejectionOf(() => world.harness.service.push({ setUpstream: false, remote: 'ghost' }))
+    expect(missing.code).toBe('git/no-remote')
+    expect((missing.details as { branch: string }).branch).toBe('main')
+    expect((missing.details as { remotes: string[] }).remotes.sort()).toEqual(['origin', 'upstream'])
+  })
+
+  it('评审修复：与旧 upstream 分叉不伪拒显式非 upstream 远端的非 force 推送（预检基线 = 实际目标），无 tracking 引用 = 不预检', async () => {
+    const world = await makeWorld('explicit-keep-diverged')
+    await world.harness.service.push({ setUpstream: true })
+    // 造「与旧 upstream（origin/main）分叉」：第二 clone 推进 origin bare，本地推进自身，
+    // fetch 刷新跟踪引用 → ahead 1 behind 1。
+    const clone2 = join(await scratchDir('dshgit-sync-expldiv-clone-', cleanups), 'clone')
+    git(world.repo, 'clone', world.bare, clone2)
+    await writeFile(join(clone2, 'remote.txt'), 'remote\n', 'utf8')
+    git(clone2, 'add', 'remote.txt')
+    git(clone2, 'commit', '-qm', 'feat: remote side')
+    git(clone2, 'push', '-q', 'origin', 'main')
+    const localOid = await commitFile(world.repo, 'c.txt', 'local\n', 'feat: local side')
+    git(world.repo, 'fetch', '-q', 'origin')
+
+    // 钉住默认路径的预检仍在：无显式 remote ⇒ git/diverged（基线 = 配置的 origin/main）。
+    const diverged = await rejectionOf(() => world.harness.service.push({ setUpstream: false }))
+    expect(diverged.code).toBe('git/diverged')
+    expect((diverged.details as { upstream: string }).upstream).toBe('origin/main')
+
+    // 修复面：显式选定另一远端（真实 bare、其 main 尚不存在 ⇒ 无 tracking 引用）⇒
+    // 非 force 推送不被旧 upstream 的分叉伪拒，推平选定远端（world 重读）。
+    const second = await makeBare('explicit-keep-diverged-second')
+    git(world.repo, 'remote', 'add', 'upstream', second)
+    const result = await world.harness.service.push({ setUpstream: false, remote: 'upstream' })
+    expect(result.remote).toBe('upstream')
+    expect(result.setUpstreamUsed).toBe(false)
+    expect(refOid(second, 'refs/heads/main')).toBe(localOid)
+    // world 重读：origin bare 未被本次显式推送波及。
+    expect(refOid(world.bare, 'refs/heads/main')).not.toBe(localOid)
+    // argv：显式 remote + 全量 refspec，无 --force（非 force 路径）。
+    const pushSpawn = lastArgv(world.harness.record, 'push')
+    expect(pushSpawn).toBeDefined()
+    expect(pushSpawn!.argv).toContain('upstream')
+    expect(pushSpawn!.argv).not.toContain('--force')
+  })
+
+  it('评审修复对照：与**选定**远端的跟踪引用分叉 ⇒ git/diverged（details.upstream 指向选定远端的目标分支），拦截零副作用', async () => {
+    const world = await makeWorld('explicit-diverged-selected')
+    // 先把分支置于 normal 态（upstream 配置在——diverged 预检只在 normal 路径存在）。
+    await world.harness.service.push({ setUpstream: true })
+    const second = await makeBare('explicit-selected-second')
+    git(world.repo, 'remote', 'add', 'upstream', second)
+    // 首推到 upstream：成功且本地建立 refs/remotes/upstream/main 跟踪引用（world 重读）。
+    const first = await world.harness.service.push({ setUpstream: false, remote: 'upstream' })
+    expect(first.remote).toBe('upstream')
+    expect(refOid(second, 'refs/heads/main')).toBe(headOid(world.repo))
+    expect(refOid(world.repo, 'refs/remotes/upstream/main')).toBe(headOid(world.repo))
+
+    // 造与 upstream/main 的分叉：本地前进 A；第二 clone 推进 second bare 到 B；fetch upstream。
+    const localOid = await commitFile(world.repo, 'c.txt', 'local\n', 'feat: local side')
+    const clone2 = join(await scratchDir('dshgit-sync-explsel-clone-', cleanups), 'clone')
+    git(world.repo, 'clone', second, clone2)
+    await writeFile(join(clone2, 'remote.txt'), 'remote\n', 'utf8')
+    git(clone2, 'add', 'remote.txt')
+    git(clone2, 'commit', '-qm', 'feat: remote side')
+    git(clone2, 'push', '-q', 'origin', 'main')
+    const remoteOid = refOid(second, 'refs/heads/main') as string
+    git(world.repo, 'fetch', '-q', 'upstream')
+
+    const { code, details } = await rejectionOf(() => world.harness.service.push({ setUpstream: false, remote: 'upstream' }))
+    expect(code).toBe('git/diverged')
+    expect((details as { upstream: string }).upstream).toBe('upstream/main')
+    expect((details as { branch: string }).branch).toBe('main')
+    expect((details as { ahead: number }).ahead).toBe(1)
+    expect((details as { behind: number }).behind).toBe(1)
+    // world 重读：second bare 仍是第二 clone 的提交（拦截 = 未执行 push）。
+    expect(refOid(second, 'refs/heads/main')).toBe(remoteOid)
+    expect(refOid(second, 'refs/heads/main')).not.toBe(localOid)
+  })
+})
+
 // ---------- pull（spec §1.6；任务口径 ②） ----------
 
 describe('git.pull — ff-only 与拒绝路径（spec §1.6）', () => {
@@ -566,5 +722,84 @@ describe('git.fetch — prune、behind 刷新与 remote 解析链（spec §1.6�
     // 错误如实映射，不伪造成功）。
     const failed = await rejectionOf(() => world.harness.service.fetch({ remote: 'alpha' }))
     expect(['git/git-error', 'git/auth-failed', 'git/timeout']).toContain(failed.code)
+  })
+})
+
+// ---------- 定时 fetch（v2 批次一 [清单 58]，D6=B） ----------
+
+describe('定时 fetch — autoFetchIntervalMs（[清单 58]；失败仅 warn 不投 UI）', () => {
+  it('短 interval 触发后台 fetch：bare 前进后 status world 重读 behind=1（afterWrite 刷新生效），成功路径零 warn', async () => {
+    const world = await makeWorld('auto-fetch', { autoFetchIntervalMs: 60 })
+    try {
+      await world.harness.service.push({ setUpstream: true })
+      // 第二 clone 推进 bare（后台 fetch 的目标增量）。
+      const clone2 = join(await scratchDir('dshgit-sync-autofetch-clone-', cleanups), 'clone')
+      git(world.repo, 'clone', world.bare, clone2)
+      await writeFile(join(clone2, 'remote.txt'), 'remote\n', 'utf8')
+      git(clone2, 'add', 'remote.txt')
+      git(clone2, 'commit', '-qm', 'feat: remote side')
+      git(clone2, 'push', '-q', 'origin', 'main')
+
+      // logger 替身（构造后替换——autoFetchOnce 运行时读取 this.logger）。
+      const warns: string[] = []
+      ;(world.harness.service as unknown as { logger: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void } }).logger = {
+        debug() {}, info() {}, warn: (m: string) => { warns.push(m) }, error() {},
+      }
+
+      // 构造期最早的 tick 在 clone2 推进前就 fetch 过——清掉 record，等**推进之后**的
+      // 后台 fetch。等第 2 条 fetch 记录：record 在 spawn 起点写入，且 autoFetchInFlight
+      // 闩保证不重叠——出现第 2 条 ⇒ 第 1 条（推进后的）必然已完成、跟踪引用已落盘。
+      world.harness.record.length = 0
+      await vi.waitFor(() => {
+        expect(world.harness.record.filter(entry => entry.argv.includes('fetch')).length).toBeGreaterThanOrEqual(2)
+      }, { timeout: 15_000, interval: 60 })
+
+      // world 重读（经服务 status）：跟踪引用已前进 → behind=1。invalidate 掉引擎
+      // fresh 扫描可能回填的推进前快照（TTL 1.5s 内），强制重扫。
+      world.harness.service.invalidateStatusCache()
+      const snapshot = await world.harness.service.status()
+      expect(snapshot.branch.upstream).toBe('origin/main')
+      expect(snapshot.branch.ahead).toBe(0)
+      expect(snapshot.branch.behind).toBe(1)
+      // 成功路径零 warn（失败仅 warn 的对照半在下一用例）。
+      expect(warns).toEqual([])
+    } finally {
+      // 停表：短 interval 的后台轮不得泄漏进本文件其余用例。
+      world.harness.service.stopAutoFetchTimer()
+    }
+  })
+
+  it('autoFetchOnce 失败面：无 remote 仓库 → 仅 warn（code=git/no-remote 附带）不抛、不投 UI', async () => {
+    const repo = await scratchRepo('dshgit-sync-autofail-', cleanups, { name: 't', email: 't@example.com' })
+    await writeFile(join(repo, 'a.txt'), 'base\n', 'utf8')
+    git(repo, 'add', 'a.txt')
+    git(repo, 'commit', '-qm', 'base')
+    const harness = makeService(repo)
+    const warns: string[] = []
+    ;(harness.service as unknown as { logger: { debug(m: string): void; info(m: string): void; warn(m: string): void; error(m: string): void } }).logger = {
+      debug() {}, info() {}, warn: (m: string) => { warns.push(m) }, error() {},
+    }
+    // 不抛（await 直接观察），warn 携带 autoFetch 与 no-remote 域码。
+    await expect(harness.service.autoFetchOnce()).resolves.toBeUndefined()
+    expect(warns).toHaveLength(1)
+    expect(warns[0]).toContain('git autoFetch failed')
+    expect(warns[0]).toContain('code=git/no-remote')
+  })
+
+  it('并发防抖：上一轮未完成时本轮跳过（autoFetchInFlight 闩），不叠加 git spawn', async () => {
+    const repo = await scratchRepo('dshgit-sync-autoflight-', cleanups, { name: 't', email: 't@example.com' })
+    await writeFile(join(repo, 'a.txt'), 'base\n', 'utf8')
+    git(repo, 'add', 'a.txt')
+    git(repo, 'commit', '-qm', 'base')
+    git(repo, 'remote', 'add', 'origin', 'http://127.0.0.1:9/nonexistent.git') // 拒连：拉长单轮耗时
+    const harness = makeService(repo)
+    const record = harness.record
+    // 同步连发两轮：第二轮因 in-flight 闩直接跳过。
+    const first = harness.service.autoFetchOnce()
+    const second = harness.service.autoFetchOnce()
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    // 两轮只产生一轮的 git 命令面（status/fetch 各一次；无第二次 fetch）。
+    const fetchSpawns = record.filter(entry => entry.argv.includes('fetch'))
+    expect(fetchSpawns).toHaveLength(1)
   })
 })

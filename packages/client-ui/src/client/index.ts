@@ -38,6 +38,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { GIT_GRAPH_ADDRESS, gitChangesAddress, parseGitChangesAddress } from './addresses.js'
+import { createGitAdminFace } from './admin-face.js'
 import type { GraphInjected } from './components/git-graph-tab.js'
 import { GitGraphTab } from './components/git-graph-tab.js'
 import { GitChangesTab } from './components/GitChangesTab.js'
@@ -85,6 +86,9 @@ export function apply(ctx: ClientContext): void {
   // 提交对话框业务面（④-K）：commit/push/AI 生成/身份/HEAD 预取——header 与变更面板
   // 两个拉起方共享同一闭包（apply 顶层单例，无第二份状态）。
   const commitDialogFace = createCommitDialogFace(rpc)
+  // 管理面业务面（V2 批次一）：分支/标签/worktree/远端/推送路由——header 按钮与
+  // 提交图 tab（tag chip 菜单）共享同一闭包（commitDialogFace 同款单例纪律）。
+  const adminFace = createGitAdminFace(rpc)
   ctx.on('connection/reset', () => {
     source.reset()
     changesStore.reset()
@@ -167,6 +171,8 @@ export function apply(ctx: ClientContext): void {
         reload: () => { void graphStore.reloadLog() },
         refreshRefs: () => { void graphStore.refreshRefs() },
         showCommit: (oid, path) => { void graphStore.showCommit(oid, path) },
+        // V2 批次一：tag chip 菜单（删 tag / 在该提交打标签）消费的管理面。
+        admin: adminFace,
       }),
     }, GitGraphTab)
   }), 'dsh-plugin-git: tab bodies')
@@ -185,7 +191,10 @@ export function apply(ctx: ClientContext): void {
       openGraphPanel: () => { ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS) },
       // ④-K：提交…/提交并推送… 菜单项拉起 GitCommitDialog（portal 浮层，组件内开合）。
       commitDialog: commitDialogFace,
-      syncNow: () => { /* 占位：push/pull/fetch 菜单动作随同步模块接线（refresh 走 source.refresh） */ },
+      // V2 批次一：管理面业务面 + R5 manual 刷新（fetch/branchSwitch 成功后的
+      // ahead/behind 与图重载链路刷新——v1 的 syncNow 占位行已随批次一拆真移除）。
+      admin: adminFace,
+      refresh: () => { source.refresh() },
     }),
   }, GitHeaderButton))
 }

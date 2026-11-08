@@ -42,6 +42,13 @@
  * 详情带 refs 过滤）+ Config logDefaultLimit/logMaxLimit（spec §1.0.2 默认
  * 500/5_000）。host 对 log/refs/show 无缓存（spec §1.9 三行无失效列）——写后失效
  * 由 client store 的状态订阅（branch.oid 变化 → reload）承担，afterWrite 无需接线。
+ * v2 批次一（2026-11-08，docs/v2-implementation-plan.md §3）接线：RefsAdminEngine
+ * （refs-admin.ts，分支/标签/remote/worktree 管理面，[清单 23/30/57/62/68]）+
+ * `@Remote branchCreate()/branchSwitch()/branchDelete()/tagCreate()/tagDelete()/
+ * remoteList()/worktreeList()/worktreeAdd()/worktreeRemove()`（九方法，REMOTE_METHODS
+ * 16→25）+ push 的 force/acknowledged/remote 入参（[清单 27/57]，remote-ops.ts 扩展）
+ * + Config autoFetchIntervalMs（[清单 58] 定时 fetch，D6=B 默认 300_000、0=关；
+ * Cordis effect 挂 interval，失败仅 warn 不投 UI）。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -59,16 +66,19 @@ import { RemoteOpsEngine } from './remote-ops.ts'
 import { MessageGenEngine, DEFAULT_LLM_MAX_INPUT_BYTES } from './message-gen.ts'
 import type { GitLlmFace, GitRouteEventHost } from './message-gen.ts'
 import { GraphEngine, DEFAULT_LOG_DEFAULT_LIMIT, DEFAULT_LOG_MAX_LIMIT } from './graph.ts'
+import { RefsAdminEngine } from './refs-admin.ts'
 import { StatusEngine, STATUS_CACHE_TTL_MS } from './status.ts'
 import { StatusWatcher, DEFAULT_DEBOUNCE_MS, DEFAULT_POLL_INTERVAL_MS } from './watcher.ts'
 import type { GitFsWatchFace } from './watcher.ts'
 import { WorkspaceResolver } from './workspace.ts'
 import type { GitSessionEventHost, GitWorkspaceResolution } from './workspace.ts'
 import type {
+  BranchCreateOptions, BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult,
   CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope, DiscardOptions, DiscardResult,
   FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult,
   GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
-  ShowOptions, StageResult, UnstageResult,
+  RemoteListResult, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -90,6 +100,9 @@ export const PLUGIN_NAME = 'dsh-gitkit'
  * 注意：wire 值同时以字面量内联在 super(ctx, 'git')（generator 契约）。
  */
 export const SERVICE_KEY = 'git'
+
+/** 定时 fetch 默认间隔毫秒（v2 批次一 [清单 58]，D6=B 拍板默认开启；0 = 关闭）。 */
+export const DEFAULT_AUTO_FETCH_INTERVAL_MS = 300_000
 
 /** GitRunner bounds 与工作区解析（Config；超时分档照 spec §1.0.2）。 */
 export interface Config {
@@ -145,10 +158,17 @@ export interface Config {
   logDefaultLimit?: number
   /** log 单页上限（spec §1.0.2 logMaxLimit，默认 5_000——limit 钳制上界）。 */
   logMaxLimit?: number
+  /**
+   * 定时 fetch 间隔毫秒（v2 批次一 [清单 58]，D6=B 拍板默认**开启**：默认 300_000，
+   * 0 = 关闭）。到点后台 fetch（upstream 三态推导复用 remote-ops 缺省解析链）；
+   * 失败仅 logger.warn 不投 UI 错误（后台任务不得弹窗打扰），成功走 afterWrite
+   * 语义刷新 behind（R3 帧，R2 去重下净零变化不推帧）。
+   */
+  autoFetchIntervalMs?: number
 }
 
 /** `ping`/`identity`/`status`/`diff`/`followStatus`/写操作之外的可读常量：本服务当前端点清单（诊断用）。 */
-export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail'] as const
+export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove'] as const
 
 /**
  * Git 插件 host 服务。构造即注册（`ctx.reflect.provide`），
@@ -175,6 +195,7 @@ export class GitService extends TypertRemoteService {
     llmMaxInputBytes: z.number().step(1).min(1_024).max(16 * 1024 * 1024).default(DEFAULT_LLM_MAX_INPUT_BYTES),
     logDefaultLimit: z.number().step(1).min(1).max(100_000).default(DEFAULT_LOG_DEFAULT_LIMIT),
     logMaxLimit: z.number().step(1).min(1).max(100_000).default(DEFAULT_LOG_MAX_LIMIT),
+    autoFetchIntervalMs: z.number().step(1).min(0).max(86_400_000).default(DEFAULT_AUTO_FETCH_INTERVAL_MS),
   })
 
   private readonly runners: Record<GitCommandClass, GitRunner>
@@ -183,6 +204,7 @@ export class GitService extends TypertRemoteService {
   private readonly mutations: MutationEngine
   private readonly commitEngine: CommitEngine
   private readonly remoteOps: RemoteOpsEngine
+  private readonly refsAdmin: RefsAdminEngine
   private readonly messageGen: MessageGenEngine
   private readonly graph: GraphEngine
   private readonly statusWatcher: StatusWatcher
@@ -219,6 +241,10 @@ export class GitService extends TypertRemoteService {
     // 远端同步引擎（spec §1.5/§1.6 + M6 任务口径）：守卫/预检走只读实例与 fresh
     // 扫描，push/pull/fetch 执行走 network 实例（networkTimeoutMs 熔断）。
     this.remoteOps = new RemoteOpsEngine(this.runners.network, this.runners.readonly, this.statusEngine)
+    // refs 管理引擎（v2 批次一 [清单 23/30/57/62/68]）：变更类走 write 实例（hooks
+    // 不相关但 WRITE_PREFIX 前缀集一致），查询/预检/回读走只读实例 + fresh 扫描（脏区
+    // 守卫）+ workspace 探测（repoRoot 发现，graph.ts 同款）。
+    this.refsAdmin = new RefsAdminEngine(this.runners.write, this.runners.readonly, this.statusEngine, this.workspace)
     this.logger = (ctx as unknown as { logger: GitLoggerFace }).logger
     // AI 提交信息引擎（spec §1.7 + M7 任务口径）：只读实例 + DiffEngine staged 路 +
     // 宿主 ctx.llm 结构切片（缺席不阻断激活——调用时落 git/llm-failed call）；
@@ -251,6 +277,20 @@ export class GitService extends TypertRemoteService {
     })
     // 装载标记（runbook §5.4：ctx.logger.info 不出现在控制台，调试标记用 stdout）。
     process.stdout.write('[dsh-plugin-git] GitService active (serviceKey=git)\n')
+    // 定时 fetch（v2 批次一 [清单 58]，D6=B）：Cordis effect 内挂 interval——句柄在
+    // effect 体注册、cleanup 返回给宿主（fiber 卸载时清理，无模块级句柄纪律）；
+    // 0 = 关闭。到点后台 fetch（{@link autoFetchOnce}），失败仅 warn 不投 UI。
+    if (resolved.autoFetchIntervalMs > 0) {
+      ctx.effect(() => {
+        const timer = setInterval(() => { void this.autoFetchOnce() }, resolved.autoFetchIntervalMs)
+        timer.unref()
+        this.autoFetchTimer = timer
+        return () => {
+          clearInterval(timer)
+          if (this.autoFetchTimer === timer) this.autoFetchTimer = null
+        }
+      })
+    }
   }
 
   /**
@@ -473,13 +513,15 @@ export class GitService extends TypertRemoteService {
   }
 
   /**
-   * 推送（spec §1.5 [清单 25/26/67]；权限 C）：detached/unborn 拒绝 → 上游三态判定
-   * （无上游/gone → set-upstream 路径，gone 态严禁 rev-list；正常 → rev-list diverged
-   * 前置检测）→ 显式 remote + 全量 refspec 执行（禁裸 push——B3）→ stderr 脱敏分类
+   * 推送（spec §1.5 [清单 25/26/67]；权限 C）：force 双闸守卫（v2 批次一 [清单 27]，
+   * force=true 需 acknowledged 且跳过 diverged 预检——语义即覆盖远端）→ detached/unborn
+   * 拒绝 → 上游三态判定（无上游/gone → set-upstream 路径，gone 态严禁 rev-list；正常
+   * 且非 force → rev-list diverged 前置检测）→ 显式 remote（options.remote 直查存在性，
+   * 缺省走解析链）+ 全量 refspec 执行（禁裸 push——B3）→ stderr 脱敏分类
    * （authentication/network/push-rejected/diverged）。超时 networkTimeoutMs 熔断。
-   * @throws git/no-branch、git/no-upstream、git/no-remote、git/choose-remote、
-   *   git/diverged、git/push-rejected、git/auth-failed、git/session-workspace-unresolved、
-   *   git/no-repository、git/timeout、git/git-error。
+   * @throws git/bad-request 'force-unacknowledged'、git/no-branch、git/no-upstream、
+   *   git/no-remote、git/choose-remote、git/diverged、git/push-rejected、git/auth-failed、
+   *   git/session-workspace-unresolved、git/no-repository、git/timeout、git/git-error。
    */
   @Remote
   async push(options: PushOptions, signal?: AbortSignal): Promise<PushResult> {
@@ -639,6 +681,238 @@ export class GitService extends TypertRemoteService {
   private afterWrite(): void {
     this.statusEngine.invalidate()
     this.statusWatcher.notifyMutation()
+  }
+
+  // ── v2 批次一：refs 管理面（[清单 23/30/57/62/68]；引擎半 = refs-admin.ts） ──
+
+  /**
+   * 新建分支（[清单 23]；权限 C）：`git branch -- <name> [<from>]`（checkout 时追加
+   * `git switch -- <name>`——`switch -c` 位置参数无 `--` 保护，拆两命令）；重名 ⇒
+   * git/branch-exists（预检）。oid 为回读值（不信入参）。
+   * @throws git/bad-request 'invalid-options'、git/branch-exists、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<BranchCreateResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.branchCreate(options, signal)
+      logWrite(this.logger, 'branchCreate', {
+        name: result.name,
+        checkedOut: result.checkedOut,
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'branchCreate', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 切换分支（[清单 23]；权限 C）：脏区前置拒绝（fresh 扫描 ⇒ git/dirty-worktree，
+   * 文案提示 stash——批次三前为纯文案）→ `git switch -- <name>`；to 为回读值。
+   * @throws git/bad-request 'invalid-options'、git/dirty-worktree、git/branch-not-found、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async branchSwitch(name: string, signal?: AbortSignal): Promise<BranchSwitchResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.branchSwitch(name, signal)
+      logWrite(this.logger, 'branchSwitch', {
+        from: result.from ?? '(detached)',
+        to: result.to,
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'branchSwitch', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 删除分支（[清单 23]；权限 C）：`git branch -d -- <name>`；未合并 ⇒
+   * git/branch-not-merged；force（= `-D`）需 acknowledged（双闸 host 半，零命令守卫）。
+   * wasMerged 为删除前的 `merge-base --is-ancestor` 回读。
+   * @throws git/bad-request 'force-unacknowledged'、git/branch-not-found、
+   *   git/branch-not-merged、git/no-repository、git/session-workspace-unresolved、
+   *   git/timeout、git/git-error。
+   */
+  @Remote
+  async branchDelete(options: BranchDeleteOptions, signal?: AbortSignal): Promise<BranchDeleteResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.branchDelete(options, signal)
+      logWrite(this.logger, 'branchDelete', {
+        name: result.deleted,
+        force: options.force === true,
+        wasMerged: result.wasMerged,
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'branchDelete', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 新建 tag（[清单 30]；权限 C）：message 非空 = annotated（`-a -m`）；重名 ⇒
+   * git/tag-exists（非 force 预检）；force（= `-f` 覆盖）需 acknowledged。oid 为
+   * peeled 提交回读值。
+   * @throws git/bad-request 'force-unacknowledged'、git/tag-exists、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async tagCreate(options: TagCreateOptions, signal?: AbortSignal): Promise<TagCreateResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.tagCreate(options, signal)
+      logWrite(this.logger, 'tagCreate', {
+        name: result.name,
+        annotated: result.annotated,
+        force: options.force === true,
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'tagCreate', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 删除 tag（[清单 30]；权限 C）：`git tag -d -- <name>`；不存在 ⇒ git/tag-not-found。
+   * @throws git/bad-request 'invalid-options'、git/tag-not-found、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async tagDelete(name: string, signal?: AbortSignal): Promise<TagDeleteResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.tagDelete(name, signal)
+      logWrite(this.logger, 'tagDelete', { name: result.deleted, durationMs: Date.now() - startedAt })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'tagDelete', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * remote 列表（[清单 57]；权限 A，只读）：`git remote -v` 行解析（fetch/push 双 url，
+   * pushUrl=null = 未显式配置——git 语义下 push 缺省使用 fetch url）。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（行解析契约破坏 / 命令失败兜底）。
+   */
+  @Remote
+  async remoteList(signal?: AbortSignal): Promise<RemoteListResult> {
+    const startedAt = Date.now()
+    const result = await this.refsAdmin.remoteList(signal)
+    logRead(this.logger, 'remoteList', { count: result.remotes.length, durationMs: Date.now() - startedAt })
+    return result
+  }
+
+  /**
+   * worktree 列表（[清单 62]；权限 A，只读）：`git worktree list --porcelain` 块解析。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（块解析契约破坏 / 命令失败兜底）。
+   */
+  @Remote
+  async worktreeList(signal?: AbortSignal): Promise<WorktreeListResult> {
+    const startedAt = Date.now()
+    const result = await this.refsAdmin.worktreeList(signal)
+    logRead(this.logger, 'worktreeList', { count: result.worktrees.length, durationMs: Date.now() - startedAt })
+    return result
+  }
+
+  /**
+   * 新建 worktree（[清单 68] per-ticket 写面；权限 C）：branch（检出现有）与
+   * newBranch（`-b` 新建）互斥且至少其一（违反 ⇒ git/bad-request 'invalid-options'）；
+   * path 已存在非空 / 分支已被另一 worktree 检出 ⇒ git/worktree-failed。branch/head
+   * 为新 worktree 内回读值（失败降级 null 不炸整体）。
+   * @throws git/bad-request 'invalid-options'、git/worktree-failed、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<WorktreeAddResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.worktreeAdd(options, signal)
+      logWrite(this.logger, 'worktreeAdd', {
+        path: result.path,
+        branch: result.branch ?? '(detached)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'worktreeAdd', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 移除 worktree（[清单 68]；权限 C）：`git worktree remove [--force] -- <path>`；
+   * 脏 worktree 无 force ⇒ git/worktree-failed（git 自身拒绝，stderr 脱敏进 details）；
+   * `--force` 仅随 acknowledged 透传（双闸 host 半，零命令守卫）；path 不存在 ⇒
+   * git/worktree-failed。
+   * @throws git/bad-request 'force-unacknowledged'、git/worktree-failed、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<WorktreeRemoveResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.refsAdmin.worktreeRemove(options, signal)
+      logWrite(this.logger, 'worktreeRemove', { path: result.removed, force: options.force === true, durationMs: Date.now() - startedAt })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'worktreeRemove', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 定时 fetch 的单次执行面（[清单 58] interval 回调复用；测试可直接 await）：
+   * 后台 fetch（remote=null 走 upstream 三态缺省解析链，remote-ops 复用）；失败仅
+   * logger.warn 不投 UI 错误（后台任务不得弹窗打扰——GCM 弹窗面 README §5 既有注记）；
+   * 成功走 afterWrite 语义刷新 behind（R3 帧，R2 去重下净零变化不推帧）。并发防抖：
+   * 上一轮未完成则跳过本轮。
+   */
+  async autoFetchOnce(): Promise<void> {
+    if (this.autoFetchInFlight) return
+    this.autoFetchInFlight = true
+    try {
+      const result = await this.remoteOps.fetch({ remote: null })
+      logRead(this.logger, 'autoFetch', { remote: result.remote, pruned: result.pruned })
+      this.afterWrite()
+    } catch (cause) {
+      // 后台任务失败面：仅 warn（code 附带），绝不向上抛、不进错误帧/错误面板。
+      logFailure(this.logger, 'autoFetch', errorCodeOf(cause))
+    } finally {
+      this.autoFetchInFlight = false
+    }
+  }
+
+  private autoFetchInFlight = false
+  /** 定时 fetch 的 interval 句柄（真宿主由 ctx.effect 清理；{@link stopAutoFetchTimer} 测试停表用）。 */
+  private autoFetchTimer: NodeJS.Timeout | null = null
+
+  /** 供测试停表的入口（真宿主的清理由 ctx.effect 返回的 dispose 承担；不影响 wire 面）。 */
+  stopAutoFetchTimer(): void {
+    if (this.autoFetchTimer !== null) {
+      clearInterval(this.autoFetchTimer)
+      this.autoFetchTimer = null
+    }
   }
 
   /**

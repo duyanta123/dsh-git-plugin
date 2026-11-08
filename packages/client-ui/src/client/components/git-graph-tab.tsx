@@ -15,11 +15,12 @@
  * （computeGraphLayout 纯函数 useMemo），前缀行 lane 稳定（G2，lane-layout.ts）。
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GitAdminFace } from '../admin-face.js'
 import { computeGraphLayout } from '../graph/lane-layout.js'
 import { bucketArrivals, GRAPH_ROW_HEIGHT, GraphLaneSvg } from '../graph/graph-svg.js'
 import { detailViewModel, formatCommitDate, graphNoticeRetry, rowRefChips } from '../graph-view-model.js'
@@ -30,7 +31,9 @@ import { GRAPH_LOAD_MORE_TAIL } from '../store/git-graph-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import type { GraphTabStoreHandle } from '../store/graph-tab-store.js'
 import { CommitDetailPanel } from './commit-detail-panel.js'
+import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+import { GitTagCreateDialog } from './GitTagCreateDialog.js'
 
 /** 插件投给 tab body 的业务面（inject 工厂产物；hooks 由渲染器合成 use* 选择器）。 */
 export interface GraphInjected {
@@ -48,6 +51,8 @@ export interface GraphInjected {
   refreshRefs(): void
   /** 详情/文件 patch 懒加载（path=null 列表态；path 给定 patch 态）。 */
   showCommit(oid: string, path: string | null): void
+  /** 管理面业务面（V2 批次一：tag chip 菜单的删 tag / 打 tag 消费半）。 */
+  admin: GitAdminFace
 }
 
 /** tab body 组合 props（PropsRuntime ⊃ useTabInfo；PropsStore ⊃ useStore/actions）。 */
@@ -61,12 +66,31 @@ export type GitGraphTabProps = PropsRuntime<'sidebar.right.pane.tab'>
  * @param props - 框架组合 props。
  */
 export function GitGraphTab(props: GitGraphTabProps): ReactNode {
-  const { t, useStore, actions, useGitGraph, useGitStatus, loadMore, reload, refreshRefs, showCommit } = props
+  const { t, useStore, actions, useGitGraph, useGitStatus, loadMore, reload, refreshRefs, showCommit, admin } = props
   const graph = useGitGraph((state) => state)
   const status = useGitStatus((state) => state)
   const selectedOid = useStore((state) => state.selectedOid)
   const detailPath = useStore((state) => state.detailPath)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  // ── V2 批次一 tag chip 菜单（[30]）：删 tag 确认 / 在该提交打标签对话框 + 错误面 ──
+  const [tagIntent, setTagIntent] = useState<string | null>(null)
+  const [deleteTagAsk, setDeleteTagAsk] = useState<string | null>(null)
+  const [tagBusy, setTagBusy] = useState(false)
+  const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
+
+  const deleteTag = (name: string): void => {
+    if (tagBusy) return
+    setDeleteTagAsk(null)
+    setTagBusy(true)
+    void admin.tagDelete(name).then((result) => {
+      setTagBusy(false)
+      if (!result.ok) {
+        setAdminError(result.error)
+        return
+      }
+      refreshRefs() // refs 快照刷新 → 行 chips 重算
+    })
+  }
 
   // 整表重跑布局（追加页后 commits 引用变化 → 重算；G2 前缀稳定在 layout 内保证）。
   const layout = useMemo(() => computeGraphLayout({
@@ -154,6 +178,19 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
           />
         </div>
       )}
+      {adminError !== null && (
+        <div className='dsh-git-graph__notice' data-git-graph-admin-notice=''>
+          <GitErrorNotice error={adminError} t={t} />
+          <button
+            type='button'
+            className='dsh-git-graph__notice-dismiss'
+            data-git-graph-admin-notice-close=''
+            onClick={() => { setAdminError(null) }}
+          >
+            {t('common.close')}
+          </button>
+        </div>
+      )}
       {loading && <p className='dsh-git-graph__status' data-git-graph-status='loading'>{t('graph.loading')}</p>}
       {empty && <p className='dsh-git-graph__status' data-git-graph-status='empty'>{t('graph.noCommits')}</p>}
       {graph.log.loadMoreInFlight && (
@@ -233,6 +270,9 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
           t={t}
           // 失败详情重试（P2）：对 error 槽重发列表态拉取（store 清槽重拉）。
           onRetry={() => { showCommit(selectedOid, null) }}
+          // tag chip 菜单（V2 批次一 [30]）：删 tag → 确认；打标签 → 对话框。
+          onTagDelete={(name) => { setDeleteTagAsk(name) }}
+          onTagCreate={(oid) => { setTagIntent(oid) }}
           onFileClick={(path) => {
             if (detailPath === path) {
               actions.openDetailPath(null)
@@ -244,6 +284,33 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
           onClose={() => { actions.select(null) }}
         />
       )}
+      {/* tag chip 菜单的两个落点（V2 批次一 [30]）：删除确认 + 打标签对话框。 */}
+      <GitTagCreateDialog
+        open={tagIntent !== null}
+        t={t}
+        face={admin}
+        oid={tagIntent}
+        targetLabel={(() => {
+          if (tagIntent === null) return null
+          const subject = commitByOid.get(tagIntent)?.subject ?? ''
+          return subject === '' ? tagIntent.slice(0, 7) : `${tagIntent.slice(0, 7)} ${subject}`
+        })()}
+        onDone={() => {
+          setTagIntent(null)
+          refreshRefs()
+        }}
+        onClose={() => { setTagIntent(null) }}
+      />
+      <GitConfirmDialog
+        open={deleteTagAsk !== null}
+        title={t('tag.delete.title')}
+        message={t('tag.delete.message', { name: deleteTagAsk ?? '' })}
+        severity='normal'
+        confirmLabel={t('tag.delete.title')}
+        cancelLabel={t('confirm.cancel')}
+        onConfirm={() => { if (deleteTagAsk !== null) deleteTag(deleteTagAsk) }}
+        onCancel={() => { setDeleteTagAsk(null) }}
+      />
     </div>
   )
 }

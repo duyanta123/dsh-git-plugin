@@ -120,6 +120,44 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.getCommitDetail must not be called by the source')
   }
 
+  // V2 批次一管理面扩展 GitRpcFace（9 admin 方法）后的适配面：
+  // 状态源不消费这些端点——断言守卫同 status。
+  async branchCreate(): Promise<never> {
+    throw new Error('FakeRpc.branchCreate must not be called by the source')
+  }
+
+  async branchSwitch(): Promise<never> {
+    throw new Error('FakeRpc.branchSwitch must not be called by the source')
+  }
+
+  async branchDelete(): Promise<never> {
+    throw new Error('FakeRpc.branchDelete must not be called by the source')
+  }
+
+  async tagCreate(): Promise<never> {
+    throw new Error('FakeRpc.tagCreate must not be called by the source')
+  }
+
+  async tagDelete(): Promise<never> {
+    throw new Error('FakeRpc.tagDelete must not be called by the source')
+  }
+
+  async remoteList(): Promise<never> {
+    throw new Error('FakeRpc.remoteList must not be called by the source')
+  }
+
+  async worktreeList(): Promise<never> {
+    throw new Error('FakeRpc.worktreeList must not be called by the source')
+  }
+
+  async worktreeAdd(): Promise<never> {
+    throw new Error('FakeRpc.worktreeAdd must not be called by the source')
+  }
+
+  async worktreeRemove(): Promise<never> {
+    throw new Error('FakeRpc.worktreeRemove must not be called by the source')
+  }
+
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
     this.gate = new Promise<void>((resolve) => { this.openGate = resolve })

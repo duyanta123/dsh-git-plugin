@@ -18,6 +18,16 @@
  * 拒绝）、`git/choose-remote`（多 remote 无默认远端——spec §1.5-1/§1.6 同场景落
  * git/no-remote，任务口径按「可选远端」语义单列；两者 details 同形 remotes: string[]）。
  *
+ * v2 批次一（2026-11-08，docs/v2-implementation-plan.md §3.4）续增六码 + 一处联合扩展：
+ * `git/branch-not-found` / `git/branch-not-merged` / `git/branch-exists`（refs-admin.ts
+ * 的分支管理面，branch-exists 与 git/tag-exists 对称的「已存在」语义——方案评审修订轮
+ * 定死）、`git/tag-exists` / `git/tag-not-found`（tag 管理面）、`git/worktree-failed`
+ * （[清单 68] worktree 写面专用，details.stderr 过 sanitizeStderr）；
+ * `git/bad-request` reason 联合 `+= 'force-unacknowledged'`（方案 §3.2：force push /
+ * `-D` 删分支 / tag `-f` 共用）与 `+= 'invalid-options'`（worktreeAdd 的 branch/
+ * newBranch 互斥与至少其一契约的守卫面——方案 §3.2 类型注记要求该契约生效，方案未指认
+ * 承载码，取 bad-request 最贴近语义，登记为偏差）。
+ *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
  * `declare module '@deepseek-ai/dsh-typert-protocol'` + `interface RemoteErrorDetailsMap`，
@@ -55,7 +65,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/session-workspace-unresolved': Record<string, never>
     'git/no-paths': { op: string }
     'git/bad-request': {
-      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable'
+      /**
+       * 守卫失败原因：v1 三守卫（unacknowledged / stale-base-revision / not-discardable）+
+       * v2 批次一 'force-unacknowledged'（force push / `-D` 删分支 / tag `-f` / worktree
+       * remove `--force` 共用的「危险动作未确认」闸）+ 'invalid-options'（调用方入参违反
+       * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一）。
+       */
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options'
       /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
       paths: string[]
       /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
@@ -67,6 +83,13 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/no-branch': { state: 'detached' | 'unborn' }
     'git/dirty-worktree': { branch: string | null; pathCount: number }
     'git/choose-remote': { remotes: string[] }
+    // —— v2 批次一六码（refs-admin/remote-ops 消费；docs/v2-implementation-plan.md §3.4）——
+    'git/branch-not-found': { name: string }
+    'git/branch-not-merged': { name: string }
+    'git/branch-exists': { name: string }
+    'git/tag-exists': { name: string }
+    'git/tag-not-found': { name: string }
+    'git/worktree-failed': { path: string; stderr: string }
   }
 }
 

@@ -33,6 +33,13 @@ const ALL_GIT_CODES: readonly GitCode[] = [
   'git/no-branch',
   'git/dirty-worktree',
   'git/choose-remote',
+  // V2 批次一管理面新码（host refs-admin 模块；plan §3.4）。
+  'git/branch-not-found',
+  'git/branch-not-merged',
+  'git/branch-exists',
+  'git/tag-exists',
+  'git/tag-not-found',
+  'git/worktree-failed',
 ]
 
 describe('ERROR_MAP — Record 穷尽约束（运行期镜像）', () => {
@@ -131,5 +138,20 @@ describe('errorNoticeView — 视图模型', () => {
     const view = errorNoticeView({ code: 'git/no-upstream', message: 'no upstream', details: undefined })
     expect(view.params).toEqual({ branch: '' })
     expect(view.key).toBe('error.no-upstream')
+  })
+
+  it('V2 批次一管理面码：name/path 进插值；worktree-failed 的 stderr 进折叠区', () => {
+    const branch = errorNoticeView({
+      code: 'git/branch-exists', message: 'exists', details: { name: 'feature/a' },
+    })
+    expect(branch.key).toBe('error.branch-exists')
+    expect(branch.params).toEqual({ name: 'feature/a' })
+    const worktree = errorNoticeView({
+      code: 'git/worktree-failed', message: 'wt failed', details: { path: 'D:/wt', stderr: 'fatal: token=abc dirty' },
+    })
+    expect(worktree.key).toBe('error.worktree-failed')
+    expect(worktree.params).toEqual({ path: 'D:/wt' })
+    expect(worktree.detailsText).toContain('token=***')
+    expect(worktree.detailsText).not.toContain('token=abc')
   })
 })

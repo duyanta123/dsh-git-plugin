@@ -73,6 +73,11 @@ export interface DetailRefChip {
   label: string
   /** HEAD 合成 chip（描边强调）。 */
   head: boolean
+  /**
+   * tag chip（V2 批次一 [30]）：RefInfo.type === 'tag' ⇒ 渲染层挂 chip 菜单
+   * （删 tag / 从该提交打 tag——plan §3.6）；分支/HEAD chip 无菜单。
+   */
+  tag: boolean
 }
 
 /** 详情面板视图模型（CommitDetailPanel 的渲染输入）。 */
@@ -112,13 +117,13 @@ export function detailViewModel(params: {
     // `HEAD -> <name>` 置首；detached 态（调用方仅在本提交 = HEAD 时传 'HEAD'）⇒
     // 前置 HEAD chip。其余 ref 短名按原序。
     if (headLabel !== null && headLabel !== 'HEAD' && detail.refs.some((ref) => ref.shortName === headLabel)) {
-      chips.push({ label: `HEAD -> ${headLabel}`, head: true })
+      chips.push({ label: `HEAD -> ${headLabel}`, head: true, tag: false })
     } else if (headLabel === 'HEAD') {
-      chips.push({ label: 'HEAD', head: true })
+      chips.push({ label: 'HEAD', head: true, tag: false })
     }
     for (const ref of detail.refs) {
       if (headLabel !== null && headLabel !== 'HEAD' && ref.shortName === headLabel) continue
-      chips.push({ label: ref.shortName, head: false })
+      chips.push({ label: ref.shortName, head: false, tag: ref.type === 'tag' })
     }
   }
   return {

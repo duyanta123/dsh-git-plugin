@@ -11,6 +11,14 @@
  *      push.default=matching 下裸 push 一次推全部分支，Tier C 动作静默扩权；ZCode
  *      的裸 push 形态不采纳）；ZCode 的 remote.pushDefault 段不在解析链（spec §1.5-1
  *      与任务口径均未列，见 ModuleResult.openIssues）。
+ *   2026-11-08（v2 批次一，docs/v2-implementation-plan.md §3.2/§3.5）—— push 扩
+ *   force/acknowledged/remote 三入参：force 双闸守卫（bad-request
+ *   'force-unacknowledged' 零命令）+ force 跳过 diverged 预检（upstream 三态预检保留）
+ *   + 显式 remote 直查存在性（requireRemote；不走缺省解析链）。
+ *   2026-11-08（批次一独立评审 medium 修复）—— diverged 预检基线改 = 实际推送目标的
+ *   remote-tracking 引用 `<remote>/<remoteBranch>`（原恒按分支配置 upstream 计数，推送
+ *   对话框选定非 upstream 远端做非 force 推送时被旧 upstream 的分叉伪拒）；非显式路径
+ *   按构造 ≡ upstream 行为不变；diverged details.upstream 随基线指向实际目标。
  *   2. 上游三态判定（无上游 / gone / 正常，任务口径）经 StatusEngine fresh 快照：
  *      porcelain v2 `# branch.upstream` 存在而 `# branch.ab` 缺失 = gone（本机
  *      git 2.55.0.windows.2 实测：gone 态 `rev-parse @{u}` exit 128——因此 **gone 态
@@ -148,17 +156,43 @@ export class RemoteOpsEngine {
   // ---------- push ----------
 
   /**
-   * push（spec §1.5；权限 C）：detached/unborn 拒绝 → 上游三态 →（normal：diverged
-   * 预检）→ 显式 remote + 全量 refspec 执行 → stderr 脱敏分类。
-   * @throws git/no-branch、git/no-upstream、git/no-remote、git/choose-remote、
-   *   git/diverged、git/push-rejected、git/auth-failed、git/session-workspace-unresolved、
-   *   git/no-repository（fresh 扫描顺带发现）、git/timeout、git/git-error。
+   * push（spec §1.5；权限 C）：force 双闸守卫（v2 批次一 [清单 27]）→ detached/unborn
+   * 拒绝 → 上游三态 →（normal 且非 force：diverged 预检）→ 显式 remote + 全量 refspec
+   * 执行 → stderr 脱敏分类。
+   *
+   * v2 批次一扩展（docs/v2-implementation-plan.md §3.2/§3.5）：
+   *   - `force=true && acknowledged!==true` ⇒ git/bad-request 'force-unacknowledged'，
+   *     **零命令执行**（discard acknowledged 守卫同款纪律）；
+   *   - force=true 跳过 diverged 预检（语义即覆盖远端，README §5 注记），upstream
+   *     存在性预检（三态判定）保留；
+   *   - 显式 `options.remote`：直查该 remote 存在性（不存在 ⇒ git/no-remote，
+   *     details.remotes 带全量清单），**不走** origin/唯一 remote 解析链——推送对话框
+   *     选定目标后 host 直查（§3.10：预检顺序写死，避免与 git/choose-remote 双轨报错）；
+   *     diverged 预检基线同步切到该远端的目标分支跟踪引用 `<remote>/<remoteBranch>`
+   *     （与旧 upstream 的分叉不影响推往别的远端；该引用不存在 = 不预检，非 ff 拒绝
+   *     由运行期 stderr 分类落 git/push-rejected）。
+   * @throws git/bad-request 'force-unacknowledged'、git/no-branch、git/no-upstream、
+   *   git/no-remote、git/choose-remote、git/diverged、git/push-rejected、git/auth-failed、
+   *   git/session-workspace-unresolved、git/no-repository（fresh 扫描顺带发现）、
+   *   git/timeout、git/git-error。
    */
   async push(options: PushOptions, signal?: AbortSignal): Promise<PushResult> {
+    // 守卫 0（v2 批次一）：force 的 C 级二次确认旗标——最先判，零命令执行。
+    if (options.force === true && options.acknowledged !== true) {
+      throw gitError('git/bad-request', 'git push: force push requires acknowledged=true (destructive confirmation gate; force overwrites the remote)', {
+        reason: 'force-unacknowledged', paths: [], expected: null, actual: null,
+      })
+    }
     const { repoRoot, snapshot } = await this.scanFresh('push', signal)
     const branch = this.requireBranch(snapshot)
     const state = upstreamStateOf(snapshot.branch)
     this.logger?.debug(`git push: upstream state=${state} upstream=${String(snapshot.branch.upstream)}`)
+
+    // 显式 remote（v2 批次一 [清单 57]）：非空字符串 = 直查存在性，不走缺省解析链。
+    const explicitRemote = typeof options.remote === 'string' && options.remote !== '' ? options.remote : null
+    if (explicitRemote !== null) {
+      await this.requireRemote(repoRoot, branch, explicitRemote, 'push', signal)
+    }
 
     if (state !== 'normal') {
       // 无上游 / gone → set-upstream 路径（任务口径 ①）；未确认 ⇒ no-upstream 引导
@@ -169,39 +203,53 @@ export class RemoteOpsEngine {
           hint: 'set-upstream',
         })
       }
-      const remote = (await this.branchRemote(repoRoot, branch, signal))
+      const remote = explicitRemote
+        ?? (await this.branchRemote(repoRoot, branch, signal))
         ?? (await this.resolveDefaultRemote(repoRoot, branch, 'push', signal))
       const refspec = `refs/heads/${branch}:refs/heads/${branch}`
       const result = await this.gitNetwork.run(
-        ['push', '--set-upstream', remote, refspec],
+        ['push', ...(options.force === true ? ['--force'] : []), '--set-upstream', remote, refspec],
         { cwd: repoRoot, op: 'push(set-upstream)', signal: active(signal) },
       )
       if (result.exitCode !== 0) this.throwPushFailure(result, remote, branch, 'push(set-upstream)')
       return { remote, branch, upstream: `${remote}/${branch}`, setUpstreamUsed: true }
     }
 
-    // normal：diverged 前置检测（spec §1.5-2 [清单 67]；v1 无 force push）。
+    // normal：diverged 前置检测（spec §1.5-2 [清单 67]）；force=true 跳过（语义即覆盖
+    // 远端——v2 批次一 [清单 27]，upstream 存在性预检已由三态判定承担）。
+    // v2 批次一评审修复（medium）：预检基线 = **实际推送目标**的 remote-tracking 引用
+    // `<remote>/<remoteBranch>`，而非分支配置的 upstream——推送对话框（[57]）选定非
+    // upstream 远端做非 force 推送时，与旧 upstream 的分叉与本次推送无关（旧行为会伪拒
+    // 且 diverged 文案指向用户未选的远端）。目标解析与执行段同口径：remote = 显式入参 →
+    // branch.<name>.remote（normal 态必非空——porcelain upstream 即由它派生）→ upstream
+    // 短名拆分回落；remoteBranch = branch.<name>.merge 剥 refs/heads/ → 显式入参时本地
+    // 分支名（upstream 前缀不属于该远端，切片会得垃圾）→ upstream 去前缀回落。非显式
+    // 路径下 `<remote>/<remoteBranch>` 按构造 ≡ upstream（行为不变）；显式远端无该分支的
+    // tracking 引用（从未 fetch）⇒ revListCounts null ⇒ 不预检（非 ff 拒绝由运行期
+    // stderr 分类落 git/push-rejected，与 v1 口径一致）。
     const upstream = snapshot.branch.upstream as string
-    const counts = await this.revListCounts(repoRoot, upstream, 'push', signal)
-    if (counts !== null && counts.ahead > 0 && counts.behind > 0) {
-      throw gitError('git/diverged', `git push: local and remote have diverged (ahead ${counts.ahead}, behind ${counts.behind})`, {
-        branch,
-        upstream,
-        ahead: counts.ahead,
-        behind: counts.behind,
-      })
+    const remote = explicitRemote ?? (await this.branchRemote(repoRoot, branch, signal)) ?? splitFirst(upstream, '/')
+    const merge = await this.configGet(repoRoot, `branch.${branch}.merge`, signal)
+    const remoteBranch = merge !== null && merge.startsWith('refs/heads/')
+      ? merge.slice('refs/heads/'.length)
+      : (explicitRemote !== null ? branch : (upstream.slice(remote.length + 1) || branch))
+    if (options.force !== true) {
+      const counts = await this.revListCounts(repoRoot, `${remote}/${remoteBranch}`, 'push', signal)
+      if (counts !== null && counts.ahead > 0 && counts.behind > 0) {
+        throw gitError('git/diverged', `git push: local and remote have diverged (ahead ${counts.ahead}, behind ${counts.behind})`, {
+          branch,
+          upstream: `${remote}/${remoteBranch}`,
+          ahead: counts.ahead,
+          behind: counts.behind,
+        })
+      }
     }
 
     // 执行：显式 remote + 全量 refspec（spec §1.5-3 B3；remote/远端分支名取 config
     // 权威面，upstream 短名拆分回落——不用本地分支名，防本地名 ≠ 上游名推错目标）。
-    const remote = (await this.branchRemote(repoRoot, branch, signal)) ?? splitFirst(upstream, '/')
-    const merge = await this.configGet(repoRoot, `branch.${branch}.merge`, signal)
-    const remoteBranch = merge !== null && merge.startsWith('refs/heads/')
-      ? merge.slice('refs/heads/'.length)
-      : (upstream.slice(remote.length + 1) || branch)
     const refspec = `refs/heads/${remoteBranch}:refs/heads/${remoteBranch}`
     const result = await this.gitNetwork.run(
-      ['push', remote, refspec],
+      ['push', ...(options.force === true ? ['--force'] : []), remote, refspec],
       { cwd: repoRoot, op: 'push', signal: active(signal) },
     )
     if (result.exitCode !== 0) this.throwPushFailure(result, remote, branch, 'push')
@@ -405,6 +453,29 @@ export class RemoteOpsEngine {
   /** `branch.<name>.remote`（exit 1 / 空值 ⇒ null，调用方进解析链）；坏命令面 git-error。 */
   private async branchRemote(repoRoot: string, branch: string, signal?: AbortSignal): Promise<string | null> {
     return this.configGet(repoRoot, `branch.${branch}.remote`, signal)
+  }
+
+  /**
+   * 显式 remote 的存在性直查（v2 批次一 [清单 57]；push 专用——fetch 的显式入参保持
+   * v1「不做存在性预检，错误如实映射」口径，sync.spec 既有用例钉住）：不存在 ⇒
+   * git/no-remote { branch, remotes: 全量清单 }（推送对话框选定目标后 host 直查，
+   * §3.10 预检顺序写死——不再进多 remote 分叉）。
+   */
+  private async requireRemote(
+    repoRoot: string,
+    branch: string,
+    remote: string,
+    op: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const listing = await this.gitRead.run(['remote'], {
+      cwd: repoRoot, op: `${op}(git remote)`, signal: active(signal),
+    })
+    assertGitOk(listing, `${op}(git remote)`)
+    const remotes = listing.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '')
+    if (!remotes.includes(remote)) {
+      throw gitError('git/no-remote', `git ${op}: remote '${remote}' does not exist`, { branch, remotes })
+    }
   }
 
   /**

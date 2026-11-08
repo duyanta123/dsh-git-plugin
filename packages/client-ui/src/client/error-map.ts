@@ -110,6 +110,34 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
     key: 'error.choose-remote',
     params: (details) => ({ remotes: list((details as { remotes?: unknown }).remotes) }),
   },
+  // V2 批次一管理面新码（host refs-admin 模块；plan §3.4）。Record 穷尽约束随
+  // GitCode 键域扩张——host 侧声明这批码后本表即编译期闭合。
+  'git/branch-not-found': {
+    key: 'error.branch-not-found',
+    params: (details) => ({ name: text((details as { name?: unknown }).name) }),
+  },
+  'git/branch-not-merged': {
+    key: 'error.branch-not-merged',
+    params: (details) => ({ name: text((details as { name?: unknown }).name) }),
+  },
+  'git/branch-exists': {
+    key: 'error.branch-exists',
+    params: (details) => ({ name: text((details as { name?: unknown }).name) }),
+  },
+  'git/tag-exists': {
+    key: 'error.tag-exists',
+    params: (details) => ({ name: text((details as { name?: unknown }).name) }),
+  },
+  'git/tag-not-found': {
+    key: 'error.tag-not-found',
+    params: (details) => ({ name: text((details as { name?: unknown }).name) }),
+  },
+  'git/worktree-failed': {
+    // stderr 不进主文案——errorNoticeView 的 details.stderr 折叠区路径已承担
+    // （过 redact 后展示），这里只插值 path。
+    key: 'error.worktree-failed',
+    params: (details) => ({ path: text((details as { path?: unknown }).path) }),
+  },
 }
 
 /** 查一个错误码的展示条目；陌生 code → null（透传 error.message 的回落路径）。 */

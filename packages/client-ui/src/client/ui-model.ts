@@ -85,26 +85,105 @@ export function headerViewModel(state: GitStatusSourceState): HeaderView {
   }
 }
 
-/** C1 菜单条目的纯模型（五动作：打开变更面板 / 提交图 / 提交… / 提交并推送… / 同步占位）。 */
+/**
+ * C1 菜单条目的纯模型（V2 批次一扩行：打开变更面板 / 提交图 / 提交… / 提交并推送… /
+ * 推送 / 拉取 / 获取 / 分支子菜单 / 新建分支… / 打标签… / Worktree… / 删除分支…）。
+ * v1 的 `sync` 占位行已拆为 push/pull/fetch 三真行（plan §3.6）——`placeholder` 位随
+ * 最后一个占位行消失而移除。
+ */
+export type HeaderMenuId =
+  | 'open-changes' | 'open-graph' | 'commit' | 'commit-push'
+  | 'push' | 'pull' | 'fetch'
+  | 'branches' | 'branch-create' | 'tag-create' | 'worktree' | 'branch-delete'
+
 export interface HeaderMenuItem {
-  id: 'open-changes' | 'open-graph' | 'commit' | 'commit-push' | 'sync'
+  id: HeaderMenuId
   labelKey: GitLocaleKey
-  /** 占位动作：禁用 + placeholderHint 提示（后续模块接线）。 */
-  placeholder: boolean
 }
 
 /** 菜单模型（actionsEnabled=false 时全部禁用——无仓库无动作 [清单 54]）。 */
 export function headerMenuItems(view: HeaderView): ReadonlyArray<HeaderMenuItem & { enabled: boolean }> {
   const items: HeaderMenuItem[] = [
-    { id: 'open-changes', labelKey: 'menu.openChanges', placeholder: false },
-    { id: 'open-graph', labelKey: 'menu.graph', placeholder: false },
+    { id: 'open-changes', labelKey: 'menu.openChanges' },
+    { id: 'open-graph', labelKey: 'menu.graph' },
     // ④-K 提交对话框模块：commit / commitPush 接通对话框拉起（spec §3.1 [清单 48]）。
-    { id: 'commit', labelKey: 'menu.commit', placeholder: false },
-    { id: 'commit-push', labelKey: 'menu.commitPush', placeholder: false },
-    // 推送/拉取/获取的合并占位（写 UI 动作随同步模块接线；openIssues 记录）。
-    { id: 'sync', labelKey: 'menu.sync', placeholder: true },
+    { id: 'commit', labelKey: 'menu.commit' },
+    { id: 'commit-push', labelKey: 'menu.commitPush' },
+    // V2 批次一：sync 占位转真的三行（plan §3.6）——push 行的多 remote 分叉在
+    // admin-face/push 对话框（remotes>1 开对话框，单 remote 一步直推）。
+    { id: 'push', labelKey: 'menu.push' },
+    { id: 'pull', labelKey: 'menu.pull' },
+    { id: 'fetch', labelKey: 'menu.fetch' },
+    // V2 批次一管理面扩行（plan §3.6）：branches/branch-delete 两行挂子菜单
+    // （数据由 admin-face refs()/分支清单装配，见 branchSubmenuEntries /
+    // branchDeleteEntries）；branch-create/tag-create/worktree 三行拉起对话框。
+    { id: 'branches', labelKey: 'menu.branches' },
+    { id: 'branch-create', labelKey: 'menu.branchCreate' },
+    { id: 'tag-create', labelKey: 'menu.tagCreate' },
+    { id: 'worktree', labelKey: 'menu.worktree' },
+    { id: 'branch-delete', labelKey: 'menu.branchDelete' },
   ]
-  return items.map((item) => ({ ...item, enabled: view.actionsEnabled && !item.placeholder }))
+  return items.map((item) => ({ ...item, enabled: view.actionsEnabled }))
+}
+
+/** 分支子菜单的一行（纯模型；组件映射为原语 Menu 的 MenuItem）。 */
+export interface HeaderSubmenuEntry {
+  id: string
+  /** 直显文本（分支名等 git 中性词；labelKey 给定时由 t() 渲染取代）。 */
+  label: string
+  /** 词典键渲染（detached 信息行复用 'header.detached'）。 */
+  labelKey?: GitLocaleKey
+  /** labelKey 的插值参数。 */
+  params?: Record<string, string>
+  disabled: boolean
+  /** 当前分支行（原语 Menu 的子菜单行无 selected 面——组件渲染 '✓ ' 前缀表达打勾）。 */
+  current: boolean
+}
+
+/**
+ * 分支选择子菜单的渲染模型（plan §3.6「当前分支打勾、detached 显短 oid、点击切换」）：
+ * detached 时前置一条禁用的信息行（复用 header.detached {oid=短 oid}——不可选，纯提示）；
+ * 其后逐本地分支一行，当前分支标 current。unborn/空分支清单 ⇒ 空数组。
+ */
+export function branchSubmenuEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+  detached: boolean
+  abbrevOid: string | null
+}): HeaderSubmenuEntry[] {
+  const entries: HeaderSubmenuEntry[] = []
+  if (params.detached && params.abbrevOid !== null) {
+    entries.push({
+      id: 'branch-head',
+      label: params.abbrevOid,
+      labelKey: 'header.detached',
+      params: { oid: params.abbrevOid },
+      disabled: true,
+      current: false,
+    })
+  }
+  for (const branch of params.branches) {
+    entries.push({
+      id: `branch-switch:${branch.shortName}`,
+      label: branch.shortName,
+      disabled: false,
+      current: branch.shortName === params.headName,
+    })
+  }
+  return entries
+}
+
+/**
+ * 删除分支子菜单的渲染模型（plan §3.6「当前分支除外——git 拒删当前分支，UI 前置
+ * 禁用」）：当前分支不进清单（排除即前置禁用）；其余分支逐行可点。
+ */
+export function branchDeleteEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+}): HeaderSubmenuEntry[] {
+  return params.branches
+    .filter((branch) => branch.shortName !== params.headName)
+    .map((branch) => ({ id: `branch-delete:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
 }
 
 /**

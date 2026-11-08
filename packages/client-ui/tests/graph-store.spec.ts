@@ -229,6 +229,42 @@ describe('log 窗口（分页追加 / single-writer / 去重）', () => {
     store.dispose()
   })
 
+  it('keepMounted 图 tab 的 branchSwitch 重载回归：切分支新帧（branch 名+oid 变）→ 同一 store 实例清窗重载 + refs 重取（§3.10 风险项落点）', async () => {
+    const { rpc, source, store } = makeHarness()
+    rpc.logPlan = [
+      { ok: true, value: page([commitInfo('a'), commitInfo('b')], false) },
+      { ok: true, value: page([commitInfo('x')], false) },
+    ]
+    rpc.detailPlan.set('a|', [{ ok: true, value: {
+      commit: commitInfo('a'), files: [], totalTruncated: false, refs: [],
+    } }])
+    const frame = (name: string | null, oid: string, detached = false): void => {
+      source.store.update((draft) => {
+        draft.status = {
+          repoRoot: '/r', generatedAt: '', branch: { name, oid, abbrevOid: oid.slice(0, 7), upstream: null, ahead: null, behind: null, detached, unborn: false },
+          staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+        }
+      })
+    }
+    // 切换前：main@a 的窗口已加载，且选中提交的详情缓存就绪（keepMounted 下的常态）。
+    frame('main', 'a')
+    await flush()
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(['a', 'b'])
+    await store.showCommit('a')
+    expect(store.store.getSnapshot().details.a?.state).toBe('ready')
+    const refsBefore = rpc.refsCalls
+    // branchSwitch 成功（host 侧 HEAD 变更 → R3/R5 帧）：branch 名与 oid 同帧变化。
+    frame('feature/a', 'x')
+    await flush()
+    // 同一 store 实例（tab keepMounted 不重铸）：窗口替换为新分支历史，refs 重取。
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(['x'])
+    expect(rpc.logCalls).toHaveLength(2)
+    expect(rpc.refsCalls).toBeGreaterThan(refsBefore)
+    // oid 键的详情缓存按 store 契约保留（ready 槽不随 reload 失效——切回旧分支仍命中）。
+    expect(store.store.getSnapshot().details.a?.state).toBe('ready')
+    store.dispose()
+  })
+
   it('connection/reset → reset 清缓存并按当前快照立即重载', async () => {
     const { rpc, source, store } = makeHarness()
     rpc.logPlan = [

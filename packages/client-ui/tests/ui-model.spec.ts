@@ -1,10 +1,16 @@
 /**
  * UI 纯视图模型测试（C1 GitHeaderButton 的渲染决策 + C5 确认闸——本模块 ask §③/④；
  * spec §6 纯函数单测纪律：分支名/角标/detached/unborn/禁用态不依赖 DOM 断言）。
+ * V2 批次一扩面（plan §3.7）：sync 占位消失（推送/拉取/获取三真行）、管理面扩行、
+ * 分支子菜单渲染模型（当前分支打勾 / detached 短 oid 信息行）、删除分支清单
+ * （当前分支除外）。
  */
 
 import { describe, expect, it } from 'vitest'
-import { badgeCount, confirmButtonEnabled, headerMenuItems, headerViewModel } from '../src/client/ui-model.ts'
+import {
+  badgeCount, branchDeleteEntries, branchSubmenuEntries, confirmButtonEnabled, headerMenuItems,
+  headerViewModel,
+} from '../src/client/ui-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
 import type { GitStatusSnapshot } from 'dsh-gitkit/types'
 
@@ -116,16 +122,22 @@ describe('headerViewModel — C1 渲染决策', () => {
   })
 })
 
-describe('headerMenuItems — 菜单五动作（打开变更面板 / 提交图 / 提交… / 提交并推送… / 同步占位）', () => {
-  it('仓库可用时：面板与提交链路四动作可点，同步占位禁用（④-K 提交对话框模块接线后）', () => {
+describe('headerMenuItems — V2 批次一菜单模型（同步占位转真 + 管理面扩行）', () => {
+  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行全部可点', () => {
     const view = headerViewModel(mkState({ status: mkSnapshot() }))
     const items = headerMenuItems(view)
-    expect(items.map((item) => item.id)).toEqual(['open-changes', 'open-graph', 'commit', 'commit-push', 'sync'])
-    expect(items[0]).toMatchObject({ enabled: true, placeholder: false })
-    expect(items[1]).toMatchObject({ enabled: true, placeholder: false })
-    expect(items[2]).toMatchObject({ enabled: true, placeholder: false, labelKey: 'menu.commit' })
-    expect(items[3]).toMatchObject({ enabled: true, placeholder: false, labelKey: 'menu.commitPush' })
-    expect(items[4]).toMatchObject({ enabled: false, placeholder: true })
+    expect(items.map((item) => item.id)).toEqual([
+      'open-changes', 'open-graph', 'commit', 'commit-push',
+      'push', 'pull', 'fetch',
+      'branches', 'branch-create', 'tag-create', 'worktree', 'branch-delete',
+    ])
+    expect(items.every((item) => item.enabled)).toBe(true)
+    expect(items.map((item) => item.id as string)).not.toContain('sync')
+    expect(items.find((item) => item.id === 'commit')?.labelKey).toBe('menu.commit')
+    expect(items.find((item) => item.id === 'commit-push')?.labelKey).toBe('menu.commitPush')
+    expect(items.find((item) => item.id === 'push')?.labelKey).toBe('menu.push')
+    expect(items.find((item) => item.id === 'fetch')?.labelKey).toBe('menu.fetch')
+    expect(items.find((item) => item.id === 'worktree')?.labelKey).toBe('menu.worktree')
   })
 
   it('无仓库时全部禁用', () => {
@@ -134,6 +146,78 @@ describe('headerMenuItems — 菜单五动作（打开变更面板 / 提交图 /
       repo: { available: false, root: null, checking: false },
     }))
     expect(headerMenuItems(view).every((item) => !item.enabled)).toBe(true)
+  })
+})
+
+describe('branchSubmenuEntries — 分支子菜单渲染模型（plan §3.6）', () => {
+  it('逐本地分支一行；当前分支标 current（组件渲染 ✓ 前缀——原语子菜单无 selected 面）', () => {
+    const entries = branchSubmenuEntries({
+      branches: [{ shortName: 'main' }, { shortName: 'feature/a' }, { shortName: 'dev' }],
+      headName: 'feature/a',
+      detached: false,
+      abbrevOid: 'ccccccc',
+    })
+    expect(entries.map((entry) => entry.id)).toEqual([
+      'branch-switch:main', 'branch-switch:feature/a', 'branch-switch:dev',
+    ])
+    expect(entries.map((entry) => entry.current)).toEqual([false, true, false])
+    expect(entries.every((entry) => !entry.disabled)).toBe(true)
+    expect(entries.every((entry) => entry.labelKey === undefined)).toBe(true)
+  })
+
+  it('detached：前置禁用信息行（header.detached {oid=短 oid}——detached 显短 oid）', () => {
+    const entries = branchSubmenuEntries({
+      branches: [{ shortName: 'main' }],
+      headName: null,
+      detached: true,
+      abbrevOid: 'ddddddd',
+    })
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toMatchObject({
+      id: 'branch-head',
+      labelKey: 'header.detached',
+      params: { oid: 'ddddddd' },
+      disabled: true,
+      current: false,
+    })
+    expect(entries[1]).toMatchObject({ id: 'branch-switch:main', current: false })
+  })
+
+  it('detached 而短 oid 缺席（oid null）⇒ 无信息行，仅分支行', () => {
+    const entries = branchSubmenuEntries({
+      branches: [{ shortName: 'main' }],
+      headName: null,
+      detached: true,
+      abbrevOid: null,
+    })
+    expect(entries.map((entry) => entry.id)).toEqual(['branch-switch:main'])
+  })
+
+  it('空分支清单（unborn）⇒ 空数组（无 detached 行、无分支行）', () => {
+    const entries = branchSubmenuEntries({
+      branches: [],
+      headName: null,
+      detached: false,
+      abbrevOid: null,
+    })
+    expect(entries).toEqual([])
+  })
+})
+
+describe('branchDeleteEntries — 删除分支子菜单（当前分支除外）', () => {
+  it('当前分支不进清单（git 拒删当前分支——UI 前置排除），其余逐行可点', () => {
+    const entries = branchDeleteEntries({
+      branches: [{ shortName: 'main' }, { shortName: 'feature/a' }],
+      headName: 'main',
+    })
+    expect(entries.map((entry) => entry.id)).toEqual(['branch-delete:feature/a'])
+    expect(entries.every((entry) => !entry.disabled)).toBe(true)
+  })
+
+  it('detached（无当前分支）⇒ 全部分支可删；唯一分支即当前 ⇒ 空清单（行整行禁用由装配半承担）', () => {
+    expect(branchDeleteEntries({ branches: [{ shortName: 'a' }, { shortName: 'b' }], headName: null })
+      .map((entry) => entry.id)).toEqual(['branch-delete:a', 'branch-delete:b'])
+    expect(branchDeleteEntries({ branches: [{ shortName: 'main' }], headName: 'main' })).toEqual([])
   })
 })
 

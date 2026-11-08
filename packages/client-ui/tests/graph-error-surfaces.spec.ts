@@ -55,6 +55,8 @@ function renderPanel(state: CommitDetailPanelProps['state']): string {
     onRetry: vi.fn(),
     onFileClick: vi.fn(),
     onClose: vi.fn(),
+    onTagDelete: vi.fn(),
+    onTagCreate: vi.fn(),
   }))
 }
 

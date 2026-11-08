@@ -153,6 +153,44 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.generateCommitMessage must not be called by the changes store')
   }
 
+  // V2 批次一管理面扩展 GitRpcFace（9 admin 方法）后的适配面：
+  // 变更面板 store 不消费这些端点——断言守卫同 status。
+  async branchCreate(): Promise<never> {
+    throw new Error('FakeRpc.branchCreate must not be called by the changes store')
+  }
+
+  async branchSwitch(): Promise<never> {
+    throw new Error('FakeRpc.branchSwitch must not be called by the changes store')
+  }
+
+  async branchDelete(): Promise<never> {
+    throw new Error('FakeRpc.branchDelete must not be called by the changes store')
+  }
+
+  async tagCreate(): Promise<never> {
+    throw new Error('FakeRpc.tagCreate must not be called by the changes store')
+  }
+
+  async tagDelete(): Promise<never> {
+    throw new Error('FakeRpc.tagDelete must not be called by the changes store')
+  }
+
+  async remoteList(): Promise<never> {
+    throw new Error('FakeRpc.remoteList must not be called by the changes store')
+  }
+
+  async worktreeList(): Promise<never> {
+    throw new Error('FakeRpc.worktreeList must not be called by the changes store')
+  }
+
+  async worktreeAdd(): Promise<never> {
+    throw new Error('FakeRpc.worktreeAdd must not be called by the changes store')
+  }
+
+  async worktreeRemove(): Promise<never> {
+    throw new Error('FakeRpc.worktreeRemove must not be called by the changes store')
+  }
+
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan

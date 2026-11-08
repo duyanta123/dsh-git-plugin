@@ -407,8 +407,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     // —— v1.3 补录七码（权威键集 = packages/host/src/error-codes.ts:41-69 RemoteErrorDetailsMap；目录 14→21）——
     'git/session-workspace-unresolved': Record<string, never>                // workspaceOverride 与 session cwd 都解析不出（workspace.ts:113-135）
     'git/no-paths':          { op: string }                                  // stage/unstage/discard 空路径数组——拒绝整仓副作用（mutations.ts:236）
-    'git/bad-request':       {                                               // discard 三守卫失败（mutations.ts:211-225）
-      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable'
+    'git/bad-request':       {                                               // 守卫失败（mutations.ts:211-225 + v2 批次一 refs-admin/remote-ops）
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options'
       /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
       paths: string[]
       /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
@@ -420,6 +420,18 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/no-branch':         { state: 'detached' | 'unborn' }                // push/pull 的 detached/unborn 前置拒绝（remote-ops.ts:376-385）
     'git/dirty-worktree':    { branch: string | null; pathCount: number }    // pull 脏区前置拒绝（remote-ops.ts:250-261）
     'git/choose-remote':     { remotes: string[] }                           // 多 remote 且无 origin（remote-ops.ts:430）
+    // —— v2 批次一补录六码（2026-11-08；权威键集 = packages/host/src/error-codes.ts RemoteErrorDetailsMap，
+    //    目录 21→27；docs/v2-implementation-plan.md §3.4）——
+    'git/branch-not-found':  { name: string }                                // branchSwitch/branchDelete 的缺失预检（refs-admin.ts）
+    'git/branch-not-merged': { name: string }                                // `git branch -d` 未合并拒绝（git 自身 stderr 映射；refs-admin.ts）
+    'git/branch-exists':     { name: string }                                // branchCreate 重名预检（与 git/tag-exists 对称的「已存在」语义——评审修订轮定死）
+    'git/tag-exists':        { name: string }                                // tagCreate 非 force 重名预检（refs-admin.ts）
+    'git/tag-not-found':     { name: string }                                // tagDelete 缺失预检（refs-admin.ts）
+    'git/worktree-failed':   { path: string; stderr: string }                // worktree add/remove 的 git 拒绝（[清单 68] 写面专用；stderr 过 sanitizeStderr）
+    // bad-request reason 联合 v2 批次一扩值：'force-unacknowledged'（force push / `-D` 删分支 /
+    // tag `-f` / worktree `--force` 共用的「危险动作未确认」闸，方案 §3.2）+ 'invalid-options'
+    // （worktreeAdd 的 branch/newBranch 互斥与至少其一契约守卫——方案 §3.2 类型注记要求该契约
+    // 生效而未指认承载码，施工取 bad-request 最贴近语义，登记为偏差）。
   }
 }
 ```
@@ -612,13 +624,24 @@ v1.3 归真：总表 13 → **16** 行（权威 = `REMOTE_METHODS`，`packages/h
 | unstage | B | fast | status 缓存作废 + R3 帧 | no-paths, no-repository, session-workspace-unresolved, timeout, git-error |
 | discard | C | fast | status 缓存作废 + R3 帧 | no-paths, bad-request, no-repository, session-workspace-unresolved, timeout, git-error |
 | commit | C | commit | status 缓存作废 + R3 帧（log/refs/getCommitDetail 无 host 缓存） | no-repository, identity-missing, nothing-staged, empty-message, hook-failed, session-workspace-unresolved, timeout, git-error |
-| push | C | network | status 缓存作废 + R3 帧 | no-branch, no-upstream, no-remote, choose-remote, diverged, push-rejected, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
+| push | C | network | status 缓存作废 + R3 帧 | bad-request（v2 批次一 'force-unacknowledged'——force=true 需 acknowledged，零命令守卫）, no-branch, no-upstream, no-remote（v2 批次一：显式 options.remote 直查存在性）, choose-remote, diverged（force=true 跳过——语义即覆盖远端；v2 评审修复：预检基线 = 实际推送目标 `<remote>/<remoteBranch>` 的跟踪引用，显式 options.remote 选定非 upstream 远端时不按旧 upstream 计数、该引用不存在即不预检，details.upstream 随基线指向实际目标）, push-rejected, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
 | pull | C | network | status 缓存作废 + R3 帧 | no-branch, dirty-worktree, no-upstream, pull-diverged, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
 | fetch | B | network | status 缓存作废 + R3 帧 | no-remote, choose-remote, auth-failed, session-workspace-unresolved, no-repository, timeout, git-error |
 | generateCommitMessage | B | llm | — | nothing-staged, no-repository, session-workspace-unresolved, llm-route-unresolved, llm-failed, timeout, git-error |
 | log | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error（unborn 返回空页不抛错） |
 | refs | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error |
 | getCommitDetail | A | fast | —（无 host 缓存；client 状态订阅失效） | no-repository, session-workspace-unresolved, timeout, git-error（单文件 patch 失败降级 patch:null 不炸整体） |
+| branchCreate | C | fast | status 缓存作废 + R3 帧 | bad-request（'invalid-options' 空名）, branch-exists（预检）, no-repository, session-workspace-unresolved, timeout, git-error |
+| branchSwitch | C | fast | status 缓存作废 + R3 帧 | bad-request, dirty-worktree（fresh 扫描脏区前置拒绝）, branch-not-found（预检）, no-repository, session-workspace-unresolved, timeout, git-error |
+| branchDelete | C | fast | status 缓存作废 + R3 帧 | bad-request（'force-unacknowledged'——`-D` 需 acknowledged，零命令守卫）, branch-not-found（预检）, branch-not-merged（git 拒绝映射）, no-repository, session-workspace-unresolved, timeout, git-error |
+| tagCreate | C | fast | status 缓存作废 + R3 帧 | bad-request（'force-unacknowledged'——`-f` 需 acknowledged）, tag-exists（非 force 预检）, no-repository, session-workspace-unresolved, timeout, git-error |
+| tagDelete | C | fast | status 缓存作废 + R3 帧 | bad-request, tag-not-found（预检）, no-repository, session-workspace-unresolved, timeout, git-error |
+| remoteList | A | fast | —（只读） | no-repository, session-workspace-unresolved, timeout, git-error（`remote -v` 行解析契约破坏要响） |
+| worktreeList | A | fast | —（只读） | no-repository, session-workspace-unresolved, timeout, git-error（porcelain 块解析契约破坏要响） |
+| worktreeAdd | C | fast | status 缓存作废 + R3 帧 | bad-request（'invalid-options'——branch/newBranch 互斥且至少其一）, worktree-failed（path 已存在非空 / 分支被占用；stderr 脱敏）, no-repository, session-workspace-unresolved, timeout, git-error |
+| worktreeRemove | C | fast | status 缓存作废 + R3 帧 | bad-request（'force-unacknowledged'——`--force` 需 acknowledged，零命令守卫）, worktree-failed（path 不存在 / 脏 worktree 无 force；stderr 脱敏）, no-repository, session-workspace-unresolved, timeout, git-error |
+
+> v2 批次一补录（2026-11-08，docs/v2-implementation-plan.md §3.3/§3.5；权威 = `REMOTE_METHODS`，`packages/host/src/index.ts:151`，16→25 行）：九行 refs 管理面（引擎半 = `packages/host/src/refs-admin.ts`，变更类走 write runner、查询/预检走 readonly）。形态注记：① 命令一律带 `--` 分隔符（本机 git 2.55.0.windows.2 实测 `git branch -- --all` ⇒ git 自身拒绝非法名）；`git switch` 不支持 `--` 后跟 `-c` 双位置参数（exit 128 "only one reference expected"），故 branchCreate 的 checkout = `git branch --` + `git switch --` 两命令（非 `switch -C`）。② 存在性预检 = `rev-parse --verify --quiet refs/...`（exit 1 = 缺失），域码化而非 stderr 特征。③ force 类动作（push --force / `-D` / tag `-f` / worktree `--force`）双闸 host 半 = acknowledged 守卫最前、零命令执行；force push 跳过 diverged 预检（语义即覆盖远端），upstream 三态预检保留。④ worktreeList 的 unborn HEAD 全零 oid 归 null（BranchState.oid [清单 64] 同语义）；locked reason 自由文本不进 wire（布尔位）。⑤ 定时 fetch（[清单 58] D6=B）：Config `autoFetchIntervalMs` 默认 300_000、0=关，Cordis effect 挂 interval（stop 清理），失败仅 logger.warn 不投 UI，成功走 afterWrite（R3 帧）。
 
 > v1.3 补录三行的形态注记：`ping` = `git --version` 存活探测（cwd 取临时目录根，避开宿主进程 cwd 偶然性；`index.ts:262-278`）；`identity` = user.name/email 作用域查询（`scope?: 'merged'|'local'|'global'|'system'`，缺省合并视图；exit 1 = 缺失 → null；`index.ts:291-333`）；`followStatus` = **stream 模式**（`@Remote({mode:'stream'})`，返回类型直接写 `RemoteStream<GitStatusFrame, GitFollowCommand>`、**不可 Promise 包装**——生成器 analyzer 只解 Iterable/AsyncIterable/RemoteStream 三种直接返回，本机 build 实测；上行 `refresh` 命令 = R5 manual；`index.ts:665-690`），帧契约 R1–R6 见 §2.3。
 
@@ -691,6 +714,12 @@ client 包 `inject = ['slots', 'locale', 'remote', 'remote.git', 'sidebarRightTa
 | `GitErrorNotice` | 各组件内嵌错误展示 | 普通组件 | 49/54 |
 | `GitConfirmDialog` | 二次确认框架 | 普通组件 | 12/44/50 |
 | `FileDiffView` | ChangesTab/GraphTab 内嵌 | 普通组件（照抄 ui-deliverables 纯函数，禁 runtime-import，【map】§3.6 `host-capability-map.md:251-259`） | 2/3/59 |
+| `GitPushDialog` | header 菜单 push 行拉起（remotes 数 > 1 时；单 remote 一步直推——v1 行为不回归，`pushRoute` 纯函数 `admin-view-model.ts`） | 普通组件（remote picker = `remoteList` 数据；force 勾选后 `GitConfirmDialog severity='danger'` 勾选闸二次确认） | 27/57 |
+| `GitBranchCreateDialog` | header 菜单 branch-create 行拉起 | 普通组件（name/from/checkout 三字段；重名 ⇒ `git/branch-exists` 错误面板） | 23 |
+| `GitTagCreateDialog` | header 菜单 tag-create 行拉起（图 tab tag chip 菜单「从该提交打 tag」复用） | 普通组件（name/oid/message 三字段；重名 ⇒ `git/tag-exists`） | 30 |
+| `GitWorktreeDialog` | header 菜单 worktree 行拉起 | 普通组件（列表区 [62] + 新建区 path/现有分支或新建分支二选一 [68] + 移除入口——脏 worktree 强制移除走 danger 勾选闸） | 62/68 |
+
+> v2 批次一补录（2026-11-08，docs/v2-implementation-plan.md §3.6；组件行为面以实落代码为准）：① header 菜单 `sync` 占位行（v1 `placeholder:true`）转真为 push/pull/fetch 三行（复用既有 RPC；fetch 成功后 R5 manual 刷新 behind）；新增 branches（子菜单：当前分支打勾、detached 显短 oid、点击切换 + 删除分支入口——当前分支前置禁用）/branch-create/tag-create/worktree/branch-delete 行（`ui-model.ts` `headerMenuItems`）。② 组件不做 RPC 纪律的承载 = `admin-face.ts` `createGitAdminFace`（apply 顶层铸一次、root rpc 注入，commit-dialog-face 同构）+ `admin-view-model.ts` 纯视图模型（渲染决策纯函数化，spec §6 纪律）。③ 图 tab tag chip 增菜单（删 tag / 从该提交打 tag，数据面 `CommitDetail.refs` 既有）。④ danger 双闸：force push 与脏 worktree 强制移除共用 `GitConfirmDialog severity='danger'`（`confirmButtonEnabled` 一处实现两处消费，`ui-model.ts:114`）。
 
 两个 tab 类型定义（kind 不同 ⇒ 无冲突；自己的地址空间自己认领，【map】§3.3 `host-capability-map.md:235`）：
 
@@ -896,6 +925,8 @@ export function computeGraphLayout(input: GraphLayoutInput): GraphLayoutResult
 | error | 每个域错误码一键：`error.no-repository` `error.identity-missing` `error.nothing-staged` `error.empty-message` `error.no-upstream` `error.no-remote` `error.diverged` `error.push-rejected` `error.auth-failed` `error.pull-diverged` `error.timeout` `error.git-error` `error.llm-route-unresolved` `error.llm-failed`；`common.retry` `common.details` `common.close` |
 
 样例（终稿以 zh 词典为准逐键补齐 en）：`header.badge` zh `"{count} 处变更"` / en `"{count} changes"`；`confirm.discard.message` zh `"将丢弃 {count} 个文件的工作区改动，且无法撤销。"` / en `"Discard working-tree changes of {count} file(s)? This cannot be undone."`；`error.diverged` zh `"本地与远程已分叉（领先 {ahead} 落后 {behind}），请先拉取。"` / en `"Local and remote have diverged (ahead {ahead}, behind {behind}). Pull first."`。
+
+> v2 批次一补录（2026-11-08；**键集权威 = zh 词典** `packages/client-ui/src/client/locales.ts`，本表为分组索引非权威）：① menu 组扩展 = `menu.push` `menu.pull` `menu.fetch`（sync 占位转真）+ `menu.branches` `menu.branchCreate` `menu.branchDelete` `menu.tagCreate` `menu.worktree`；`menu.sync` 与 `menu.placeholderHint` 随占位移除删除。② 新组 = `branch.create.*`（title/nameLabel/nameRequired/startLabel/checkout）+ `branch.delete.*`（title/message）+ `branch.detached` + `tag.create.*`（title/nameLabel/nameRequired/targetLabel/messageLabel）+ `tag.delete.*` + `tag.menuCreateHere`/`tag.menuDelete` + `push.*`（title/remoteLabel/force/forceConfirmTitle/forceMessage/setUpstreamMissing）+ `worktree.*`（title/add/addTitle/pathLabel/pathRequired/branchLabel/branchRequired/existingBranch/newBranch/detached/bare/locked/empty/remove/removeTitle/removeMessage/removeForce/removeForceMessage）。③ error 组新键（随 §1.0.5 六码）：`error.branch-not-found` `error.branch-not-merged` `error.branch-exists` `error.tag-exists` `error.tag-not-found` `error.worktree-failed`。④ P3-4/P3-5 死键同批删除：`graph.head`、`changes.oversized`（实际占位走 `diff.oversized`）——`pnpm run check:locale` 与 locales.spec 复跑绿。规则不变：新增键必须 zh/en 同步；locales.spec 键集一致断言守卫。
 
 规则：新增键必须 zh/en 同步；纯函数单测断言两词典键集一致（进 stores.spec）。
 
