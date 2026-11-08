@@ -109,6 +109,30 @@ export const gitZh = {
   'changes.blameMode': '追溯',
   'changes.diffMode': '差异',
   'changes.fileHistory': '文件历史',
+  // ── changes.hunk：diff 区 hunk/行级勾选（[10]；D7=B worktree 侧=暂存、staged 侧=
+  //    反向还原；plan §5.6）──
+  'changes.hunkCheckAria': '切换整个 hunk 的勾选（{header}）',
+  'changes.lineCheckAria': '切换第 {line} 行的勾选',
+  // ── changes.crlf：CRLF 提示条（[56]；可折叠不阻断；plan §5.6）──
+  'changes.crlf.title': '行尾提示',
+  'changes.crlf.summary': 'core.autocrlf = {value}；{count} 个文件 CRLF/LF 混用。',
+  'changes.crlf.unset': '未设置',
+  'changes.crlf.files': '混用行尾的文件：{files}',
+  // ── stash：ChangesTab 顶部 stash 计数 chip → 面板（[14]；D4=B includeUntracked
+  //    缺省勾选 + untracked 计数提示；plan §5.6）──
+  'stash.chip': 'Stash',
+  'stash.chipCount': 'Stash（{count}）',
+  'stash.panelTitle': 'Stash 条目',
+  'stash.loading': 'stash 加载中…',
+  'stash.empty': '没有 stash 条目。',
+  'stash.pushAll': 'Stash 全部变更',
+  'stash.pushAllIncludeUntracked': '包含未跟踪文件（-u）',
+  'stash.untrackedHint': '{count} 个未跟踪文件将被一并暂存；构建产物等大文件易被卷入，可取消勾选排除。',
+  'stash.pop': '应用',
+  'stash.drop': '删除',
+  'stash.popConflict': '应用遇到冲突：stash 条目已保留未丢失，请解决冲突后再试。',
+  'stash.drop.title': '删除 stash',
+  'stash.drop.message': '将删除第 {index} 条 stash（{message}），且无法撤销。',
   // ── diff：FileDiffView 占位与渲染注记（C2/C3 共用；本模块 ask §⑥ 补齐） ──
   'diff.loading': '差异加载中…',
   'diff.binary': '二进制文件，没有文本差异。',
@@ -211,6 +235,33 @@ export const gitZh = {
   'commit.skipHooks': '跳过 hooks（--no-verify）',
   'commit.aiOverwriteTitle': '覆盖当前提交信息？',
   'commit.aiOverwriteMessage': 'AI 生成的新信息将替换输入框中的当前内容。',
+  // ── commit.trailers：[18] 署名 trailer 编辑区（plan §5.6 ①：预设 Co-authored-by /
+  //    Generated-by，可增删；非法行即时警示不阻断——镜像 Conventional 预检形态）──
+  'commit.trailers.label': '署名 trailer（可选，每行一条 Key: value）',
+  'commit.trailers.addCoauthored': '+ Co-authored-by',
+  'commit.trailers.addGenerated': '+ Generated-by',
+  'commit.trailers.invalid': 'trailer 行需形如 Key: value（不阻断提交，host 侧会校验）。',
+  // ── commit.guard：[21][22] 护栏结果面板（plan §5.6 ②：blocked ⇒ 禁用提交 +
+  //    违规列表 + 可豁免类 danger 勾选豁免入口；D5=secret 硬阻断不可豁免）──
+  'commit.guard.title': '提交护栏',
+  'commit.guard.scanning': '正在扫描暂存内容…',
+  'commit.guard.clean': '护栏检查通过，未发现违规。',
+  'commit.guard.blocked': '发现 {count} 项违规，提交已拦截。',
+  'commit.guard.secretHint': '密钥类违规不可豁免，请移除后再提交。',
+  'commit.guard.override': '我已确认上述违规（密钥除外）可以提交',
+  'commit.guard.kind.secret': '密钥',
+  'commit.guard.kind.env-file': '.env 文件',
+  'commit.guard.kind.large-file': '大文件',
+  'commit.guard.kind.build-artifact': '构建产物',
+  'commit.guard.kind.eol-mixed': '行尾混用',
+  // ── commit.process：[63] hook 输出折叠区（plan §5.6 ③：process 字段 +
+  //    git/hook-failed details；长输出尾保留 = redactTail，P3-3 复活点）──
+  'commit.process.title': '提交命令输出（含 hooks）',
+  'commit.process.stdout': 'stdout',
+  'commit.process.stderr': 'stderr',
+  'commit.process.timedOut': '命令超时。',
+  'commit.process.duration': '耗时 {ms} ms',
+  'commit.process.truncated': '输出过长，仅保留尾部。',
   // ── errors：C6 GitErrorNotice —— 每个域错误码一键（spec §4 error 组 + host 扩展码） ──
   'error.no-repository': '这里不是 git 仓库（或 git 暂不可用）。',
   'error.identity-missing': '缺少 git 身份配置：{missing}。请先设置 user.name / user.email。',
@@ -247,6 +298,11 @@ export const gitZh = {
   'error.merge-conflict': '操作 {op} 遇到冲突（{count} 个文件）：请解决冲突，或放弃本次操作。',
   'error.unknown-revision': 'git 无法解析 {revision}（{op}）。',
   'error.operation-in-progress': '已有进行中的 {op} 操作：请先解决冲突，或放弃该操作后再试。',
+  // V2 批次三提交链路与护栏新码（plan §5.4；bad-request 的 reason 联合扩值
+  // 'malformed-trailer' 复用既有 'error.bad-request' 文案插值，不新增键）。
+  'error.stage-patch-failed': '选中补丁应用失败（{path}）：可改用整文件的暂存/取消暂存。',
+  'error.stash-not-found': '找不到第 {index} 条 stash（可能已被应用或删除）。',
+  'error.commit-blocked': '提交被护栏拦截（{count} 项违规）。',
   'error.gateway-service-unavailable': 'git 服务尚未就绪，请重试。',
   'error.gateway': '请求失败（{code}）。',
   'error.action.setUpstream': '设置 upstream 并推送',
@@ -344,6 +400,30 @@ export const gitEn = {
   'changes.blameMode': 'Blame',
   'changes.diffMode': 'Diff',
   'changes.fileHistory': 'File history',
+  // ── changes.hunk：hunk/line-level checkboxes in the diff area ([10]; D7=B both
+  //    sides — worktree side = stage, staged side = reverse; plan §5.6) ──
+  'changes.hunkCheckAria': 'Toggle the whole hunk ({header})',
+  'changes.lineCheckAria': 'Toggle staging for line {line}',
+  // ── changes.crlf：CRLF notice bar ([56]; collapsible, non-blocking) ──
+  'changes.crlf.title': 'Line-ending notice',
+  'changes.crlf.summary': 'core.autocrlf = {value}; {count} file(s) mix CRLF/LF.',
+  'changes.crlf.unset': 'unset',
+  'changes.crlf.files': 'Files with mixed line endings: {files}',
+  // ── stash：stash count chip → panel in the changes tab ([14]; D4=B includeUntracked
+  //    ticked by default + untracked count hint; plan §5.6) ──
+  'stash.chip': 'Stash',
+  'stash.chipCount': 'Stash ({count})',
+  'stash.panelTitle': 'Stash entries',
+  'stash.loading': 'Loading stash…',
+  'stash.empty': 'No stash entries.',
+  'stash.pushAll': 'Stash all changes',
+  'stash.pushAllIncludeUntracked': 'Include untracked files (-u)',
+  'stash.untrackedHint': '{count} untracked file(s) will be stashed too; large artifacts are easy to sweep in — untick to exclude them.',
+  'stash.pop': 'Apply',
+  'stash.drop': 'Drop',
+  'stash.popConflict': 'The apply hit conflicts: the stash entry is kept and nothing was lost. Resolve the conflicts and retry.',
+  'stash.drop.title': 'Drop stash',
+  'stash.drop.message': 'Stash entry {index} ({message}) will be dropped; this cannot be undone.',
   // ── diff：FileDiffView ──
   'diff.loading': 'Loading diff…',
   'diff.binary': 'Binary file — no textual diff.',
@@ -445,6 +525,35 @@ export const gitEn = {
   'commit.skipHooks': 'Skip hooks (--no-verify)',
   'commit.aiOverwriteTitle': 'Overwrite the current commit message?',
   'commit.aiOverwriteMessage': 'The generated message will replace the current content of the editor.',
+  // ── commit.trailers：[18] attribution trailer editor (plan §5.6 ①; preset
+  //    Co-authored-by / Generated-by rows, add/remove; invalid lines warn inline,
+  //    non-blocking — mirrors the Conventional precheck) ──
+  'commit.trailers.label': 'Attribution trailers (optional; one Key: value per line)',
+  'commit.trailers.addCoauthored': '+ Co-authored-by',
+  'commit.trailers.addGenerated': '+ Generated-by',
+  'commit.trailers.invalid': 'Trailer lines must look like Key: value (non-blocking; the host validates them).',
+  // ── commit.guard：[21][22] guardrail result panel (plan §5.6 ②; blocked ⇒ commit
+  //    disabled + violation list + danger-override entry for exemptible kinds;
+  //    D5=secret kind is a hard block and cannot be exempted) ──
+  'commit.guard.title': 'Commit guardrails',
+  'commit.guard.scanning': 'Scanning staged content…',
+  'commit.guard.clean': 'Guardrail check passed — no violations.',
+  'commit.guard.blocked': '{count} violation(s) found; the commit is blocked.',
+  'commit.guard.secretHint': 'Secret violations cannot be exempted; remove them and commit again.',
+  'commit.guard.override': 'I confirm the violations above (except secrets) may be committed',
+  'commit.guard.kind.secret': 'Secret',
+  'commit.guard.kind.env-file': '.env file',
+  'commit.guard.kind.large-file': 'Large file',
+  'commit.guard.kind.build-artifact': 'Build artifact',
+  'commit.guard.kind.eol-mixed': 'Mixed line endings',
+  // ── commit.process：[63] hook output collapse ([63]; process field + git/hook-failed
+  //    details; long output keeps the tail via redactTail — P3-3 revival) ──
+  'commit.process.title': 'Commit command output (hooks included)',
+  'commit.process.stdout': 'stdout',
+  'commit.process.stderr': 'stderr',
+  'commit.process.timedOut': 'The command timed out.',
+  'commit.process.duration': 'Took {ms} ms',
+  'commit.process.truncated': 'Output was long; only the tail is kept.',
   // ── errors ──
   'error.no-repository': 'This is not a git repository (or git is currently unavailable).',
   'error.identity-missing': 'Missing git identity: {missing}. Set user.name / user.email first.',
@@ -481,6 +590,12 @@ export const gitEn = {
   'error.merge-conflict': 'The {op} operation hit conflicts ({count} file(s)): resolve them, or abort the operation.',
   'error.unknown-revision': 'Git cannot resolve {revision} ({op}).',
   'error.operation-in-progress': 'A {op} operation is already in progress: resolve it or abort it first.',
+  // V2 batch-3 commit-pipeline/guardrail codes (plan §5.4); the bad-request reason
+  // union extension ('malformed-trailer') reuses the existing 'error.bad-request'
+  // interpolation — no new key.
+  'error.stage-patch-failed': 'Applying the selected patch failed ({path}): fall back to staging/unstaging the whole file.',
+  'error.stash-not-found': 'Stash entry {index} was not found (it may already be applied or dropped).',
+  'error.commit-blocked': 'The commit is blocked by guardrails ({count} violation(s)).',
   'error.gateway-service-unavailable': 'The git service is not ready yet. Retry.',
   'error.gateway': 'The request failed ({code}).',
   'error.action.setUpstream': 'Set upstream and push',

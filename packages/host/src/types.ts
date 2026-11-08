@@ -232,6 +232,34 @@ export interface CommitOptions {
   amend: boolean
   /** [清单 20] → --no-verify。 */
   skipHooks: boolean
+  /**
+   * [清单 18] 作者署名 trailer（v2 批次三）：每条需形如 `Key: value`（Key = 字母开头的
+   * 字母/数字/连字符 token，冒号后空白 + 非空 value）；host 组装进 `-F -` 消息体
+   * （空行分隔的尾块，git trailer 语义），回读展示纪律不变（CommitResult.message 为
+   * 权威值）。不合法条目 ⇒ `git/bad-request`（reason 'malformed-trailer'，零命令）。
+   * `amend + 全空白 message`（--no-edit 路径）与 trailers 同给 ⇒ `git/bad-request`
+   * （reason 'invalid-options'——--no-edit 保留原消息，trailer 无从附着，零命令）。
+   */
+  trailers?: string[]
+}
+
+/** [清单 63] `git commit` 进程整体输出捕获（v2 批次三）。 */
+export interface CommitProcessOutput {
+  /**
+   * **诚实命名**：这是 `git commit` 进程的整体输出——含 hook 输出（git 不做
+   * per-hook 归因，stdout 里有 hook 转发内容时无法区分哪段来自哪个 hook）。
+   * stderr 已过 sanitizeStderr 脱敏；两侧各截 16 KiB 尾部（sanitizeStderr 同口径）。
+   */
+  stdout: string
+  /** 同上（整体输出、脱敏、16 KiB 尾部）。 */
+  stderr: string
+  /**
+   * 超时旗标。**恒 false**：超时路径抛 `git/timeout`（不返回 CommitResult），
+   * 本字段为 wire 形状完备保留（方案 §5.2 定形）。
+   */
+  timedOut: boolean
+  /** `git commit` 命令的执行时长毫秒（不含回读）。 */
+  durationMs: number
 }
 
 export interface CommitResult {
@@ -245,6 +273,13 @@ export interface CommitResult {
    * client 展示以此为准，不信入参）。
    */
   message: string
+  /**
+   * [清单 63] hook 输出面板数据源（v2 批次三）：`git commit` 进程整体输出（含 hook
+   * 输出，见 {@link CommitProcessOutput} 的诚实命名注）。**空输出置 null 省 wire**
+   * （方案 §5.2/§5.10）；hook 失败路径不返回本字段（错误抛 `git/hook-failed`，
+   * stderr 进 details——既有纪律不变）。
+   */
+  process: CommitProcessOutput | null
 }
 
 export interface PushOptions {
@@ -336,6 +371,132 @@ export interface LogOptions {
 }
 /** path=null：仅 meta+numstat；path 给定：含该文件 patch。 */
 export interface ShowOptions { oid: string; path: string | null }
+
+// ---------- v2 批次三：提交链路与护栏（[清单 10/14/21/22/56]；docs/v2-implementation-plan.md §5.2） ----------
+
+/**
+ * `git.stagePatch` 入参（[清单 10] hunk/行级 stage；D7=B 拍板两态）：client 从既有
+ * `parsePatch` 产物裁剪组装选中 patch（hunk 头勾选 / 行级勾选 + `--recount` 容忍
+ * 行计数漂移），host 只做 `git apply --cached`。
+ */
+export interface StagePatchOptions {
+  /** 目标文件路径（仓库相对路径，字面路径语义；单文件——patch 与 path 必须同指）。 */
+  path: string
+  /** unified diff patch 文本（client 组装的选中行片；经 stdin 传给 git apply）。 */
+  patch: string
+  /**
+   * 应用方向（D7=B）：'stage'（缺省）= `apply --cached` 正向（worktree 选中 → 暂存）；
+   * 'unstage' = `apply --cached -R` 反向应用（staged diff 区同构勾选 → 从暂存还原）。
+   */
+  direction?: 'stage' | 'unstage'
+}
+
+/**
+ * `git.stagePatch` 出参：staged = 本次应用的 **hunk 数**（patch 文本中 `@@` 头计数——
+ * 单文件多 hunk 选择时给 client「已应用 N 块」反馈面；方向两态同口径）。
+ */
+export interface StagePatchResult { staged: number }
+
+/**
+ * `git.stashPush` 入参（[清单 14]；D4=B 拍板：`includeUntracked` **wire 显式
+ * boolean，client 缺省传 true**——默认含 untracked（`-u`），UI 勾选可关）。
+ */
+export interface StashPushOptions {
+  /** stash 描述消息（`-m`）；null/缺省 = git 缺省 subject（"On <branch>: ..."）。 */
+  message?: string | null
+  /** true = `-u` 含 untracked（client 缺省传 true = D4=B）；false = 只 stash tracked 改动。 */
+  includeUntracked: boolean
+  /**
+   * 乐观并发基线（discard 范式 `DiscardOptions.baseRevision` 的可选沿用——wire 一次
+   * 带齐防静默丢失）：非 null 且 ≠ 最新 HEAD ⇒ `git/bad-request`
+   * （reason 'stale-base-revision'，零命令）；null/缺省 = 不参与校验。
+   */
+  baseRevision?: string | null
+}
+
+/** stash 列表条目（[清单 14]；`git stash list` 自定义 format 解析）。 */
+export interface StashEntry {
+  /** 引用序号（stash@{N} 的 N；0 = 最新）。 */
+  index: number
+  /** stash 提交的全 oid。 */
+  oid: string
+  /** oid 前 7 位（展示启发式，BranchState.abbrevOid 同口径）。 */
+  shortOid: string
+  /** stash 提交 subject（git 组装的 "On <branch>: <msg>" / "WIP on <branch>: ..." 原样）。 */
+  message: string
+  /** stash 作者时间（%aI，ISO）。 */
+  authoredAt: string
+}
+
+/** `git.stashList` 出参；空 stash ⇒ 空数组（不抛错）。 */
+export interface StashListResult { stashes: StashEntry[] }
+
+/** `git.stashPush` / `git.stashPop` / `git.stashDrop` 出参：op 涉及的 stash 序号。 */
+export interface StashOpResult { index: number }
+
+/**
+ * `git.stashPop` 入参（[清单 14]）：index=null/缺省 = 弹出最新一条（stash@{0}）；
+ * 越界/空 stash ⇒ `git/stash-not-found`。应用冲突 ⇒ `git/merge-conflict`
+ * （op 'stash-pop'；git 语义冲突时 stash 不丢，UI 明示）。
+ */
+export interface StashPopOptions {
+  /** 要弹出的 stash 序号；null/缺省 = 0（最新一条）。 */
+  index?: number | null
+}
+
+/**
+ * `git.stashDrop` 入参（[清单 14]；danger 闸——删除 stash 不可恢复）：
+ * acknowledged!==true ⇒ `git/bad-request`（reason 'unacknowledged'，零命令）；
+ * 越界/空 stash ⇒ `git/stash-not-found`。
+ */
+export interface StashDropOptions {
+  /** 要删除的 stash 序号（必填——缺省无删除语义）。 */
+  index: number
+  /** C 级二次确认旗标（danger 闸 host 半）。 */
+  acknowledged: boolean
+}
+
+/** 提交护栏违规条目（[清单 21/22]；scanStaged 预检与 git/commit-blocked details 共用形状）。 */
+export interface CommitViolation {
+  /** 违规类别；secret = D5=A 硬阻断（不可豁免），其余可 danger 勾选豁免。 */
+  kind: 'secret' | 'env-file' | 'large-file' | 'build-artifact' | 'eol-mixed'
+  /** 违规文件（仓库相对路径）。 */
+  path: string
+  /** 英文诊断说明（不落密钥/文件内容——日志同纪律）。 */
+  detail: string
+  /** 文件字节大小；非体量类违规为 null。 */
+  sizeBytes: number | null
+  /** 命中行号（1 起）；非行级违规为 null。 */
+  line: number | null
+  /**
+   * 命中展示文本——**脱敏后**（模式表的「安全前缀 + 掩码」规则，见 guard-scan.ts；
+   * 绝不落明文密钥——sanitizeStderr 纪律延伸）。非密钥类违规为 null。
+   */
+  redactedMatch: string | null
+}
+
+/** `git.scanStaged` 出参（[清单 21/22] 只读预检；blocked = violations 非空）。 */
+export interface CommitScanResult {
+  blocked: boolean
+  violations: CommitViolation[]
+}
+
+/**
+ * `git.repoDiagnostics` 出参（[清单 56] 行尾与编码安全）：CRLF 抽样 = 仓库顶层 +
+ * 已知文本后缀（封顶）；`mixedEolFiles` 清单封顶（超出截断不进 wire——wire 类型无
+ * 溢出计数字段，封顶值见 guard-scan.ts 常量，方案 §5.2「文件清单封顶，超出仅计数」
+ * 在现 wire 形状下以「截断清单 + worktreeCrlfCount 量级」承载）。
+ */
+export interface RepoDiagnostics {
+  /** `git config --get core.autocrlf` 生效值；未设置（exit 1/空值）⇒ null。 */
+  autocrlf: string | null
+  /** `git config --get core.eol` 同上。 */
+  coreEol: string | null
+  /** CRLF 与 LF 混用的抽样文件清单（仓库相对路径；封顶）。 */
+  mixedEolFiles: string[]
+  /** 抽样中含有 CRLF 行尾的工作区文件计数（含 mixed 者）。 */
+  worktreeCrlfCount: number
+}
 
 // ---------- refs 管理（v2 批次一：[清单 23/30] 分支与标签 + [清单 57] remote 列表 + [清单 62/68] worktree） ----------
 

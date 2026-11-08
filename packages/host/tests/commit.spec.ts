@@ -318,3 +318,94 @@ describe('git.commit — hook 面 [清单 20]（失败分类 / 绕过 / 改写�
     expect(commitCount(repo)).toBe(before) // world 重读：无新提交
   }, 20_000)
 })
+
+// ---------- v2 批次三：[清单 18] trailers 组装 + [清单 63] process 捕获 ----------
+
+describe('git.commit — trailers（[清单 18]）与 process 捕获（[清单 63]）', () => {
+  it('trailers 组装进消息体尾块：回读 message 与 world 重读 %B 都含尾块', async () => {
+    const repo = await scratchRepo('dshgit-commit-trailers-', cleanups, { name: 't', email: 't@example.com' })
+    const harness = makeService(repo)
+    await stageViaService(harness, repo, 'a.txt', 'one\n')
+    const result = await harness.service.commit({
+      message: 'feat: pair work\n\n正文说明。\n',
+      amend: false,
+      skipHooks: false,
+      trailers: ['Co-authored-by: A <a@example.com>', 'Generated-by: dsh-ai'],
+    })
+    // 回读权威值：subject/body + 空行分隔的 trailer 尾块（git 规范化后的形态）。
+    expect(result.message).toBe('feat: pair work\n\n正文说明。\n\nCo-authored-by: A <a@example.com>\nGenerated-by: dsh-ai')
+    // world 重读：%B 一致；git trailer 语义可解析（--parse 提取的尾块逐条一致）。
+    expect(headMessage(repo)).toBe('feat: pair work\n\n正文说明。\n\nCo-authored-by: A <a@example.com>\nGenerated-by: dsh-ai\n\n')
+    const parsed = execFileSync('git', ['interpret-trailers', '--parse'], {
+      cwd: repo, encoding: 'utf8',
+      input: headMessage(repo),
+    }).trim()
+    expect(parsed.split('\n')).toEqual(['Co-authored-by: A <a@example.com>', 'Generated-by: dsh-ai'])
+  })
+
+  it('非法 trailer ⇒ bad-request malformed-trailer（零命令）', async () => {
+    const repo = await scratchRepo('dshgit-commit-badtrailer-', cleanups, { name: 't', email: 't@example.com' })
+    const harness = makeService(repo)
+    await stageViaService(harness, repo, 'a.txt', 'one\n')
+    const before = commitCount(repo)
+    for (const bad of ['no-colon-here', '1invalid: value', 'Key:', 'Key:   ']) {
+      const error = await harness.service.commit({
+        message: 'feat: never lands\n', amend: false, skipHooks: false, trailers: [bad],
+      }).then(
+        () => { throw new Error(`expected rejection for ${JSON.stringify(bad)}`) },
+        (cause: unknown) => cause,
+      )
+      const remote = remoteErrorOf(error)
+      expect(remote?.code).toBe('git/bad-request')
+      expect((remote?.details as { reason: string }).reason).toBe('malformed-trailer')
+    }
+    // world：零命令——提交未发生。
+    expect(commitCount(repo)).toBe(before)
+  })
+
+  it('amend --no-edit（全空白消息）与 trailers 同给 ⇒ bad-request invalid-options（零命令）', async () => {
+    const repo = await scratchRepo('dshgit-commit-noedit-tl-', cleanups, { name: 't', email: 't@example.com' })
+    const harness = makeService(repo)
+    await stageViaService(harness, repo, 'a.txt', 'one\n')
+    await harness.service.commit({ message: 'feat: base\n', amend: false, skipHooks: false })
+    const before = commitCount(repo)
+    const error = await harness.service.commit({
+      message: '   \n', amend: true, skipHooks: false, trailers: ['Co-authored-by: A <a@example.com>'],
+    }).then(
+      () => { throw new Error('expected rejection') },
+      (cause: unknown) => cause,
+    )
+    const remote = remoteErrorOf(error)
+    expect(remote?.code).toBe('git/bad-request')
+    expect((remote?.details as { reason: string }).reason).toBe('invalid-options')
+    expect(commitCount(repo)).toBe(before)
+  })
+
+  it('process 捕获：成功提交回带整体输出（stdout 含 git 汇总行 / timedOut=false / durationMs 数值）', async () => {
+    const repo = await scratchRepo('dshgit-commit-process-', cleanups, { name: 't', email: 't@example.com' })
+    const harness = makeService(repo)
+    await stageViaService(harness, repo, 'a.txt', 'one\n')
+    const result = await harness.service.commit({ message: 'feat: with output\n', amend: false, skipHooks: false })
+    expect(result.process).not.toBeNull()
+    const processOutput = result.process!
+    expect(processOutput.timedOut).toBe(false)
+    expect(typeof processOutput.durationMs).toBe('number')
+    expect(processOutput.durationMs).toBeGreaterThanOrEqual(0)
+    // git commit 的 stdout 汇总行（"[main <short>] message"）——整体输出的诚实命名。
+    expect(processOutput.stdout).toContain('[main')
+    expect(processOutput.stdout).toContain(result.shortOid)
+    expect(typeof processOutput.stderr).toBe('string')
+  })
+
+  it('hook 输出进 process（整体输出含 pre-commit 的 stdout/stderr 转发）', async () => {
+    const repo = await scratchRepo('dshgit-commit-hookproc-', cleanups, { name: 't', email: 't@example.com' })
+    const harness = makeService(repo)
+    await writeHook(repo, 'pre-commit', 'echo hook-stdout-marker\necho hook-stderr-marker >&2\nexit 0\n')
+    await stageViaService(harness, repo, 'a.txt', 'one\n')
+    const result = await harness.service.commit({ message: 'feat: hook echo\n', amend: false, skipHooks: false })
+    expect(result.process).not.toBeNull()
+    // hook 的 stdout 由 git 转发进进程输出（git 不做 per-hook 归因——诚实命名注）。
+    expect(result.process!.stdout + result.process!.stderr).toContain('hook-stdout-marker')
+    expect(result.process!.stdout + result.process!.stderr).toContain('hook-stderr-marker')
+  })
+})

@@ -11,7 +11,7 @@
  * （amend 勾选框随之禁用——没有上一笔提交可修订）。
  */
 
-import type { CommitOptions, CommitResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitIdentityResult, PullResult, PushOptions, PushResult } from 'dsh-gitkit/types'
+import type { CommitOptions, CommitResult, CommitScanResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitIdentityResult, PullResult, PushOptions, PushResult } from 'dsh-gitkit/types'
 import type { RemoteResult } from './remote/mount.js'
 import type { GitRpcFace } from './remote/mount.js'
 
@@ -41,6 +41,8 @@ export interface GitCommitDialogFace {
   checkIdentity(): Promise<RemoteResult<GitIdentityResult>>
   /** HEAD 首条提交（amend 预填）；unborn/空页 → ok:null。 */
   headCommit(): Promise<RemoteResult<HeadCommitInfo | null>>
+  /** 提交护栏只读预检（V2 批次三 [21][22]；plan §5.6 ②——开框/点提交前自动扫描）。 */
+  scanStaged(): Promise<RemoteResult<CommitScanResult>>
 }
 
 /** LogPage 首条 → HeadCommitInfo 的纯折算（tests/commit-view-model.spec 断言）。 */
@@ -63,6 +65,8 @@ export function createCommitDialogFace(rpc: GitRpcFace): GitCommitDialogFace {
     pull: () => rpc.pull(),
     generateCommitMessage: (signal) => rpc.generateCommitMessage(signal),
     checkIdentity: () => rpc.identity(),
+    // V2 批次三：护栏只读预检直通 rpc（裁决在 host；UI 半 = 护栏面板 + danger 豁免闸）。
+    scanStaged: () => rpc.scanStaged(),
     async headCommit() {
       const page = await rpc.log({ limit: 1, skip: 0 })
       if (!page.ok) return page

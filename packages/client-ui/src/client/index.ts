@@ -39,6 +39,8 @@ import type { SidebarRightTabDefinition } from '@deepseek-ai/dsh-client-ui-sideb
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { GIT_GRAPH_ADDRESS, gitChangesAddress, parseGitChangesAddress } from './addresses.js'
 import { createGitAdminFace } from './admin-face.js'
+import { createChangesOpsFace } from './changes-ops-face.js'
+import type { GitChangesOpsFace } from './changes-ops-face.js'
 import type { GraphInjected } from './components/git-graph-tab.js'
 import { GitGraphTab } from './components/git-graph-tab.js'
 import { GitChangesTab } from './components/GitChangesTab.js'
@@ -99,6 +101,9 @@ export function apply(ctx: ClientContext): void {
   // 提交图 tab（tag chip 菜单）共享同一闭包（commitDialogFace 同款单例纪律）。
   // V2 批次二：时间旅行（cherry-pick/revert/reset）与 abortOperation 同面扩入。
   const adminFace = createGitAdminFace(rpc)
+  // 变更面板批次三动作面（plan §5.6）：stagePatch（hunk/行级勾选）/ stash 四动作 /
+  // repoDiagnostics（CRLF 提示条）——changes tab inject 工厂消费（无状态直通闭包）。
+  const changesOps: GitChangesOpsFace = createChangesOpsFace(rpc)
   ctx.on('connection/reset', () => {
     source.reset()
     changesStore.reset()
@@ -177,6 +182,8 @@ export function apply(ctx: ClientContext): void {
           graphIntent.request({ kind: 'path', path })
           ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS)
         },
+        // V2 批次三：hunk/行级勾选的 stagePatch / stash 面板 / CRLF 提示条数据面。
+        changesOps,
       }),
     }, GitChangesTab)
     yield ctx.slots.register({

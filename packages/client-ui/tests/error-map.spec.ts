@@ -45,6 +45,10 @@ const ALL_GIT_CODES: readonly GitCode[] = [
   'git/merge-conflict',
   'git/unknown-revision',
   'git/operation-in-progress',
+  // V2 批次三提交链路与护栏新码（host staging-patch/stash/guard-scan；plan §5.4）。
+  'git/stage-patch-failed',
+  'git/stash-not-found',
+  'git/commit-blocked',
 ]
 
 describe('ERROR_MAP — Record 穷尽约束（运行期镜像）', () => {
@@ -190,5 +194,36 @@ describe('errorNoticeView — 视图模型', () => {
     // details 形状漂移（conflicted 缺席）⇒ 计数安全降级 0。
     const drifted = errorNoticeView({ code: 'git/merge-conflict', message: 'conflict', details: undefined })
     expect(drifted.params).toEqual({ op: '', count: 0 })
+  })
+
+  it('V2 批次三新码：stage-patch-failed path 插值 + stderr 折叠区（脱敏）；stash-not-found index；commit-blocked 计数', () => {
+    const stage = errorNoticeView({
+      code: 'git/stage-patch-failed', message: 'patch failed',
+      details: { path: 'app.ts', stderr: 'error: patch does not apply, token=abc leaked' },
+    })
+    expect(stage.key).toBe('error.stage-patch-failed')
+    expect(stage.params).toEqual({ path: 'app.ts' })
+    expect(stage.detailsText).toContain('token=***')
+    expect(stage.detailsText).not.toContain('token=abc')
+    const stash = errorNoticeView({
+      code: 'git/stash-not-found', message: 'gone', details: { index: 2 },
+    })
+    expect(stash.key).toBe('error.stash-not-found')
+    expect(stash.params).toEqual({ index: 2 })
+    // details 形状漂移（index 缺席）⇒ 0。
+    const stashDrifted = errorNoticeView({ code: 'git/stash-not-found', message: 'gone', details: undefined })
+    expect(stashDrifted.params).toEqual({ index: 0 })
+    const blocked = errorNoticeView({
+      code: 'git/commit-blocked', message: 'blocked',
+      details: {
+        violations: [
+          { kind: 'secret', path: 'keys.txt', detail: 'aws key id', sizeBytes: null, line: 3, redactedMatch: 'AKIA***' },
+          { kind: 'env-file', path: '.env', detail: 'staged env file', sizeBytes: 120, line: null, redactedMatch: null },
+        ],
+        overridable: false,
+      },
+    })
+    expect(blocked.key).toBe('error.commit-blocked')
+    expect(blocked.params).toEqual({ count: 2 })
   })
 })

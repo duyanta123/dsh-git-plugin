@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { FileChange, GitStatusSnapshot } from 'dsh-gitkit/types'
-import { changesViewModel, statusGlyphOf } from '../src/client/changes-view-model.ts'
+import type { FileChange, GitStatusSnapshot, RepoDiagnostics } from 'dsh-gitkit/types'
+import { changesViewModel, crlfBarView, statusGlyphOf } from '../src/client/changes-view-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
 
 function mkState(overrides: Partial<GitStatusSourceState> = {}): GitStatusSourceState {
@@ -165,5 +165,60 @@ describe('changesViewModel — unborn / 不可用投影', () => {
     const view = changesViewModel(mkState())
     expect(view.available).toBe(true)
     expect(view.checking).toBe(true)
+  })
+})
+
+// ── V2 批次三：CRLF 提示条视图模型（[56]；plan §5.6——可折叠不阻断）──
+
+describe('crlfBarView — repoDiagnostics → 提示条视图', () => {
+  it('null（未取回/取回失败）→ 不可见', () => {
+    expect(crlfBarView(null).visible).toBe(false)
+  })
+
+  it('有混用文件：可见 + autocrlf 生效值 + 混用计数 + 封顶清单透传', () => {
+    const diagnostics: RepoDiagnostics = {
+      autocrlf: 'true', coreEol: 'lf',
+      mixedEolFiles: ['a.ts', 'b.ts'], worktreeCrlfCount: 2,
+    }
+    const view = crlfBarView(diagnostics)
+    expect(view.visible).toBe(true)
+    expect(view.value).toBe('true')
+    expect(view.unset).toBe(false)
+    expect(view.mixedCount).toBe(2)
+    expect(view.mixedFiles).toEqual(['a.ts', 'b.ts'])
+  })
+
+  it('autocrlf 缺席 → 回落 core.eol；两者都缺 → unset 形态（{value} 走 changes.crlf.unset）', () => {
+    const eolOnly = crlfBarView({ autocrlf: null, coreEol: 'crlf', mixedEolFiles: ['x.ts'], worktreeCrlfCount: 1 })
+    expect(eolOnly.value).toBe('crlf')
+    expect(eolOnly.unset).toBe(false)
+    const unset = crlfBarView({ autocrlf: null, coreEol: null, mixedEolFiles: ['x.ts'], worktreeCrlfCount: 1 })
+    expect(unset.value).toBe('')
+    expect(unset.unset).toBe(true)
+    expect(unset.visible).toBe(true)
+  })
+
+  it('零混用 → 不可见（autocrlf 有值但零混用是常规形态，不渲染免噪）', () => {
+    const clean: RepoDiagnostics = { autocrlf: 'true', coreEol: null, mixedEolFiles: [], worktreeCrlfCount: 0 }
+    expect(crlfBarView(clean).visible).toBe(false)
+  })
+
+  it('评审修复②：全 CRLF、零混用的 Windows autocrlf=true 仓库 → 不可见（不误报常驻混用条）', () => {
+    // host 语义实读（diagnostics.ts / guard-scan.spec）：worktreeCrlfCount 统计「含
+    // CRLF 的文件」（全 CRLF 也计入），不是混用数——普通 Windows 仓库 3 含 CRLF / 0 混用。
+    const allCrlf: RepoDiagnostics = { autocrlf: 'true', coreEol: null, mixedEolFiles: [], worktreeCrlfCount: 3 }
+    const view = crlfBarView(allCrlf)
+    expect(view.visible).toBe(false)
+    expect(view.mixedCount).toBe(0)
+  })
+
+  it('评审修复②：worktreeCrlfCount（含 CRLF 数）不折算混用数——mixedCount 恒 = mixedEolFiles.length', () => {
+    const capped: RepoDiagnostics = {
+      autocrlf: 'input', coreEol: null,
+      mixedEolFiles: ['mixed.py'], worktreeCrlfCount: 7,
+    }
+    const view = crlfBarView(capped)
+    expect(view.mixedCount).toBe(1)
+    expect(view.visible).toBe(true)
   })
 })

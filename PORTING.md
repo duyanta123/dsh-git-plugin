@@ -16,6 +16,18 @@
 
 ## 2. 登记表（随施工推进；新条目追加在「历史条目」之后）
 
+### v2 批次三 提交链路与护栏模块（2026-11-08）
+
+| 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |
+|---|---|---|---|---|---|
+| C | `packages/host/src/guard-scan.ts`（提交护栏扫描引擎：[清单 21]/[22] 密钥/.env/大文件/构建产物/CRLF 混行五类违规 + `redactedMatch` 脱敏） | 无第三方代码来源——密钥模式表（PEM 头/AKIA/ghp_/xox/AIza/sk-/authorization 头/.env 键值）按公开 token 格式词汇自研、零新依赖（docs/v2-implementation-plan.md §5.5/§5.10）；staged 内容读取面按 git `cat-file --batch-check`/`--batch` 官方文档语义 | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（文件头 `guard-scan.ts:9` 自述「对照仅 C 级登记」之登记即本行——C 级登记以 git 文档语义对照为据，防将来「顺手抄扫描库代码」无据可查）。secret 类 D5=A 硬阻断不可豁免、redactedMatch 脱敏延伸 sanitizeStderr 纪律均为任务口径 |
+| C | `packages/host/src/stash.ts`（stash push/list/pop/drop 引擎：[清单 14]） | 无第三方代码来源——命令形态与序号/冲突语义按 git 官方文档 + 本机实测（`GIT_LITERAL_PATHSPECS=1` 静默破坏 `-u` untracked 收集为环境实测发现，env 墓碑摘除）；`stash list` format 行解析自研 | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §5.3/§5.5；尾分隔纪律同仓库内 LOG_PRETTY_FORMAT 自研面；D4=B includeUntracked 缺省语义任务口径） |
+| C | `packages/host/src/staging-patch.ts`（hunk/行级暂存引擎：[清单 10] stagePatch，D7=B 两态） | 无第三方代码来源——`git apply --cached --recount --whitespace=nowarn [-R]` 命令形态与二进制/模式 hunk 前置拒绝按 git 官方文档 + 本机实测自研 | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §5.3/§5.5；patch 文本 stdin 传入免临时文件） |
+| C | `packages/host/src/diagnostics.ts`（仓库行尾/编码诊断引擎：[清单 56] repoDiagnostics） | 无第三方代码来源——`config --get core.autocrlf/core.eol` 两键 + 顶层文本后缀 CRLF 抽样按 docs/v2-implementation-plan.md §5.3 收窄口径（TEXT_SUFFIXES 表自研） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（node fs 抽样纪律同 blame.ts 已登记 node 面；mixedEolFiles 清单封顶承载口径类型注已记） |
+| C | `packages/client-ui/src/client/diff/patch-select.ts`（行级勾选 → 选中 patch 组装纯函数） | 无第三方代码来源——从既有 `parsePatch` 产物（`diff/patch-hunks.ts` 移植面）裁剪组装自研 | —（git unified patch 文本口径，hunk-stage.spec 覆盖） | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §5.6/§5.7；hunk 头计数重算/整 hunk 原样透传/纯 add/del 块插入点锚为方案口径；消费移植纯函数、本体无搬运） |
+
+（v2 批次三对既有已登记文件的续写改动——`commit.ts` trailers/process 扩展（⑤ mutations/commit A 级行内续写）、client `GitCommitDialog.tsx`/`GitChangesTab.tsx`/`FileDiffView.tsx`/view-model 层的护栏结果面板与 stash 面板接线（④-K/F/B、C 级行内续写）、`locales.ts` 词典组——均为任务口径自研，无新增第三方对照来源，无登记义务。）
+
 ### v2 批次一 refs-admin 引擎模块（2026-11-08）
 
 | 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |

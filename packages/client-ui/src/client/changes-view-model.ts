@@ -7,7 +7,7 @@
  * stage 与 discard）、状态字母与 +N −M 的展示形状。不依赖 DOM/React 即可断言。
  */
 
-import type { DiffScope, FileChange, GitStatusSnapshot } from 'dsh-gitkit/types'
+import type { DiffScope, FileChange, GitStatusSnapshot, RepoDiagnostics } from 'dsh-gitkit/types'
 import type { GitLocaleKey } from './locales.js'
 import type { GitStatusSourceState } from './store/git-status-source.js'
 
@@ -152,5 +152,48 @@ export function changesViewModel(state: GitStatusSourceState): ChangesViewModel 
     groups,
     totalRows: rowByPath.size,
     rowByPath,
+  }
+}
+
+// ── V2 批次三：CRLF 提示条（[56]；plan §5.6——可折叠不阻断）──
+
+/** CRLF 提示条渲染模型。 */
+export interface CrlfBarView {
+  /** 条可见：确有 CRLF/LF 混用文件才渲染（autocrlf 有值但零混用是常规形态——如
+   *  Windows autocrlf=true 的全 CRLF 仓库——不渲染免噪，评审修复②）。 */
+  visible: boolean
+  /** autocrlf 生效值（autocrlf 缺席回落 core.eol；两者都缺 → 词典 unset 形态）。 */
+  value: string
+  /** autocrlf 与 core.eol 都未设置（summary 的 {value} 走 changes.crlf.unset）。 */
+  unset: boolean
+  /** CRLF/LF 混用文件数 = mixedEolFiles.length（评审修复②：worktreeCrlfCount 统计
+   *  的是「含 CRLF 的文件」——host diagnostics.ts `if (hasCrlf) crlfCount += 1`，
+   *  guard-scan.spec 3 含 CRLF vs 1 混用——与「{count} 个文件 CRLF/LF 混用」文案
+   *  语义不同源，不得折算混用数；清单封顶时计数即封顶清单长度，如实少报）。 */
+  mixedCount: number
+  /** 混用文件清单（封顶形态，原样透传进折叠区）。 */
+  mixedFiles: readonly string[]
+}
+
+/**
+ * repoDiagnostics 结果 → 提示条视图（纯函数）。
+ * 语义对齐（评审修复②，host diagnostics.ts 实读）：`worktreeCrlfCount` = 含 CRLF
+ * 行尾的抽样文件数（全 CRLF 文件也计入），`mixedEolFiles` = CRLF 与 LF 混用的文件
+ * 清单——提示条文案「{count} 个文件 CRLF/LF 混用」只对 mixedEolFiles 成立；用
+ * worktreeCrlfCount 会把普通 autocrlf=true 仓库（全 CRLF、零混用）误报成常驻混用
+ * 提示条。可见性 = mixedEolFiles 非空。
+ */
+export function crlfBarView(diagnostics: RepoDiagnostics | null): CrlfBarView {
+  if (diagnostics === null) {
+    return { visible: false, value: '', unset: true, mixedCount: 0, mixedFiles: [] }
+  }
+  const configured = diagnostics.autocrlf ?? diagnostics.coreEol
+  const mixedCount = diagnostics.mixedEolFiles.length
+  return {
+    visible: mixedCount > 0,
+    value: configured ?? '',
+    unset: configured === null,
+    mixedCount,
+    mixedFiles: diagnostics.mixedEolFiles,
   }
 }

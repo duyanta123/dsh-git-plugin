@@ -39,6 +39,14 @@
  * `git/bad-request` reason 联合 `+= 'follow-without-path'`（方案 §4.2：`--follow`
  * 仅在 path 为单路径时合法）。
  *
+ * v2 批次三（2026-11-08，docs/v2-implementation-plan.md §5.4）续增三码 + 一处联合扩展：
+ * `git/stage-patch-failed`（stagePatch 的 `apply --cached` 失败/二进制·模式变更 hunk
+ * 拒绝，details.stderr 过 sanitizeStderr）、`git/stash-not-found`（stashPop/stashDrop
+ * 的序号越界与空 stash 预检）、`git/commit-blocked`（提交护栏 [21][22]：violations
+ * 过线 + overridable 按 D5=A 语义——违规集中无 secret 类才可豁免，secret 硬阻断）；
+ * `git/bad-request` reason 联合 `+= 'malformed-trailer'`（方案 §5.2：CommitOptions
+ * trailers 条目不合法）。
+ *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
  * `declare module '@deepseek-ai/dsh-typert-protocol'` + `interface RemoteErrorDetailsMap`，
@@ -55,6 +63,7 @@
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import type { RemoteErrorCode, RemoteErrorDetailsMap } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-protocol'
+import type { CommitViolation } from './types.ts'
 import type { GitRunResult } from './git-runner.ts'
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
@@ -80,10 +89,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
        * 守卫失败原因：v1 三守卫（unacknowledged / stale-base-revision / not-discardable）+
        * v2 批次一 'force-unacknowledged'（force push / `-D` 删分支 / tag `-f` / worktree
        * remove `--force` 共用的「危险动作未确认」闸）+ 'invalid-options'（调用方入参违反
-       * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一）+
-       * v2 批次二 'follow-without-path'（log 的 follow=true 而无单 path——§4.2）。
+       * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一；amend --no-edit 与
+       * trailers 同给）+
+       * v2 批次二 'follow-without-path'（log 的 follow=true 而无单 path——§4.2）+
+       * v2 批次三 'malformed-trailer'（CommitOptions.trailers 条目不合法——§5.2）。
        */
-      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options' | 'follow-without-path'
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options' | 'follow-without-path' | 'malformed-trailer'
       /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
       paths: string[]
       /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
@@ -116,6 +127,17 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/unknown-revision': { op: string; revision: string }
     /** 时间旅行写前探测到中间态（CHERRY_PICK_HEAD/REVERT_HEAD 在场），拒绝叠操作。 */
     'git/operation-in-progress': { op: 'cherry-pick' | 'revert' }
+    // —— v2 批次三三码（staging-patch/stash/commit 消费；docs/v2-implementation-plan.md §5.4）——
+    /** stagePatch 的 `apply --cached` 失败（patch 与 index 冲突）与二进制/模式变更 hunk 前置拒绝；stderr 过 sanitizeStderr。 */
+    'git/stage-patch-failed': { path: string; stderr: string }
+    /** stashPop/stashDrop 的序号越界与空 stash 预检（rev-parse --verify --quiet stash@{N}）。 */
+    'git/stash-not-found': { index: number }
+    /**
+     * 提交护栏拦截（[21][22]）。overridable 按 **D5=A** 语义：违规集中无 secret 类时
+     * 才有豁免许可（env-file/大文件/构建产物可 danger 勾选豁免）；**secret 硬阻断
+     * 不可豁免**（overridable:false——host commit 守卫强制，零命令）。
+     */
+    'git/commit-blocked': { violations: CommitViolation[]; overridable: boolean }
   }
 }
 

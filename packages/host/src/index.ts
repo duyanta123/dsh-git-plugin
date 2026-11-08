@@ -58,6 +58,17 @@
  * revert()/reset()/abortOperation()`（六方法，REMOTE_METHODS 25→31）+ 域码四码
  * （blame-oversized/merge-conflict/unknown-revision/operation-in-progress）+
  * bad-request reason += 'follow-without-path'。
+ * v2 批次三（2026-11-08，docs/v2-implementation-plan.md §5）接线：StagingPatchEngine
+ * （staging-patch.ts，[清单 10] `apply --cached --recount` 两态 stage/unstage——D7=B）
+ * + StashEngine（stash.ts，[清单 14] push/list/pop/drop——D4=B includeUntracked 显式
+ * boolean 缺省 true）+ GuardScanEngine（guard-scan.ts，[清单 21/22] staged 护栏扫描
+ * ——密钥模式表自研零新依赖、redactedMatch 脱敏；D5=A secret 硬阻断由 CommitEngine
+ * 守卫链消费）+ DiagnosticsEngine（diagnostics.ts，[清单 56] autocrlf/eol/CRLF 抽样）
+ * + CommitEngine 扩 trailers（[清单 18]）与 process 捕获（[清单 63]）+ `@Remote
+ * stagePatch()/stashPush()/stashList()/stashPop()/stashDrop()/scanStaged()/
+ * repoDiagnostics()`（七方法，REMOTE_METHODS 31→38）+ 域码三码（stage-patch-failed/
+ * stash-not-found/commit-blocked）+ bad-request reason += 'malformed-trailer' +
+ * Config guardLargeFileBytes/guardBuildPatterns/guardSecretPatterns。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -78,6 +89,10 @@ import { GraphEngine, DEFAULT_LOG_DEFAULT_LIMIT, DEFAULT_LOG_MAX_LIMIT } from '.
 import { BlameEngine } from './blame.ts'
 import { TimeTravelEngine } from './time-travel.ts'
 import { RefsAdminEngine } from './refs-admin.ts'
+import { StagingPatchEngine } from './staging-patch.ts'
+import { StashEngine } from './stash.ts'
+import { GuardScanEngine, DEFAULT_BUILD_PATTERNS, DEFAULT_GUARD_LARGE_FILE_BYTES } from './guard-scan.ts'
+import { DiagnosticsEngine } from './diagnostics.ts'
 import { StatusEngine, STATUS_CACHE_TTL_MS } from './status.ts'
 import { StatusWatcher, DEFAULT_DEBOUNCE_MS, DEFAULT_POLL_INTERVAL_MS } from './watcher.ts'
 import type { GitFsWatchFace } from './watcher.ts'
@@ -86,10 +101,12 @@ import type { GitSessionEventHost, GitWorkspaceResolution } from './workspace.ts
 import type {
   AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions, BranchCreateResult,
   BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
-  CommitDetail, CommitOptions, CommitResult, CompareOptions, DiffResult, DiffScope, DiscardOptions, DiscardResult,
-  FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult,
-  GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
-  RemoteListResult, ResetOptions, RevertOptions, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, DiffResult, DiffScope,
+  DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult,
+  GitIdentityScope, GitPingResult, GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions,
+  PushResult, RefsSnapshot, RepoDiagnostics, RemoteListResult, ResetOptions, RevertOptions, ShowOptions,
+  StagePatchOptions, StagePatchResult, StageResult, StashDropOptions, StashListResult, StashOpResult,
+  StashPopOptions, StashPushOptions, TagCreateOptions, TagCreateResult, TagDeleteResult,
   TimeTravelResult, UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from './types.ts'
 
@@ -177,10 +194,27 @@ export interface Config {
    * 语义刷新 behind（R3 帧，R2 去重下净零变化不推帧）。
    */
   autoFetchIntervalMs?: number
+  /**
+   * 提交护栏大文件阈值字节（v2 批次三 [清单 21]，方案 §5.5：默认 1 MiB）。
+   * scanStaged 的 large-file 违规判定；commit 的 secret 硬阻断不消费此值。
+   */
+  guardLargeFileBytes?: number
+  /**
+   * 提交护栏构建产物目录模式表（v2 批次三 [清单 21]，方案 §5.5：默认常见产物目录表
+   * DEFAULT_BUILD_PATTERNS）。段前缀匹配（可叠加默认表）；空串条目被忽略。
+   */
+  guardBuildPatterns?: string[]
+  /**
+   * 提交护栏密钥模式**用户叠加表**（v2 批次三 [清单 22]，方案 §5.5「可叠加」）。
+   * 每条为**固定串**（大小写不敏感子串扫描——非正则，防 ReDoS/非法正则注入；登记为
+   * 方案「模式表可叠加」的施工解释）。内置高置信度模式表（SECRET_PATTERNS）不受
+   * 本项影响——本项只叠加。
+   */
+  guardSecretPatterns?: string[]
 }
 
 /** `ping`/`identity`/`status`/`diff`/`followStatus`/写操作之外的可读常量：本服务当前端点清单（诊断用）。 */
-export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation'] as const
+export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation', 'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics'] as const
 
 /**
  * Git 插件 host 服务。构造即注册（`ctx.reflect.provide`），
@@ -208,6 +242,9 @@ export class GitService extends TypertRemoteService {
     logDefaultLimit: z.number().step(1).min(1).max(100_000).default(DEFAULT_LOG_DEFAULT_LIMIT),
     logMaxLimit: z.number().step(1).min(1).max(100_000).default(DEFAULT_LOG_MAX_LIMIT),
     autoFetchIntervalMs: z.number().step(1).min(0).max(86_400_000).default(DEFAULT_AUTO_FETCH_INTERVAL_MS),
+    guardLargeFileBytes: z.number().step(1).min(1).max(1024 * 1024 * 1024).default(DEFAULT_GUARD_LARGE_FILE_BYTES),
+    guardBuildPatterns: z.array(z.string()).default([...DEFAULT_BUILD_PATTERNS]),
+    guardSecretPatterns: z.array(z.string()).default([]),
   })
 
   private readonly runners: Record<GitCommandClass, GitRunner>
@@ -219,6 +256,10 @@ export class GitService extends TypertRemoteService {
   private readonly refsAdmin: RefsAdminEngine
   private readonly blameEngine: BlameEngine
   private readonly timeTravel: TimeTravelEngine
+  private readonly stagingPatch: StagingPatchEngine
+  private readonly stash: StashEngine
+  private readonly guardScan: GuardScanEngine
+  private readonly diagnostics: DiagnosticsEngine
   private readonly messageGen: MessageGenEngine
   private readonly graph: GraphEngine
   private readonly statusWatcher: StatusWatcher
@@ -250,8 +291,8 @@ export class GitService extends TypertRemoteService {
     })
     // 写操作引擎（spec §1.3/§1.4）：discard/unstage 的守卫走 fresh status 扫描，
     // commit 的守卫走只读实例，执行走 write/commit 实例（git-runner.ts 四实例语义）。
+    // （commitEngine 的构造在 this.logger 赋值之后——护栏守卫需要 logger。）
     this.mutations = new MutationEngine(this.runners.write, this.statusEngine)
-    this.commitEngine = new CommitEngine(this.runners.commit, this.runners.readonly, this.workspace)
     // 远端同步引擎（spec §1.5/§1.6 + M6 任务口径）：守卫/预检走只读实例与 fresh
     // 扫描，push/pull/fetch 执行走 network 实例（networkTimeoutMs 熔断）。
     this.remoteOps = new RemoteOpsEngine(this.runners.network, this.runners.readonly, this.statusEngine)
@@ -269,6 +310,41 @@ export class GitService extends TypertRemoteService {
     // 实例，守卫走 fresh 扫描（acknowledged/baseRevision/中间态/no-branch）。
     this.timeTravel = new TimeTravelEngine(this.runners.write, this.runners.readonly, this.statusEngine)
     this.logger = (ctx as unknown as { logger: GitLoggerFace }).logger
+    // commit 引擎（spec §1.4 + v2 批次三 [清单 18/22/63]）：trailers 组装、process
+    // 捕获与 secret 硬阻断守卫（guard = Config 护栏三键——scanStaged 预检面共用）。
+    // 兜底归一：真宿主由 schemastery 默认值填充；直接构造（测试）不带 schema 面时
+    // 以常量默认兜底（schemastery .default 只在键缺席时生效，显式 undefined 不触发）。
+    const guardOptions = {
+      largeFileBytes: resolved.guardLargeFileBytes ?? DEFAULT_GUARD_LARGE_FILE_BYTES,
+      buildPatterns: resolved.guardBuildPatterns ?? [...DEFAULT_BUILD_PATTERNS],
+      secretPatterns: resolved.guardSecretPatterns ?? [],
+    }
+    this.commitEngine = new CommitEngine(this.runners.commit, this.runners.readonly, this.workspace, {
+      logger: this.logger,
+      guard: guardOptions,
+    })
+    // hunk/行级暂存引擎（v2 批次三 [清单 10]，D7=B 两态）：执行走 write 实例、
+    // repoRoot probe 走只读实例（staging-patch.ts）。
+    this.stagingPatch = new StagingPatchEngine(this.runners.write, this.runners.readonly, this.workspace, {
+      logger: this.logger,
+    })
+    // stash 引擎（v2 批次三 [清单 14]，D4=B）：push/pop/drop 走 write 实例、list 与
+    // 序号预检走只读实例、守卫走 fresh 扫描（stash.ts）。
+    this.stash = new StashEngine(this.runners.write, this.runners.readonly, this.statusEngine, this.workspace, {
+      logger: this.logger,
+    })
+    // 提交护栏扫描引擎（v2 批次三 [清单 21/22]）：只读实例（cat-file 面）+ Config
+    // 护栏三键（guard-scan.ts；模式表自研零新依赖，redactedMatch 脱敏）——同一
+    // guardOptions（与 commit 守卫共用一份归一后的参数源）。
+    this.guardScan = new GuardScanEngine(this.runners.readonly, this.workspace, {
+      ...guardOptions,
+      logger: this.logger,
+    })
+    // 仓库诊断引擎（v2 批次三 [清单 56]）：只读实例 + node fs 顶层 CRLF 抽样
+    // （diagnostics.ts）。
+    this.diagnostics = new DiagnosticsEngine(this.runners.readonly, this.workspace, {
+      logger: this.logger,
+    })
     // AI 提交信息引擎（spec §1.7 + M7 任务口径）：只读实例 + DiffEngine staged 路 +
     // 宿主 ctx.llm 结构切片（缺席不阻断激活——调用时落 git/llm-failed call）；
     // session/event 路由捕获与 workspace 的 turn/start 监听同机制自挂。
@@ -1056,6 +1132,160 @@ export class GitService extends TypertRemoteService {
       logFailure(this.logger, 'abortOperation', errorCodeOf(cause))
       throw cause
     }
+  }
+
+  // ── v2 批次三：提交链路与护栏（[清单 10/14/21/22/56]；引擎半 = staging-patch.ts / stash.ts / guard-scan.ts / diagnostics.ts） ──
+
+  /**
+   * hunk/行级暂存（[清单 10]；权限 B）：client 组装选中 patch（hunk 头勾选/行级勾选）
+   * → `git apply --cached --recount --whitespace=nowarn`（patch 文本走 stdin）；
+   * direction='unstage' 追加 `-R` 反向应用（D7=B 两态——staged diff 区同构勾选）。
+   * 二进制/模式变更 hunk 前置拒绝（零命令）；patch 与 index 不符 ⇒
+   * git/stage-patch-failed（details.stderr 脱敏，提示回落文件级 stage）。
+   * @throws git/bad-request 'invalid-options'、git/stage-patch-failed、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async stagePatch(options: StagePatchOptions, signal?: AbortSignal): Promise<StagePatchResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.stagingPatch.stagePatch(options, signal)
+      logWrite(this.logger, 'stagePatch', {
+        path: options.path,
+        direction: options.direction ?? 'stage',
+        staged: result.staged,
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'stagePatch', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * stash 暂存（[清单 14]；权限 B）：无可 stash 改动 ⇒ git/no-paths（op 'stash'）；
+   * `git stash push [-u] [-m msg]`（D4=B：includeUntracked wire 显式 boolean，client
+   * 缺省传 true = `-u`）；baseRevision 乐观基线可选传入（非 null 且 ≠ 最新 HEAD ⇒
+   * bad-request 'stale-base-revision'，零命令）。写后失效：worktree/index 被重置。
+   * @throws git/bad-request 'stale-base-revision'、git/no-paths、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async stashPush(options: StashPushOptions, signal?: AbortSignal): Promise<StashOpResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.stash.stashPush(options, signal)
+      logWrite(this.logger, 'stashPush', {
+        includeUntracked: options.includeUntracked === true,
+        hasMessage: typeof options.message === 'string' && options.message !== '',
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'stashPush', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * stash 列表（[清单 14]；权限 A，只读）：`git stash list --format` 自定义解析
+   * （index = stash@{N} 引用序号；空 stash ⇒ 空数组不抛错）。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（行解析契约破坏 / 命令失败兜底）。
+   */
+  @Remote
+  async stashList(signal?: AbortSignal): Promise<StashListResult> {
+    const startedAt = Date.now()
+    const result = await this.stash.stashList(signal)
+    logRead(this.logger, 'stashList', { count: result.stashes.length, durationMs: Date.now() - startedAt })
+    return result
+  }
+
+  /**
+   * stash 弹出（[清单 14]；权限 B）：index 越界/空 stash ⇒ git/stash-not-found；
+   * 应用冲突 ⇒ git/merge-conflict（op 'stash-pop'——git 语义冲突时 stash 不丢，UI
+   * 明示「应用失败但 stash 保留」）。
+   * @throws git/bad-request 'invalid-options'、git/stash-not-found、git/merge-conflict
+   *   （op 'stash-pop'）、git/no-repository、git/session-workspace-unresolved、
+   *   git/timeout、git/git-error。
+   */
+  @Remote
+  async stashPop(options: StashPopOptions, signal?: AbortSignal): Promise<StashOpResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.stash.stashPop(options, signal)
+      logWrite(this.logger, 'stashPop', { index: result.index, durationMs: Date.now() - startedAt })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'stashPop', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * stash 删除（[清单 14]；权限 C，danger 闸）：acknowledged（零命令守卫）+ index
+   * 校验（越界 ⇒ git/stash-not-found）→ `git stash drop stash@{N}`（删除不可恢复）。
+   * @throws git/bad-request（'unacknowledged' / 'invalid-options'）、git/stash-not-found、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<StashOpResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.stash.stashDrop(options, signal)
+      logWrite(this.logger, 'stashDrop', { index: result.index, durationMs: Date.now() - startedAt })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'stashDrop', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 提交护栏预检（[清单 21/22]；权限 A，只读）：扫 staged 内容——密钥模式
+   * （token 格式/PEM 头/.env 键值，模式表自研零新依赖 + Config.guardSecretPatterns
+   * 叠加）+ 大文件阈值（guardLargeFileBytes 默认 1 MiB）+ 构建产物目录
+   * （guardBuildPatterns）+ CRLF 混用抽样；violations 分类返回（secret 命中的
+   * redactedMatch 已脱敏——不落明文密钥）。blocked = violations 非空；D5=A 豁免
+   * 语义 = violations 无 secret 类时可 danger 勾选豁免（client 面）。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（清单/cat-file 失败兜底）。
+   */
+  @Remote
+  async scanStaged(signal?: AbortSignal): Promise<CommitScanResult> {
+    const startedAt = Date.now()
+    const result = await this.guardScan.scanStaged(signal)
+    logRead(this.logger, 'scanStaged', {
+      blocked: result.blocked,
+      violationCount: result.violations.length,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * 仓库行尾/编码诊断（[清单 56]；权限 A，只读）：`git config --get
+   * core.autocrlf/core.eol` + 顶层文本文件 CRLF 抽样（含 CRLF 文件计数 + 混用清单，
+   * 清单封顶）。中文路径由 node fs 原样承载（v1 `-z` 纪律不受影响）。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（config 失败兜底）。
+   */
+  @Remote
+  async repoDiagnostics(signal?: AbortSignal): Promise<RepoDiagnostics> {
+    const startedAt = Date.now()
+    const result = await this.diagnostics.repoDiagnostics(signal)
+    logRead(this.logger, 'repoDiagnostics', {
+      autocrlf: result.autocrlf ?? '(unset)',
+      crlfCount: result.worktreeCrlfCount,
+      mixedCount: result.mixedEolFiles.length,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
   }
 
   /**

@@ -184,6 +184,36 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.abortOperation must not be called by the source')
   }
 
+  // V2 批次三提交链路与护栏 7 方法（stagePatch/stashPush/stashList/stashPop/stashDrop/
+  // scanStaged/repoDiagnostics）——状态源不消费；断言守卫桩（FakeRpc.diff 同款）。
+  async stagePatch(): Promise<never> {
+    throw new Error('FakeRpc.stagePatch must not be called by the source')
+  }
+
+  async stashPush(): Promise<never> {
+    throw new Error('FakeRpc.stashPush must not be called by the source')
+  }
+
+  async stashList(): Promise<never> {
+    throw new Error('FakeRpc.stashList must not be called by the source')
+  }
+
+  async stashPop(): Promise<never> {
+    throw new Error('FakeRpc.stashPop must not be called by the source')
+  }
+
+  async stashDrop(): Promise<never> {
+    throw new Error('FakeRpc.stashDrop must not be called by the source')
+  }
+
+  async scanStaged(): Promise<never> {
+    throw new Error('FakeRpc.scanStaged must not be called by the source')
+  }
+
+  async repoDiagnostics(): Promise<never> {
+    throw new Error('FakeRpc.repoDiagnostics must not be called by the source')
+  }
+
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
     this.gate = new Promise<void>((resolve) => { this.openGate = resolve })

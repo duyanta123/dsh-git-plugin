@@ -12,7 +12,7 @@ dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
 
-## 1. 功能清单（v1 + V2 批次一）
+## 1. 功能清单（v1 + V2 批次一～三）
 
 **看清（变更感知）**
 - 工作区快照：staged / unstaged / untracked / conflicted 四类变更 + ahead/behind + 分支/HEAD 字段（含 detached、unborn 首提交前、rename、二进制、中文路径）；
@@ -42,6 +42,19 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 - 标签：创建（header 菜单 / 图 tab 提交行「在此打标签」；message 非空 = annotated，`-f` 覆盖需 danger 确认；非 force 重名预检 `git/tag-exists`）、删除（图 tab tag chip 菜单）；
 - worktree：列表（porcelain 解析；locked 显布尔位、unborn HEAD oid 归 null）、新增（检出已有分支或新建分支）、移除（脏 worktree 需 force + danger 确认双闸）；
 - 变更纪律：命令一律带 `--` 分隔符（选项注入防线）、变更前 `rev-parse --verify` 存在性预检并域码化（`git/branch-not-found` / `git/tag-not-found` / `git/worktree-failed` 可读提示）、变更后写后失效即时刷新。
+
+**历史面（V2 批次二）**
+- blame 逐行（diff 区 blame 模式；大文件走 `-L` 区间分片加载，`git/blame-oversized` 可读提示）；
+- 历史搜索（提交图内按 message `--grep -F` / 作者 `--author` / 文件 pathspec 过滤）与单文件历史（`log --follow <path>`，当版 diff 走 `getCommitDetail({oid, path})`）；
+- 分支对比（`compareBranches`：ahead/behind 计数 + 双列提交清单 + merge-base）；
+- cherry-pick / revert / reset（软/混合/硬）：冲突结构化报错（`git/merge-conflict`，conflicted 清单 + abortable），操作中叠操作拒绝（`git/operation-in-progress`），`abortOperation` 回滚中间态；reset 硬档与 stash 删除类动作 danger 确认双闸；
+- 图首页合成「未提交改动（WIP）」节点（纯 client：status 快照 + 图首页数据合成）。
+
+**提交链路与护栏（V2 批次三）**
+- hunk 级 / 行级 stage 与 unstage（D7=B 两态）：diff 区 hunk 头勾选框 + 行级勾选 → client 纯函数从 `parsePatch` 产物裁剪组装选中 patch → `git apply --cached --recount`（staged 侧反向 `-R` 还原；二进制/模式变更 hunk 拒绝为 `git/stage-patch-failed`）；
+- stash 面板：push（**默认含 untracked**，可关；D4=B）/ list / pop（冲突 ⇒ `git/merge-conflict` op 'stash-pop' 且 stash 不丢）/ drop（danger 确认双闸；`git/stash-not-found` 序号预检）；
+- 提交护栏（提交前自动 `scanStaged`，违规列表 + 按类豁免）：secret 类**硬阻断不可豁免**（`git/commit-blocked` overridable:false——密钥格式/PEM 头/.env 键值，命中展示文本掩码脱敏不落明文）；.env 文件 / 大文件 / 构建产物 / CRLF 混行类可勾选豁免；
+- 提交对话框扩展：作者署名 trailer 编辑区（Co-authored-by / Generated-by 等，非法行即时警示 `malformed-trailer`）、hook 输出折叠区（`git commit` 进程整体 stdout/stderr 尾保留显示）、CRLF 提示条（`repoDiagnostics`：autocrlf 生效值 + 混行文件清单，可折叠不阻断）。
 
 ## 2. 安装（用户形态）
 
@@ -145,6 +158,10 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
     # fastTimeoutMs / commitTimeoutMs / networkTimeoutMs   # 三档超时（spec §1.0.2）
     # pollIntervalMs: 60000                # 兜底轮询间隔（嵌套目录变更靠它，见 §5）
     # autoFetchIntervalMs: 300000          # 定时 fetch 间隔（0=关，默认 5 分钟，见 §1 推送与同步）
+    # guardLargeFileBytes: 1048576         # 提交护栏：staged 单文件尺寸阈值（字节，默认 1 MiB；见 §1 提交链路与护栏）
+    # guardBuildPatterns:                  # 提交护栏：构建产物目录表（默认 node_modules/dist/build/out/coverage/.next/.nuxt/.turbo/vendor/target，整表覆盖）
+    #   - dist/
+    # guardSecretPatterns:                 # 提交护栏：追加的自定义密钥特征（固定串非正则，叠在内置表上；secret 类命中硬阻断不可豁免）
     # llmProvider / llmModel               # AI 提交信息的 LLM 路由（缺省 ⇒ git/llm-route-unresolved）
 ```
 
@@ -159,7 +176,7 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
 pnpm --dir dsh-git-plugin install         # workspace 安装
 pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 三工程 tsc
 pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + git-bundle 一致性检查
-pnpm --dir dsh-git-plugin test            # vitest run（35 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
+pnpm --dir dsh-git-plugin test            # vitest run（49 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
 pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 双包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
 pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 git-bundle 安装 → dump-config 两行 → web → status() ready → HTML 含两包；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
 ```

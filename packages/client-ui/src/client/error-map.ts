@@ -178,6 +178,29 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
     params: (details) => ({ op: text((details as { op?: unknown }).op) }),
     actions: ['abort'],
   },
+  // V2 批次三提交链路与护栏新码（host staging-patch/stash/guard-scan；plan §5.4）。
+  // Record 穷尽约束随 GitCode 键域扩张——host 侧声明这批码后本表即编译期闭合。
+  // bad-request 的 reason 联合扩值（'malformed-trailer'）复用既有 'error.bad-request'
+  // 插值，不新增键。
+  'git/stage-patch-failed': {
+    // stderr 不进主文案——errorNoticeView 的 details.stderr 折叠区路径已承担
+    // （过 redact 后展示），这里只插值 path；主文案带「回落文件级 stage」指引
+    // （plan §5.10：patch 与 index 行尾漂移 ⇒ 提示回落文件级 stage）。
+    key: 'error.stage-patch-failed',
+    params: (details) => ({ path: text((details as { path?: unknown }).path) }),
+  },
+  'git/stash-not-found': {
+    key: 'error.stash-not-found',
+    params: (details) => ({ index: num((details as { index?: unknown }).index) }),
+  },
+  'git/commit-blocked': {
+    // violations 清单本身由提交对话框的护栏结果面板渲染（kind/path/detail 逐行），
+    // 错误条形态只插值计数；overridable 由面板消费（danger 勾选豁免入口）。
+    key: 'error.commit-blocked',
+    params: (details) => ({
+      count: listCount((details as { violations?: unknown }).violations),
+    }),
+  },
 }
 
 /** 查一个错误码的展示条目；陌生 code → null（透传 error.message 的回落路径）。 */

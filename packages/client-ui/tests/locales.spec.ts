@@ -85,6 +85,26 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     ]) {
       expect(keys.has(key), `缺 ${key}`).toBe(true)
     }
+    // V2 批次三提交链路与护栏（plan §5.4/§5.6）：3 新码 error.* 行 + hunk/行级勾选
+    // aria + CRLF 提示条 + stash 面板 + 提交对话框三块扩展键组到齐。
+    for (const key of [
+      'error.stage-patch-failed', 'error.stash-not-found', 'error.commit-blocked',
+      'changes.hunkCheckAria', 'changes.lineCheckAria',
+      'changes.crlf.title', 'changes.crlf.summary', 'changes.crlf.unset', 'changes.crlf.files',
+      'stash.chip', 'stash.chipCount', 'stash.panelTitle', 'stash.loading', 'stash.empty',
+      'stash.pushAll', 'stash.pushAllIncludeUntracked', 'stash.untrackedHint',
+      'stash.pop', 'stash.drop', 'stash.popConflict', 'stash.drop.title', 'stash.drop.message',
+      'commit.trailers.label', 'commit.trailers.addCoauthored', 'commit.trailers.addGenerated',
+      'commit.trailers.invalid',
+      'commit.guard.title', 'commit.guard.scanning', 'commit.guard.clean', 'commit.guard.blocked',
+      'commit.guard.secretHint', 'commit.guard.override',
+      'commit.guard.kind.secret', 'commit.guard.kind.env-file', 'commit.guard.kind.large-file',
+      'commit.guard.kind.build-artifact', 'commit.guard.kind.eol-mixed',
+      'commit.process.title', 'commit.process.stdout', 'commit.process.stderr',
+      'commit.process.timedOut', 'commit.process.duration', 'commit.process.truncated',
+    ]) {
+      expect(keys.has(key), `缺 ${key}`).toBe(true)
+    }
   })
 
   it('V2 批次一清理：死键不复存在（P3-4/5 双删 + sync 占位键随转真移除）', () => {

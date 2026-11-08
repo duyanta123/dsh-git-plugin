@@ -104,8 +104,15 @@ export interface GitRunOptions {
   stdin?: string
   /** In-memory stdout cap for this command, replacing the runner's `outputMaxBytes`. */
   maxBytes?: number
-  /** Per-command env, merged after the scrubbed base env（workspace-changes git.ts:69 后置合并）. */
-  env?: Readonly<Record<string, string>>
+  /**
+   * Per-command env, merged after the scrubbed base env（workspace-changes git.ts:69
+   * 后置合并）. `undefined` 值 = 墓碑（从合并结果删除该键——v2 批次三 stashPush 用它
+   * 对单条命令摘除 GIT_LITERAL_PATHSPECS：本机 git 2.55.0.windows.2 实测该环境变量
+   * 会静默破坏 `git stash push --include-untracked` 的 untracked 收集（tracked 照常
+   * 入 stash，untracked 留在工作区——git 内部 pathspec 魔法被字面化）。摘除仅限
+   * 无用户 pathspec 输入的命令（stash push 不传 pathspec，零注入面）。
+   */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 /** Bounds every git command runs under. */

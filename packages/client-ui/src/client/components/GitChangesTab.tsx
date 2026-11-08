@@ -13,19 +13,36 @@
  * store）→ discard 走 C5 GitConfirmDialog 二次确认（路径全量 + 勾选闸 [清单 12]）。
  *
  * 空态：无仓库友好空态 [清单 54]；工作区干净 changes.empty。
+ *
+ * **V2 批次三（plan §5.6）扩块**：① diff 区 hunk 头 + 行级勾选（[10]；D7=B 双侧
+ * 同构——worktree 选中=stage、staged 选中=unstage 反向还原；勾选变化 →
+ * diff/patch-select.ts 组装选中 patch → changesOps.stagePatch，失败就地显示并
+ * 提示回落文件级 stage）；② CRLF 提示条（[56]；repoDiagnostics，可折叠不阻断）；
+ * ③ stash 计数 chip → 面板（[14]；列表 / 应用=pop / 删除=drop danger 闸 /
+ * 「Stash 全部变更」includeUntracked 缺省勾选 + untracked 计数提示，D4=B）。
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { DiffFile, RepoDiagnostics, StashEntry } from 'dsh-gitkit/types'
+import { Checkbox } from '@deepseek-ai/dsh-client-ui-primitives'
 import { parseGitChangesAddress } from '../addresses.js'
 import type { ChangeRow, ChangesViewModel } from '../changes-view-model.js'
-import { changesViewModel } from '../changes-view-model.js'
+import { changesViewModel, crlfBarView } from '../changes-view-model.js'
+import type { GitChangesOpsFace } from '../changes-ops-face.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
+import { assembleSelectedPatch, directionOfScope, hunkLineKeys } from '../diff/patch-select.js'
+import { parsePatch } from '../diff/patch-hunks.js'
 import type { PathNode } from '../group-paths.js'
 import { groupPaths } from '../group-paths.js'
 import type { NS } from '../locales.js'
+import type { GitErrorLike } from '../remote/mount.js'
+import {
+  STASH_INCLUDE_UNTRACKED_DEFAULT, popConflictHint, stashChipView, stashDropConfirmView,
+  stashPushDisabled, stashPushOptions, untrackedHint,
+} from '../stash-view-model.js'
 import type { GitBlameState } from '../store/git-blame-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import { diffCacheKey } from '../store/git-changes-store.js'
@@ -64,6 +81,8 @@ export interface ChangesInjected {
   blameEnsureRange(path: string, start: number, end: number): void
   /** 文件历史动作（[60]；跨 tab 意图 → 图 tab path 模式 + openResource 打开图 tab）。 */
   openFileHistory(path: string): void
+  /** 批次三动作面（[10] stagePatch / [14] stash / [56] repoDiagnostics——changes-ops-face）。 */
+  changesOps: GitChangesOpsFace
 }
 
 /** tab body 组合 props（PropsRuntime ⊃ useTabInfo；PropsStore ⊃ useStore/actions）。 */
@@ -76,6 +95,12 @@ export type GitChangesTabProps = PropsRuntime<'sidebar.right.pane.tab'>
 interface Selection {
   row: ChangeRow
   key: string
+}
+
+/** 勾选集初始值（具名函数——check-locale 的行级 JSX 扫描会把「同一行内两个泛型 +
+ *  `>`…`<` 相邻」误判成裸文本，初始化器提为函数规避）。 */
+function emptyLineSet(): ReadonlySet<string> {
+  return new Set<string>()
 }
 
 /** 单展开行的解析（含 diff 缓存键；view/revision 变化时自然重算）。 */
@@ -218,7 +243,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const {
     useTabInfo, useStore, actions, useGitStatus, useGitChanges, useGitBlame,
     loadDiff, stage, unstage, discard, refresh, dismissMutationError, commitDialog,
-    blameEnsure, blameEnsureRange, openFileHistory, t,
+    blameEnsure, blameEnsureRange, openFileHistory, changesOps, t,
   } = props
   const { tab } = useTabInfo()
   const coordinates = useMemo(() => parseGitChangesAddress(tab.contentId), [tab.contentId])
@@ -240,6 +265,23 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const [commitIntent, setCommitIntent] = useState<'commit' | 'commit-push' | null>(null)
   // ── blame 模式（V2 批次二 [34]）：展开行的 diff 区模式切换（diff | blame）──
   const [blameMode, setBlameMode] = useState(false)
+  // ── hunk/行级勾选（V2 批次三 [10]；D7=B 双侧）：乐观勾选集 + 在途闸 + 就地错误 ──
+  const [selectedLines, setSelectedLines] = useState<ReadonlySet<string>>(emptyLineSet)
+  const [patchBusy, setPatchBusy] = useState(false)
+  const [patchError, setPatchError] = useState<GitErrorLike | null>(null)
+  // ── CRLF 提示条（V2 批次三 [56]）：诊断数据 + 折叠态 ──
+  const [diagnostics, setDiagnostics] = useState<RepoDiagnostics | null>(null)
+  const [crlfDismissed, setCrlfDismissed] = useState(false)
+  const [crlfExpanded, setCrlfExpanded] = useState(false)
+  // ── stash 面板（V2 批次三 [14]）：chip/面板/列表/动作态（D4=B includeUntracked 缺省勾选）──
+  const [stashOpen, setStashOpen] = useState(false)
+  const [stashPhase, setStashPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [stashEntries, setStashEntries] = useState<StashEntry[]>([])
+  const [stashError, setStashError] = useState<GitErrorLike | null>(null)
+  const [stashOpError, setStashOpError] = useState<GitErrorLike | null>(null)
+  const [stashBusy, setStashBusy] = useState(false)
+  const [includeUntracked, setIncludeUntracked] = useState(STASH_INCLUDE_UNTRACKED_DEFAULT)
+  const [pendingDrop, setPendingDrop] = useState<StashEntry | null>(null)
 
   // blame 模式开着且展开行槽位缺席 ⇒ 首载（全区一次；oversized 转 D3=B 分片模式）。
   useEffect(() => {
@@ -258,6 +300,55 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     if (selection === undefined) return
     if (changesState.diffs[selection.key] === undefined) loadDiff(selection.row.scope, selection.row.path)
   }, [selection, changesState.diffs, loadDiff])
+
+  // hunk/行级勾选（[10]）：展开行/revision 变化 → 乐观勾选集与就地错误作废
+  // （stagePatch 成功后 refresh → revision 递增 → 新 diff 的勾选态重新开始）。
+  useEffect(() => {
+    setSelectedLines(new Set<string>())
+    setPatchError(null)
+  }, [selectedPath, statusState.revision])
+
+  // CRLF 提示条（[56]）：仓库可用时取一次行尾诊断（只读、可折叠、不阻断）。
+  useEffect(() => {
+    if (!view.available) return
+    let cancelled = false
+    void changesOps.repoDiagnostics().then((result) => {
+      if (!cancelled) setDiagnostics(result.ok ? result.value : null)
+    })
+    return () => { cancelled = true }
+  }, [view.available, changesOps])
+
+  /**
+   * 勾选变化 → 组装选中 patch → stagePatch（plan §5.6 数据流的组件半）：
+   * worktree 选中 = direction 'stage'、staged 选中 = 'unstage' 反向还原（D7=B，
+   * directionOfScope）。每次勾选立即应用（勾选即动作——hunk 头勾选 = 整 hunk）；
+   * 成功 → refresh（R5 manual，不等 R3 帧——changes-store mutate 同款乐观口径）；
+   * 失败 → 乐观勾选回退 + 就地 GitErrorNotice（stage-patch-failed 文案自带
+   * 「回落文件级 stage」指引，plan §5.10）。
+   */
+  const applyPatchSelection = (file: DiffFile, keys: readonly string[]): void => {
+    const current = selection
+    if (current === undefined || patchBusy) return
+    const selected = new Set<string>(keys)
+    const patch = assembleSelectedPatch(file, selected)
+    if (patch === null) return
+    setPatchBusy(true)
+    setPatchError(null)
+    setSelectedLines((prev) => new Set([...prev, ...keys]))
+    void changesOps.stagePatch({
+      path: current.row.path,
+      patch,
+      direction: directionOfScope(current.row.scope),
+    }).then((result) => {
+      setPatchBusy(false)
+      if (result.ok) {
+        refresh()
+        return
+      }
+      setSelectedLines((prev) => new Set([...prev].filter((key) => !keys.includes(key))))
+      setPatchError(result.error)
+    })
+  }
 
   const diffOf = (path: string): ReactNode => {
     const row = view.rowByPath.get(path)
@@ -338,10 +429,38 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         </>
       )
     }
+    const file = entry.file // 收窄进局部 const（闭包内属性收窄不保留）
     return (
       <>
         {modeBar}
-        <FileDiffView file={entry.file} t={t} />
+        {/* hunk/行级勾选（[10]；D7=B 双侧同构）：worktree 侧勾选=stage、staged 侧
+            勾选=unstage 反向——direction 由 directionOfScope(row.scope) 折算。 */}
+        <FileDiffView
+          file={file}
+          t={t}
+          selection={{
+            selected: selectedLines,
+            onToggleLine: (key) => { applyPatchSelection(file, [key]) },
+            onToggleHunk: (hunkIndex) => {
+              const hunk = parsePatch(file.patch ?? '')[hunkIndex]
+              if (hunk === undefined) return
+              applyPatchSelection(file, hunkLineKeys(hunk))
+            },
+          }}
+        />
+        {patchError !== null && (
+          <div className='dsh-git-changes__patch-error' data-git-change-patch-error=''>
+            <GitErrorNotice error={patchError} t={t} />
+            <button
+              type='button'
+              className='dsh-git-changes__patch-error-dismiss'
+              data-git-change-patch-error-dismiss=''
+              onClick={() => { setPatchError(null) }}
+            >
+              {t('common.close')}
+            </button>
+          </div>
+        )}
       </>
     )
   }
@@ -386,6 +505,79 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     if (ok) discard(pendingPaths)
   }
 
+  // ── stash 面板（[14]）：懒加载 + push/pop/drop 三动作（成功 → refresh + 重读清单）──
+  const reloadStash = (): void => {
+    setStashPhase('loading')
+    setStashError(null)
+    void changesOps.stashList().then((result) => {
+      if (result.ok) {
+        setStashEntries(result.value.stashes)
+        setStashPhase('ready')
+      } else {
+        setStashError(result.error)
+        setStashPhase('error')
+      }
+    })
+  }
+  const toggleStashPanel = (): void => {
+    const next = !stashOpen
+    setStashOpen(next)
+    if (next && stashPhase !== 'ready') reloadStash() // 面板首开懒加载
+  }
+  const runStashPush = (): void => {
+    setStashBusy(true)
+    setStashOpError(null)
+    // D4=B：includeUntracked 显式过 wire（缺省 true——STASH_INCLUDE_UNTRACKED_DEFAULT
+    // 初始化勾选态）；baseRevision = 乐观并发基线（discard 范式的可选沿用，plan §5.2）。
+    void changesOps.stashPush(stashPushOptions(includeUntracked, statusState.status?.branch.oid ?? null))
+      .then((result) => {
+        setStashBusy(false)
+        if (!result.ok) {
+          setStashOpError(result.error)
+          return
+        }
+        refresh()
+        reloadStash()
+      })
+  }
+  const runStashPop = (entry: StashEntry): void => {
+    setStashBusy(true)
+    setStashOpError(null)
+    void changesOps.stashPop({ index: entry.index }).then((result) => {
+      setStashBusy(false)
+      if (!result.ok) {
+        // git/merge-conflict（op 'stash-pop'）⇒ 面板明示「stash 保留未丢失」（plan §5.10）。
+        setStashOpError(result.error)
+        return
+      }
+      refresh()
+      reloadStash()
+    })
+  }
+  const runStashDrop = (): void => {
+    const entry = pendingDrop
+    setPendingDrop(null)
+    if (entry === null) return
+    setStashBusy(true)
+    setStashOpError(null)
+    // acknowledged = 本调用契约「UI 已过 C5 danger 勾选闸」（changes-ops-face 同纪律）。
+    void changesOps.stashDrop({ index: entry.index, acknowledged: true }).then((result) => {
+      setStashBusy(false)
+      if (!result.ok) {
+        setStashOpError(result.error)
+        return
+      }
+      refresh()
+      reloadStash()
+    })
+  }
+
+  const crlf = crlfBarView(diagnostics)
+  const stashChip = stashChipView(stashPhase === 'ready' ? stashEntries.length : null)
+  const untrackedHintView = untrackedHint(statusState.status)
+  const popConflictVisible = popConflictHint(stashOpError)
+  const pendingDropView = pendingDrop !== null ? stashDropConfirmView(pendingDrop) : null
+
   return (
     <div className='dsh-git-changes' data-git-changes='' data-git-changes-session={coordinates.sessionId}>
       {view.unborn && (
@@ -421,6 +613,120 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
           >
             {t('common.close')}
           </button>
+        </div>
+      )}
+      {/* CRLF 提示条（[56]）：autocrlf 生效值 + mixedEolFiles 摘要；可折叠，不阻断。 */}
+      {crlf.visible && !crlfDismissed && (
+        <div className='dsh-git-changes__crlf' data-git-changes-crlf=''>
+          <span className='dsh-git-changes__crlf-title' data-git-changes-crlf-title=''>{t('changes.crlf.title')}</span>
+          <span className='dsh-git-changes__crlf-summary' data-git-changes-crlf-summary=''>
+            {t('changes.crlf.summary', { value: crlf.unset ? t('changes.crlf.unset') : crlf.value, count: crlf.mixedCount })}
+          </span>
+          <button
+            type='button'
+            className='dsh-git-changes__crlf-toggle'
+            data-git-changes-crlf-toggle=''
+            aria-expanded={crlfExpanded}
+            onClick={() => { setCrlfExpanded(!crlfExpanded) }}
+          >
+            {t('common.details')}
+          </button>
+          <button
+            type='button'
+            className='dsh-git-changes__crlf-dismiss'
+            data-git-changes-crlf-dismiss=''
+            onClick={() => { setCrlfDismissed(true) }}
+          >
+            {t('common.close')}
+          </button>
+          {crlfExpanded && (
+            <p className='dsh-git-changes__crlf-files' data-git-changes-crlf-files=''>
+              {t('changes.crlf.files', { files: crlf.mixedFiles.length > 0 ? crlf.mixedFiles.join(', ') : '—' })}
+            </p>
+          )}
+        </div>
+      )}
+      {/* stash 计数 chip（[14]）→ 面板：列表 / 应用=pop / 删除=drop danger 闸 +
+          「Stash 全部变更」（includeUntracked 缺省勾选 + untracked 计数提示，D4=B）。 */}
+      {view.available && (
+        <div className='dsh-git-changes__stashbar' data-git-changes-stashbar=''>
+          <button
+            type='button'
+            className='dsh-git-changes__stash-chip'
+            data-git-changes-stash-chip=''
+            aria-expanded={stashOpen}
+            onClick={toggleStashPanel}
+          >
+            {t(stashChip.labelKey, stashChip.params)}
+          </button>
+        </div>
+      )}
+      {view.available && stashOpen && (
+        <div className='dsh-git-changes__stash-panel' data-git-changes-stash-panel=''>
+          <h3 className='dsh-git-changes__stash-title' data-git-changes-stash-title=''>{t('stash.panelTitle')}</h3>
+          {stashPhase === 'loading' && (
+            <p className='dsh-git-changes__stash-status' role='status' data-git-changes-stash-status='loading'>{t('stash.loading')}</p>
+          )}
+          {stashError !== null && (
+            <GitErrorNotice error={stashError} t={t} onAction={(action) => { if (action === 'retry') reloadStash() }} />
+          )}
+          {stashPhase === 'ready' && stashEntries.length === 0 && (
+            <p className='dsh-git-changes__stash-status' data-git-changes-stash-status='empty'>{t('stash.empty')}</p>
+          )}
+          {stashEntries.length > 0 && (
+            <ul className='dsh-git-changes__stash-list' data-git-changes-stash-list=''>
+              {stashEntries.map((entry) => (
+                <li key={entry.index} className='dsh-git-changes__stash-item' data-git-changes-stash-item={entry.index}>
+                  <span className='dsh-git-changes__stash-message'>{entry.message}</span>
+                  <span className='dsh-git-changes__stash-oid'>{entry.shortOid}</span>
+                  <button
+                    type='button'
+                    className='dsh-git-changes__stash-action'
+                    data-git-changes-stash-pop=''
+                    disabled={stashBusy}
+                    onClick={() => { runStashPop(entry) }}
+                  >
+                    {t('stash.pop')}
+                  </button>
+                  <button
+                    type='button'
+                    className='dsh-git-changes__stash-action'
+                    data-git-changes-stash-drop=''
+                    disabled={stashBusy}
+                    onClick={() => { setPendingDrop(entry) }}
+                  >
+                    {t('stash.drop')}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {popConflictVisible && (
+            <p className='dsh-git-changes__stash-conflict' data-git-changes-stash-popconflict=''>{t('stash.popConflict')}</p>
+          )}
+          {stashOpError !== null && <GitErrorNotice error={stashOpError} t={t} />}
+          <div className='dsh-git-changes__stash-push' data-git-changes-stash-push=''>
+            <button
+              type='button'
+              className='dsh-git-changes__stash-push-button'
+              data-git-changes-stash-push-button=''
+              disabled={stashPushDisabled(view.available, view.clean, stashBusy)}
+              onClick={runStashPush}
+            >
+              {t('stash.pushAll')}
+            </button>
+            <Checkbox
+              className='dsh-git-changes__stash-untracked'
+              checked={includeUntracked}
+              label={t('stash.pushAllIncludeUntracked')}
+              onChange={setIncludeUntracked}
+            />
+            {untrackedHintView.visible && (
+              <p className='dsh-git-changes__stash-hint' data-git-changes-stash-untracked-hint=''>
+                {t('stash.untrackedHint', { count: untrackedHintView.count })}
+              </p>
+            )}
+          </div>
         </div>
       )}
       {!view.available ? (
@@ -481,6 +787,21 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         checkboxLabel={t('confirm.dangerCheckbox')}
         onConfirm={() => { resolveDiscard(true) }}
         onCancel={() => { resolveDiscard(false) }}
+      />
+      {/* stash drop 的 danger 确认（[14]；severity danger ⇒ GitConfirmDialog 勾选闸生效，
+          纯载荷模型 = stash-view-model.stashDropConfirmView） */}
+      <GitConfirmDialog
+        open={pendingDropView !== null}
+        title={t('stash.drop.title')}
+        message={pendingDropView !== null
+          ? t('stash.drop.message', { index: pendingDropView.params.index, message: pendingDropView.params.message })
+          : ''}
+        severity={pendingDropView?.severity ?? 'danger'}
+        confirmLabel={t('stash.drop')}
+        cancelLabel={t('confirm.cancel')}
+        checkboxLabel={t('confirm.dangerCheckbox')}
+        onConfirm={runStashDrop}
+        onCancel={() => { setPendingDrop(null) }}
       />
     </div>
   )

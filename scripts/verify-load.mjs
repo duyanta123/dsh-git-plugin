@@ -82,6 +82,18 @@
  *         stashPop 冲突断言 `git/merge-conflict` 真宿主形状（op 'stash-pop'，该码
  *         注册于批次二 §4.4；§8 D9 对调时随移）+ stashPush/List/Pop/Drop 各一条往返，
  *         否则批次三新方法端到端零覆盖（§3.8 注同款纪律）。
+ *      N. v2 批次三提交链路与护栏七方法各一条真宿主 RPC 往返（docs/v2-implementation-plan.md
+ *         §5.7「verify-load 断言面扩展」硬前提——断言链 A–M 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖）：commit 链路断言 `CommitResult.process` 字段（K 段）→
+ *         stagePatch（world 重读 staged diff 只含选中 hunk）→ scanStaged 密钥样例
+ *         （blocked + redactedMatch 无明文断言）→ commit 密钥硬阻断 ⇒ git/commit-blocked
+ *         overridable:false（D5=A，world 零提交）→ repoDiagnostics（autocrlf=fixture
+ *         钉死值 + 抽样计数形状）→ stashPush（D4=B 缺省含 untracked；world 重读 stash
+ *         与干净工作区）→ stashList（index/oid world 对照）→ stashPop（内容恢复、stash
+ *         清空）→ stashPop 冲突 ⇒ git/merge-conflict（op 'stash-pop'、conflicted 与
+ *         world diff-filter=U 一致、**stash 未丢**）→ stashDrop 无 acknowledged ⇒
+ *         git/bad-request 'unacknowledged'（零命令）→ stashDrop（acknowledged；world
+ *         重读 stash 清空）→ stashDrop 再删 ⇒ git/stash-not-found。
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
@@ -525,6 +537,16 @@ async function main() {
       `commit result metadata wrong: ${JSON.stringify(commitValue)}`)
     assert(commitValue.message === commitMessage,
       `commit result message should round-trip: ${JSON.stringify(commitValue)}`)
+    // v2 批次三 [清单 63]：CommitResult.process 捕获（`git commit` 进程整体输出，
+    // 含 hook 输出——诚实命名；空输出置 null，git commit 自身恒有 stdout 汇总行 ⇒ 非 null）。
+    const processOutput = commitValue.process
+    assert(processOutput !== null && typeof processOutput === 'object',
+      `commit result should carry the process capture: ${JSON.stringify(commitValue)}`)
+    assert(processOutput.timedOut === false && typeof processOutput.durationMs === 'number'
+      && typeof processOutput.stdout === 'string' && typeof processOutput.stderr === 'string'
+      && processOutput.stdout.includes('[main') === true,
+    `commit process capture shape wrong: ${JSON.stringify(processOutput)}`)
+    step(`commit process capture OK: stdout carries the git summary line, timedOut=false, durationMs=${String(processOutput.durationMs)}ms`)
     // world 重读（spec §6 断言纪律）：独立 git log 比对，不信 RPC 自述。
     const worldHead = execFileSync('git', ['-C', fixtureRepo, 'log', '-1', '--format=%H%x00%s'], { encoding: 'utf8' })
     const [worldOid, worldSubject] = worldHead.trim().split('\0')
@@ -882,6 +904,150 @@ async function main() {
     assert(worldGit('rev-parse', 'HEAD') === revertHead && worldStatusPorcelain() === '' && !pseudoHeadExists('REVERT_HEAD'),
       'world re-read after the empty revert: HEAD unchanged, no intermediate state left')
     step('revert RPC OK: picked commit reverted (world re-read) + empty revert ⇒ git-error op=revert')
+
+    // ── 5.97 断言 N（v2 批次三 §5.7 verify-load 扩展）：提交链路与护栏七方法各一条
+    //        真宿主往返 + 密钥硬阻断真宿主形状。world 重读纪律同 K/L/M。夹具当前
+    //        HEAD = main @ revertHead（M 链收尾），clean。──
+    const worldCommitCount = () => Number(worldGit('rev-list', '--count', '--all'))
+    const restoreStaged = (...paths) => execFileSync('git', ['restore', '--staged', '--', ...paths], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+
+    // N-1 stagePatch：对 chain.txt 的单 hunk patch → world 重读 staged diff 只含选中行。
+    const stagePatch = await rpcCall(base.origin, apiCookie, 'git/stagePatch', {
+      options: {
+        path: 'chain.txt',
+        patch: [
+          'diff --git a/chain.txt b/chain.txt',
+          '--- a/chain.txt',
+          '+++ b/chain.txt',
+          '@@ -1 +1 @@',
+          '-dsh verify-load commit chain',
+          '+chain patched by stagePatch',
+          '',
+        ].join('\n'),
+      },
+    })
+    assert(stagePatch.ok === true && stagePatch.value?.staged === 1,
+      `git/stagePatch failed: ${JSON.stringify(stagePatch)}`)
+    const worldStagedDiff = execFileSync('git', ['diff', '--cached', '--', 'chain.txt'], { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    assert(worldStagedDiff.includes('+chain patched by stagePatch')
+      && !worldStagedDiff.includes('patched by stagePatch patch'),
+    `world re-read staged diff should carry the applied hunk: ${JSON.stringify(worldStagedDiff)}`)
+    step('stagePatch RPC round-trip OK: hunk applied to the index, world re-read matches')
+    restoreStaged('chain.txt')
+
+    // N-2 scanStaged 密钥样例（AWS 文档假值）：blocked + redactedMatch 无明文 +
+    //     commit 密钥硬阻断（D5=A overridable:false，world 零提交）。
+    writeFileSync(join(fixtureRepo, 'secret-sample.txt'), 'aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n')
+    execFileSync('git', ['add', '--', 'secret-sample.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+    const scanStaged = await rpcCall(base.origin, apiCookie, 'git/scanStaged', {})
+    assert(scanStaged.ok === true && scanStaged.value?.blocked === true,
+      `git/scanStaged should block the staged secret: ${JSON.stringify(scanStaged)}`)
+    const secretViolation = (scanStaged.value?.violations ?? []).find((v) => v.kind === 'secret' && v.path === 'secret-sample.txt')
+    assert(secretViolation !== undefined && typeof secretViolation.redactedMatch === 'string'
+      && secretViolation.redactedMatch.startsWith('AKIA')
+      && !secretViolation.redactedMatch.includes('IOSFODNN7EXAMPLE'),
+    `secret violation should carry a redacted match without plaintext: ${JSON.stringify(secretViolation)}`)
+    step('scanStaged RPC OK: secret blocked, redactedMatch masked (no plaintext crossing the wire)')
+    const commitsBeforeBlock = worldCommitCount()
+    const blockedCommit = await rpcCall(base.origin, apiCookie, 'git/commit', {
+      options: { message: 'feat: sneak the key', amend: false, skipHooks: false },
+    })
+    assert(blockedCommit.ok === false && blockedCommit.error?.code === 'git/commit-blocked',
+      `commit with a staged secret should be git/commit-blocked: ${JSON.stringify(blockedCommit)}`)
+    assert(blockedCommit.error?.details?.overridable === false
+      && Array.isArray(blockedCommit.error?.details?.violations)
+      && blockedCommit.error.details.violations.some((v) => v.kind === 'secret'),
+    `commit-blocked details should carry overridable:false + secret violations (D5=A): ${JSON.stringify(blockedCommit.error)}`)
+    assert(worldCommitCount() === commitsBeforeBlock,
+      'commit-blocked should execute zero commits (world re-read commit count unchanged)')
+    step('commit secret hard-block OK: git/commit-blocked overridable=false (D5=A), zero commands')
+    restoreStaged('secret-sample.txt')
+    rmSync(join(fixtureRepo, 'secret-sample.txt'), { force: true })
+
+    // N-3 repoDiagnostics：夹具钉死 autocrlf=false（§1 步）→ config 回读 + 抽样形状。
+    const repoDiagnostics = await rpcCall(base.origin, apiCookie, 'git/repoDiagnostics', {})
+    assert(repoDiagnostics.ok === true, `git/repoDiagnostics failed: ${JSON.stringify(repoDiagnostics)}`)
+    assert(repoDiagnostics.value?.autocrlf === 'false' && repoDiagnostics.value?.coreEol === null
+      && Number.isInteger(repoDiagnostics.value?.worktreeCrlfCount)
+      && Array.isArray(repoDiagnostics.value?.mixedEolFiles),
+    `git/repoDiagnostics value wrong: ${JSON.stringify(repoDiagnostics.value)}`)
+    step(`repoDiagnostics RPC OK: autocrlf=false (pinned fixture), crlfCount=${String(repoDiagnostics.value.worktreeCrlfCount)}, mixed list=${JSON.stringify(repoDiagnostics.value.mixedEolFiles)}`)
+
+    // N-4 stashPush/stashList/stashPop 全链（D4=B 缺省含 untracked）：world 重读。
+    writeFileSync(join(fixtureRepo, 'stash-file.txt'), 'dsh verify-load stash payload\n')
+    const worldStashCount = () => worldGit('stash', 'list', '--format=%H').split('\n').filter((line) => line !== '').length
+    const stashPush = await rpcCall(base.origin, apiCookie, 'git/stashPush', {
+      options: { includeUntracked: true, message: 'verify stash' },
+    })
+    assert(stashPush.ok === true && stashPush.value?.index === 0,
+      `git/stashPush failed: ${JSON.stringify(stashPush)}`)
+    assert(worldStashCount() === 1 && worldStatusPorcelain() === ''
+      && !existsSync(join(fixtureRepo, 'stash-file.txt')),
+    `world after stashPush: stash listed, worktree clean, untracked gone (porcelain ${JSON.stringify(worldStatusPorcelain())})`)
+    step('stashPush RPC round-trip OK: untracked included (D4=B), world re-read clean with 1 stash entry')
+
+    const stashList = await rpcCall(base.origin, apiCookie, 'git/stashList', {})
+    assert(stashList.ok === true && Array.isArray(stashList.value?.stashes) && stashList.value.stashes.length === 1,
+      `git/stashList failed: ${JSON.stringify(stashList)}`)
+    const stashEntry = stashList.value.stashes[0]
+    const worldStashOid = worldGit('rev-parse', 'stash@{0}')
+    assert(stashEntry.index === 0 && stashEntry.oid === worldStashOid
+      && stashEntry.message.includes('verify stash')
+      && !Number.isNaN(Date.parse(stashEntry.authoredAt)),
+    `stashList entry wrong vs world re-read: ${JSON.stringify(stashEntry)} vs ${worldStashOid}`)
+    step('stashList RPC round-trip OK: index/oid world-matched, message/authoredAt shaped')
+
+    const stashPop = await rpcCall(base.origin, apiCookie, 'git/stashPop', { options: {} })
+    assert(stashPop.ok === true && stashPop.value?.index === 0,
+      `git/stashPop failed: ${JSON.stringify(stashPop)}`)
+    assert(readFileSync(join(fixtureRepo, 'stash-file.txt'), 'utf8') === 'dsh verify-load stash payload\n'
+      && worldStashCount() === 0,
+    'world after stashPop: payload restored, stash list empty')
+    step('stashPop RPC round-trip OK: payload restored, stash cleared (world re-read)')
+
+    // N-5 stashPop 冲突 ⇒ git/merge-conflict（op 'stash-pop'，批次二注册的码在本批
+    //     语义行消费）且 **stash 未丢**（git 语义，§5.10）。
+    writeFileSync(join(fixtureRepo, 'conflict-stash.txt'), 'base\n')
+    execFileSync('git', ['add', '--', 'conflict-stash.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load stash conflict base'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+    writeFileSync(join(fixtureRepo, 'conflict-stash.txt'), 'stashed\n')
+    const conflictStash = await rpcCall(base.origin, apiCookie, 'git/stashPush', { options: { includeUntracked: true, message: 'conflict stash' } })
+    assert(conflictStash.ok === true, `git/stashPush (conflict fixture) failed: ${JSON.stringify(conflictStash)}`)
+    writeFileSync(join(fixtureRepo, 'conflict-stash.txt'), 'mainline\n')
+    execFileSync('git', ['add', '--', 'conflict-stash.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load stash conflict mainline'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+    const stashPopConflict = await rpcCall(base.origin, apiCookie, 'git/stashPop', { options: {} })
+    assert(stashPopConflict.ok === false && stashPopConflict.error?.code === 'git/merge-conflict',
+      `conflicting stashPop should be git/merge-conflict: ${JSON.stringify(stashPopConflict)}`)
+    const worldUnmergedStash = worldGit('diff', '--name-only', '--diff-filter=U').split('\n').filter((line) => line !== '')
+    assert(stashPopConflict.error?.details?.op === 'stash-pop'
+      && JSON.stringify(stashPopConflict.error?.details?.conflicted) === JSON.stringify(worldUnmergedStash)
+      && stashPopConflict.error?.details?.abortable === false,
+    `merge-conflict details should carry op='stash-pop'/conflicted(world)/abortable:false: ${JSON.stringify(stashPopConflict.error)}`)
+    assert(worldStashCount() === 1,
+      'world re-read: the stash entry must survive a conflicted pop (git semantics, plan §5.10)')
+    step('stashPop conflict OK: git/merge-conflict op=stash-pop, stash retained (world re-read)')
+    execFileSync('git', ['reset', '--hard', '-q'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+
+    // N-6 stashDrop danger 闸：无 acknowledged ⇒ git/bad-request 'unacknowledged'
+    //     （零命令——stash 仍在）；acknowledged ⇒ 删除（world 重读清空）；再删 ⇒
+    //     git/stash-not-found。
+    const stashDropUnack = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: false } })
+    assert(stashDropUnack.ok === false && stashDropUnack.error?.code === 'git/bad-request'
+      && stashDropUnack.error?.details?.reason === 'unacknowledged',
+    `stashDrop without acknowledgement should be git/bad-request unacknowledged: ${JSON.stringify(stashDropUnack)}`)
+    assert(worldStashCount() === 1, 'rejected stashDrop should execute zero commands (stash entry unchanged)')
+    step('stashDrop guard OK: unacknowledged rejected (zero commands)')
+    const stashDrop = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
+    assert(stashDrop.ok === true && stashDrop.value?.index === 0,
+      `git/stashDrop failed: ${JSON.stringify(stashDrop)}`)
+    assert(worldStashCount() === 0, 'world re-read: stash list empty after the acknowledged drop')
+    step('stashDrop RPC round-trip OK: stash entry dropped (world re-read)')
+    const stashDropMissing = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
+    assert(stashDropMissing.ok === false && stashDropMissing.error?.code === 'git/stash-not-found'
+      && stashDropMissing.error?.details?.index === 0,
+    `dropping a missing stash should be git/stash-not-found: ${JSON.stringify(stashDropMissing)}`)
+    step('stashDrop missing OK: git/stash-not-found (typed pre-check on the real host)')
 
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的

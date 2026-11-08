@@ -217,6 +217,37 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.abortOperation must not be called by the changes store')
   }
 
+  // V2 批次三提交链路与护栏 7 方法（stagePatch/stashPush/stashList/stashPop/stashDrop/
+  // scanStaged/repoDiagnostics）——变更面板 store 不消费（stagePatch/stash 走
+  // changes-ops-face 的直通 rpc，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
+  async stagePatch(): Promise<never> {
+    throw new Error('FakeRpc.stagePatch must not be called by the changes store')
+  }
+
+  async stashPush(): Promise<never> {
+    throw new Error('FakeRpc.stashPush must not be called by the changes store')
+  }
+
+  async stashList(): Promise<never> {
+    throw new Error('FakeRpc.stashList must not be called by the changes store')
+  }
+
+  async stashPop(): Promise<never> {
+    throw new Error('FakeRpc.stashPop must not be called by the changes store')
+  }
+
+  async stashDrop(): Promise<never> {
+    throw new Error('FakeRpc.stashDrop must not be called by the changes store')
+  }
+
+  async scanStaged(): Promise<never> {
+    throw new Error('FakeRpc.scanStaged must not be called by the changes store')
+  }
+
+  async repoDiagnostics(): Promise<never> {
+    throw new Error('FakeRpc.repoDiagnostics must not be called by the changes store')
+  }
+
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan

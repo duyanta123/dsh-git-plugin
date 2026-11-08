@@ -38,6 +38,16 @@
  * **V2 批次二（历史面，2026-11-08）扩展**：host blame/time-travel/graph 扩展的
  * 6 个新 @Remote 方法（blame/compareBranches/cherryPick/revert/reset/abortOperation）
  * 同款四处同步（plan §4.2/§4.3；wire 类型 = plan §4.2，import 面 `dsh-gitkit/types`）。
+ *
+ * **V2 批次三（提交链路与护栏，2026-11-08）扩展**：host staging-patch/stash/guard-scan/
+ * diagnostics 扩展的 7 个新 @Remote 方法（stagePatch/stashPush/stashList/stashPop/
+ * stashDrop/scanStaged/repoDiagnostics）同款四处同步（plan §5.2/§5.3；wire 类型 =
+ * host types.ts v2 批次三段，import 面 `dsh-gitkit/types`）。D7=B：stagePatch 的
+ * `direction` 两态（'unstage' = `apply --cached -R` 反向）；D4=B：stashPush 的
+ * `includeUntracked` 显式 boolean（client 缺省传 true）。pop/drop 入参与 host 半
+ * 定型 wire 对齐：`StashPopOptions{index?}`（null/缺省 = 最新一条，plan §5.3
+ * 「默认最近一条 / 可指定 index」）、`StashDropOptions{index, acknowledged}`
+ * （acknowledged = UI danger 勾选闸的 host 半旗标）。
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
@@ -46,13 +56,15 @@ import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
   BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
-  CommitDetail, CommitOptions, CommitResult, CompareOptions, DiffResult, DiffScope,
+  CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, DiffResult, DiffScope,
   DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage,
   GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult, GitStatusFrame,
   GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
-  RemoteListResult, ResetOptions, RevertOptions, ShowOptions, StageResult, TagCreateOptions,
-  TagCreateResult, TagDeleteResult, TimeTravelResult, UnstageResult, WorktreeAddOptions,
-  WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
+  RemoteListResult, RepoDiagnostics, ResetOptions, RevertOptions, ShowOptions, StagePatchOptions,
+  StagePatchResult, StageResult, StashDropOptions, StashListResult, StashOpResult,
+  StashPopOptions, StashPushOptions, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  TimeTravelResult, UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult,
+  WorktreeRemoveOptions, WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
 
 /**
@@ -125,6 +137,15 @@ interface GitNamespaceFace {
   worktreeList(signal?: AbortSignal): Promise<RemoteResult<WorktreeListResult>>
   worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeAddResult>>
   worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeRemoveResult>>
+  /** V2 批次三提交链路与护栏切片（host staging-patch/stash/guard-scan/diagnostics；plan §5.3 的 7 方法签名——
+   *  与 host 半定型 wire 对齐：stashPop 走 StashPopOptions{index?}（null/缺省 = 最新一条）、stashDrop 走 StashDropOptions）。 */
+  stagePatch(options: StagePatchOptions, signal?: AbortSignal): Promise<RemoteResult<StagePatchResult>>
+  stashPush(options: StashPushOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  stashList(signal?: AbortSignal): Promise<RemoteResult<StashListResult>>
+  stashPop(options: StashPopOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  scanStaged(signal?: AbortSignal): Promise<RemoteResult<CommitScanResult>>
+  repoDiagnostics(signal?: AbortSignal): Promise<RemoteResult<RepoDiagnostics>>
 }
 
 /**
@@ -142,6 +163,8 @@ export const GIT_NAMESPACE_METHODS = [
   'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove',
   // V2 批次二历史面（host blame/time-travel/graph 扩展；plan §4.3）。
   'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation',
+  // V2 批次三提交链路与护栏（host staging-patch/stash/guard-scan/diagnostics；plan §5.3）。
+  'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics',
 ] as const
 
 /** 本模块消费的 RPC 面（spec §3.2 GitRpcClient 全量 = host REMOTE_METHODS 镜像；store/组件按切片消费）。 */
@@ -179,6 +202,14 @@ export interface GitRpcFace {
   worktreeList(signal?: AbortSignal): Promise<RemoteResult<WorktreeListResult>>
   worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeAddResult>>
   worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<RemoteResult<WorktreeRemoveResult>>
+  /** V2 批次三提交链路与护栏切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  stagePatch(options: StagePatchOptions, signal?: AbortSignal): Promise<RemoteResult<StagePatchResult>>
+  stashPush(options: StashPushOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  stashList(signal?: AbortSignal): Promise<RemoteResult<StashListResult>>
+  stashPop(options: StashPopOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
+  scanStaged(signal?: AbortSignal): Promise<RemoteResult<CommitScanResult>>
+  repoDiagnostics(signal?: AbortSignal): Promise<RemoteResult<RepoDiagnostics>>
 }
 
 /** 载波层异常的折叠码（spec §1.0.1：服务未就绪 → gateway/service-unavailable → UI 重试）。 */
@@ -425,6 +456,56 @@ export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>):
     async abortOperation(signal) {
       try {
         return await (await namespace()).abortOperation(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V2 批次三提交链路与护栏（host staging-patch/stash/guard-scan/diagnostics；plan §5.3）──
+    async stagePatch(options, signal) {
+      try {
+        return await (await namespace()).stagePatch(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async stashPush(options, signal) {
+      try {
+        return await (await namespace()).stashPush(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async stashList(signal) {
+      try {
+        return await (await namespace()).stashList(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async stashPop(options, signal) {
+      try {
+        return await (await namespace()).stashPop(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async stashDrop(options, signal) {
+      try {
+        return await (await namespace()).stashDrop(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async scanStaged(signal) {
+      try {
+        return await (await namespace()).scanStaged(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async repoDiagnostics(signal) {
+      try {
+        return await (await namespace()).repoDiagnostics(signal)
       } catch (cause) {
         return unavailableResult(cause)
       }

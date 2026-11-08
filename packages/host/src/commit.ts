@@ -28,6 +28,17 @@
  *   3. message 校验：空/全空白 ⇒ `git/empty-message`；**但 amend + 全空白 = `--no-edit`
  *      路径（保留原消息），不走该守卫**（amend 两路的任务口径）。格式校验（Conventional
  *      Commits）为**非阻断** warn（[清单 17] 由 client 提示，host 不拒绝）。
+ *   3.5 [清单 18] trailers 校验（v2 批次三）：每条需形如 `Key: value`（TRAILER_RE），
+ *      违反 ⇒ `git/bad-request`（reason 'malformed-trailer'，零命令）；amend --no-edit
+ *      路径（保留原消息）与 trailers 同给 ⇒ 'invalid-options'（--no-edit 不改写消息，
+ *      trailer 无从附着，零命令）。合法条目组装进 -F 消息体（空行分隔尾块，git
+ *      trailer 语义），回读展示纪律不变。
+ *   3.6 [清单 22] secret 硬阻断（v2 批次三，D5=A）：guard-scan.ts 的 staged 扫描在
+ *      消息校验后执行，**仅 secret 类拦截**——`git/commit-blocked`（overridable:false，
+ *      零命令）；env-file/large-file/build-artifact 不拦 host commit（D5=A：可 danger
+ *      勾选豁免——豁免语义由 client 闸承载，host 无 bypass wire 字段，登记为方案
+ *      空白的施工解释）。扫描失败不阻断提交（护栏降级为不拦——如实 warn，预检面
+ *      scanStaged 仍是 UI 主通道）。
  *
  * 执行：`git commit -F -`，message 经 stdin 传入（避免 -m 转义/换行问题，【报告】:265；
  * runner stdin 面由 ④-A 落地）。amend ⇒ --amend（空消息 ⇒ --no-edit；有消息 ⇒ stdin
@@ -36,6 +47,11 @@
  * `git/hook-failed`（stderr 原样脱敏进 details，UI 可读展示 [清单 20/49]；静默失败
  * 的 hook 无从与普通失败区分——已知限制，见 ModuleResult.openIssues）；其余 ⇒
  * git/git-error 兜底；超时 ⇒ git/timeout { op:'commit' }（commitTimeoutMs 熔断）。
+ *
+ * [清单 63] process 捕获（v2 批次三）：成功路径回带 `git commit` 进程整体输出
+ * （含 hook 输出——git 不做 per-hook 归因；stdout/stderr 两侧 sanitizeStderr 脱敏 +
+ * 16 KiB 尾部封顶；空输出置 null 省 wire）。hook 失败路径不返回（stderr 进
+ * git/hook-failed details——既有纪律）；超时路径抛 git/timeout。
  *
  * 成功后：`git rev-parse --verify HEAD` 取 oid、`git rev-parse --abbrev-ref HEAD` 取
  * 分支（detached 输出 'HEAD' ⇒ null，本机实测）、`git show -s --format=%B HEAD` 回读
@@ -47,8 +63,10 @@
 import { assertGitOk, gitError, gitRunError, logFailure, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
-import type { CommitOptions, CommitResult } from './types.ts'
+import type { CommitOptions, CommitProcessOutput, CommitResult, CommitViolation } from './types.ts'
 import type { WorkspaceResolver } from './workspace.ts'
+import { DEFAULT_GUARD_LARGE_FILE_BYTES, hardBlockViolations, scanStagedContents } from './guard-scan.ts'
+import type { GuardScanOptions } from './guard-scan.ts'
 
 /**
  * Conventional Commits 非阻断警示正则（commit 守卫链第 3 步的 warn 面）。
@@ -58,33 +76,62 @@ import type { WorkspaceResolver } from './workspace.ts'
  */
 const CONVENTIONAL_COMMIT_HINT_RE = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .{1,100}$/
 
+/**
+ * [清单 18] trailer 条目形状（v2 批次三）：`Key: value`——Key = 字母开头的字母/数字/
+ * 连字符 token（git trailers 的 token 语义），冒号 + 空白 + 非空 value。
+ */
+const TRAILER_RE = /^[A-Za-z][A-Za-z0-9-]*:\s\S/u
+
+/** [清单 63] process 两侧封顶字节（方案 §5.2/§5.10：16 KiB/侧；sanitizeStderr 同口径）。 */
+const PROCESS_TAIL_CHARS = 16 * 1024
+
 /** commit 引擎构造项。 */
 export interface CommitEngineOptions {
   logger?: GitLoggerFace
+  /**
+   * [清单 22] secret 硬阻断的护栏参数（v2 批次三；缺省 = 默认表——大文件阈值在
+   * secret-only 消费面不参与判定，此处只为 scanStagedContents 的形状完整性）。
+   */
+  guard?: Pick<GuardScanOptions, 'largeFileBytes' | 'buildPatterns' | 'secretPatterns'>
 }
 
 export class CommitEngine {
   private readonly logger: GitLoggerFace | undefined
+  private readonly guard: CommitEngineOptions['guard']
 
   constructor(
     /** commit 实例（WRITE_PREFIX + commitTimeoutMs——hook 可能慢，spec §1.0.2）。 */
     private readonly gitCommit: GitRunner,
-    /** 只读实例（身份查询 / diff --cached / rev-parse / show 回读——fastTimeoutMs）。 */
+    /** 只读实例（身份查询 / diff --cached / rev-parse / show 回读 / 护栏扫描——fastTimeoutMs）。 */
     private readonly gitRead: GitRunner,
     private readonly workspace: WorkspaceResolver,
     options: CommitEngineOptions = {},
   ) {
     this.logger = options.logger
+    this.guard = options.guard
   }
 
   /**
-   * 提交（含 amend 两路与空提交保护；spec §1.4）。
+   * 提交（含 amend 两路、空提交保护、trailers 与 secret 硬阻断；spec §1.4 + 方案 §5.3）。
    * @throws git/identity-missing、git/nothing-staged、git/empty-message、
-   *   git/hook-failed、git/session-workspace-unresolved、git/no-repository（身份查询
-   *   顺带发现出仓）、git/timeout、git/git-error。
+   *   git/bad-request（'malformed-trailer' / 'invalid-options'）、git/commit-blocked
+   *   （D5=A secret 硬阻断）、git/hook-failed、git/session-workspace-unresolved、
+   *   git/no-repository（身份查询顺带发现出仓）、git/timeout、git/git-error。
    */
   async commit(options: CommitOptions, signal?: AbortSignal): Promise<CommitResult> {
     const active = signal ?? neverAborted()
+    // 守卫 3.5：[清单 18] trailers 形状校验（最先判——零命令面）。
+    const trailers = options.trailers ?? []
+    if (trailers.length > 0) {
+      for (const trailer of trailers) {
+        if (typeof trailer !== 'string' || !TRAILER_RE.test(trailer)) {
+          this.logger?.debug('git commit: malformed trailer rejected (zero commands)')
+          throw gitError('git/bad-request', `git commit: trailer ${JSON.stringify(trailer)} must be 'Key: value' (letter-start key, non-empty value)`, {
+            reason: 'malformed-trailer', paths: [], expected: null, actual: null,
+          })
+        }
+      }
+    }
     const { root } = await this.workspace.resolve()
     // 步骤 0：仓库发现（"exit 128 + not a git repository" 范式，status.ts 同源）——
     // 把「会话 cwd 不是仓库」显式落 git/no-repository，而不是让 config/diff 间接失败。
@@ -137,6 +184,43 @@ export class CommitEngine {
     if (trimmed !== '' && !CONVENTIONAL_COMMIT_HINT_RE.test(firstLine(trimmed))) {
       this.logger?.warn('git commit: message does not match Conventional Commits format (non-blocking hint)')
     }
+    // 守卫 3.5b：--no-edit 路径与 trailers 互斥（--no-edit 保留原消息，trailer 无从
+    // 附着——零命令拒绝，防静默丢弃 trailer）。
+    if (noEdit && trailers.length > 0) {
+      throw gitError('git/bad-request', 'git commit: trailers cannot be combined with amend+empty message (--no-edit preserves the original message; provide a message to attach trailers)', {
+        reason: 'invalid-options', paths: [], expected: null, actual: null,
+      })
+    }
+
+    // 守卫 3.6：[清单 22] secret 硬阻断（D5=A，零命令）。扫描失败不阻断提交（护栏
+    // 降级如实 warn——预检面 scanStaged 是 UI 主通道，本守卫是纵深半）；仅 secret 类
+    // 拦截，env-file/large-file/build-artifact 不拦 host commit（D5=A：可 danger 勾选
+    // 豁免——豁免语义由 client 闸承载，host 无 bypass wire 字段，文件头注已登记）。
+    let violations: CommitViolation[] = []
+    try {
+      violations = await scanStagedContents(this.gitRead, root, {
+        largeFileBytes: this.guard?.largeFileBytes ?? DEFAULT_GUARD_LARGE_FILE_BYTES,
+        buildPatterns: this.guard?.buildPatterns ?? [],
+        secretPatterns: this.guard?.secretPatterns ?? [],
+        logger: this.logger,
+      }, active)
+    } catch (cause) {
+      this.logger?.warn(`git commit: guard scan degraded (commit proceeds without the secret gate): ${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+    const secrets = hardBlockViolations(violations)
+    if (secrets.length > 0) {
+      this.logger?.debug(`git commit: secret hard block (${String(secrets.length)} violation(s))`)
+      throw gitError('git/commit-blocked', `git commit: staged content contains ${String(secrets.length)} secret violation(s); remove the secret(s) and restage (secret violations cannot be exempted)`, {
+        violations,
+        overridable: false,
+      })
+    }
+
+    // 组装 -F 消息体：message + 空行分隔的 trailer 尾块（git trailer 语义——最后一个
+    // 段落按 trailer 解析；方案 §5.5「空行分隔 + 尾块」）。
+    const composed = trailers.length > 0
+      ? `${options.message.replace(/\s+$/, '')}\n\n${trailers.join('\n')}`
+      : options.message
 
     // 执行：-F - + stdin（amend 两路；skipHooks ⇒ --no-verify）。
     // --no-edit 路径不带 -F（本机实测：`-F -` 与 --no-edit 同给时 stdin 的空消息会
@@ -150,16 +234,26 @@ export class CommitEngine {
       if (options.amend) args.push('--amend')
     }
     if (options.skipHooks) args.push('--no-verify')
+    const startedAt = Date.now()
     const result = await this.gitCommit.run(args, {
       cwd: root,
       op: 'commit',
       signal: active,
       // exactOptionalPropertyTypes：--no-edit 路径不给 stdin 键（/dev/null），改写路径传消息。
-      ...(noEdit ? {} : { stdin: options.message }),
+      ...(noEdit ? {} : { stdin: composed }),
     })
     if (result.exitCode !== 0) {
       throw commitFailure(result)
     }
+
+    // [清单 63] process 捕获：`git commit` 进程整体输出（含 hook 输出——git 不做
+    // per-hook 归因，诚实命名见 CommitProcessOutput 注）脱敏 + 16 KiB 尾部封顶；
+    // 空输出置 null 省 wire。超时路径已抛 git/timeout（timedOut 恒 false，wire 形状位）。
+    const stdout = sanitizeStderr(result.stdout, PROCESS_TAIL_CHARS)
+    const stderr = sanitizeStderr(result.stderr, PROCESS_TAIL_CHARS)
+    const process: CommitProcessOutput | null = stdout.trim() === '' && stderr.trim() === ''
+      ? null
+      : { stdout, stderr, timedOut: false, durationMs: Date.now() - startedAt }
 
     // 成功后回读（oid / branch / 最终 message——hook 或 --no-edit 之后的权威值）。
     const oidResult = await this.gitRead.run(['rev-parse', '--verify', 'HEAD'], {
@@ -173,9 +267,10 @@ export class CommitEngine {
     })
     assertGitOk(messageResult, 'commit(show -s --format=%B)')
     // 本机实测：%B 输出 = 存储 message（git 规范化后恒以单个 \n 结尾）+ 渲染终结 \n——
-    // 剥掉全部尾部换行得到无尾换行的最终 message（commit-msg hook 追加行保留在内）。
+    // 剥掉全部尾部换行得到无尾换行的最终 message（commit-msg hook 追加行/trailers
+    // 尾块保留在内——回读纪律）。
     const message = messageResult.stdout.replace(/(?:\r?\n)+$/, '')
-    return { oid, shortOid: oid.slice(0, 7), branch, amended: options.amend, message }
+    return { oid, shortOid: oid.slice(0, 7), branch, amended: options.amend, message, process }
   }
 
   /** 当前分支短名；detached（`--abbrev-ref HEAD` 输出 'HEAD'，本机实测）⇒ null。 */
