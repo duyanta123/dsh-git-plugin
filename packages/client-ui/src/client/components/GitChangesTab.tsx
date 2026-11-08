@@ -26,12 +26,14 @@ import type { GitCommitDialogFace } from '../commit-dialog-face.js'
 import type { PathNode } from '../group-paths.js'
 import { groupPaths } from '../group-paths.js'
 import type { NS } from '../locales.js'
+import type { GitBlameState } from '../store/git-blame-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import { diffCacheKey } from '../store/git-changes-store.js'
 import type { GitChangesState } from '../store/git-changes-store.js'
 import type { ChangesTabStoreHandle } from '../store/changes-tab-store.js'
 import { ChangeCard } from './ChangeCard.js'
 import { FileDiffView } from './FileDiffView.js'
+import { GitBlameView } from './GitBlameView.js'
 import { GitCommitDialog } from './GitCommitDialog.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
@@ -43,6 +45,8 @@ export interface ChangesInjected {
     gitStatus: ObservableSnapshot<GitStatusSourceState>
     /** 变更面板数据缓存（本模块 git-changes-store）。 */
     gitChanges: ObservableSnapshot<GitChangesState>
+    /** blame 数据缓存（V2 批次二 [34]；D3=B -L 区间分片——git-blame-store）。 */
+    gitBlame: ObservableSnapshot<GitBlameState>
   }
   loadDiff(scope: ChangeRow['scope'], path: string): void
   stage(paths: readonly string[]): void
@@ -54,6 +58,12 @@ export interface ChangesInjected {
   dismissMutationError(): void
   /** 提交对话框业务面（④-K；与 header 拉起方共享同一 apply 顶层闭包）。 */
   commitDialog: GitCommitDialogFace
+  /** blame 首载（全区一次；V2 批次二 [34]）。 */
+  blameEnsure(path: string): void
+  /** blame 分片加载（-L start,end；D3=B 虚拟滚动联动；store 侧去重）。 */
+  blameEnsureRange(path: string, start: number, end: number): void
+  /** 文件历史动作（[60]；跨 tab 意图 → 图 tab path 模式 + openResource 打开图 tab）。 */
+  openFileHistory(path: string): void
 }
 
 /** tab body 组合 props（PropsRuntime ⊃ useTabInfo；PropsStore ⊃ useStore/actions）。 */
@@ -88,9 +98,10 @@ function GroupSection(props: {
   onCheck(row: ChangeRow): void
   onAction(row: ChangeRow, action: 'stage' | 'unstage' | 'discard'): void
   onRowKeyDown(row: ChangeRow, event: ReactKeyboardEvent): void
+  onHistory(path: string): void
   t: GitChangesTabProps['t']
 }): ReactNode {
-  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, t } = props
+  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, t } = props
   const nodes = useMemo(() => groupPaths(group.rows.map((row) => row.path)), [group.rows])
   return (
     <section className='dsh-git-changes__group' data-git-changes-group={group.id}>
@@ -113,6 +124,7 @@ function GroupSection(props: {
           onCheck={onCheck}
           onAction={onAction}
           onRowKeyDown={onRowKeyDown}
+          onHistory={onHistory}
           t={t}
         />
       ))}
@@ -134,11 +146,12 @@ function NodeRows(props: {
   onCheck(row: ChangeRow): void
   onAction(row: ChangeRow, action: 'stage' | 'unstage' | 'discard'): void
   onRowKeyDown(row: ChangeRow, event: ReactKeyboardEvent): void
+  onHistory(path: string): void
   t: GitChangesTabProps['t']
 }): ReactNode {
   const {
     node, depth, viewModel, groupId, expandedDirs, selectedPath,
-    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, t,
+    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, t,
   } = props
   if (node.kind === 'dir') {
     const key = `${groupId}:${node.path}`
@@ -169,6 +182,7 @@ function NodeRows(props: {
             onCheck={onCheck}
             onAction={onAction}
             onRowKeyDown={onRowKeyDown}
+            onHistory={onHistory}
             t={t}
           />
         ))}
@@ -190,6 +204,7 @@ function NodeRows(props: {
       onStage={() => { onAction(row, 'stage') }}
       onUnstage={() => { onAction(row, 'unstage') }}
       onDiscard={() => { onAction(row, 'discard') }}
+      onHistory={() => { onHistory(row.path) }}
       onKeyDown={(event) => { onRowKeyDown(row, event) }}
     />
   )
@@ -201,8 +216,9 @@ function NodeRows(props: {
  */
 export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const {
-    useTabInfo, useStore, actions, useGitStatus, useGitChanges,
-    loadDiff, stage, unstage, discard, refresh, dismissMutationError, commitDialog, t,
+    useTabInfo, useStore, actions, useGitStatus, useGitChanges, useGitBlame,
+    loadDiff, stage, unstage, discard, refresh, dismissMutationError, commitDialog,
+    blameEnsure, blameEnsureRange, openFileHistory, t,
   } = props
   const { tab } = useTabInfo()
   const coordinates = useMemo(() => parseGitChangesAddress(tab.contentId), [tab.contentId])
@@ -211,6 +227,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   }
   const statusState = useGitStatus((state) => state)
   const changesState = useGitChanges((state) => state)
+  const blameState = useGitBlame((state) => state)
   const selectedPath = useStore((state) => state.selectedPath)
   const expandedDirs = useStore((state) => state.expandedDirs)
   const pendingConfirm = useStore((state) => state.pendingConfirm)
@@ -221,6 +238,14 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   )
   // 提交对话框的打开意图（④-K；null = 关，值 = defaultAction）。
   const [commitIntent, setCommitIntent] = useState<'commit' | 'commit-push' | null>(null)
+  // ── blame 模式（V2 批次二 [34]）：展开行的 diff 区模式切换（diff | blame）──
+  const [blameMode, setBlameMode] = useState(false)
+
+  // blame 模式开着且展开行槽位缺席 ⇒ 首载（全区一次；oversized 转 D3=B 分片模式）。
+  useEffect(() => {
+    if (!blameMode || selectedPath === null) return
+    if (blameState.byPath[selectedPath] === undefined) blameEnsure(selectedPath)
+  }, [blameMode, selectedPath, blameState.byPath, blameEnsure])
 
   // 展开行从变更集消失（stage/discard/外部改动后）→ 收起展开位（ZCode GitPane
   // 同款守卫：expandedPath 不在列表即清）。
@@ -237,29 +262,88 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const diffOf = (path: string): ReactNode => {
     const row = view.rowByPath.get(path)
     if (row === undefined || selection === undefined || selection.row.path !== path) return null
+    // ── blame 模式切换条（V2 批次二 [34]）：diff | blame 两态（aria-pressed）──
+    const modeBar = (
+      <div className='dsh-git-changes__diff-modes' data-git-change-diff-modes=''>
+        <button
+          type='button'
+          className='dsh-git-changes__diff-mode'
+          aria-pressed={!blameMode}
+          onClick={() => { setBlameMode(false) }}
+        >
+          {t('changes.diffMode')}
+        </button>
+        <button
+          type='button'
+          className='dsh-git-changes__diff-mode'
+          aria-pressed={blameMode}
+          data-git-change-blame-toggle=''
+          onClick={() => { setBlameMode(true) }}
+        >
+          {t('changes.blameMode')}
+        </button>
+      </div>
+    )
+    if (blameMode) {
+      const slot = blameState.byPath[path]
+      return (
+        <>
+          {modeBar}
+          {slot !== undefined ? (
+            <GitBlameView
+              path={path}
+              slot={slot}
+              t={t}
+              onEnsureRange={(start, end) => { blameEnsureRange(path, start, end) }}
+              onRetry={() => { blameEnsure(path) }}
+            />
+          ) : (
+            <p className='dsh-git-changes__diff-status' role='status' data-git-change-diff-status='loading'>{t('blame.loading')}</p>
+          )}
+        </>
+      )
+    }
     const entry = changesState.diffs[selection.key]
     if (entry === undefined || entry.state === 'loading') {
-      return <p className='dsh-git-changes__diff-status' role='status' data-git-change-diff-status='loading'>{t('diff.loading')}</p>
+      return (
+        <>
+          {modeBar}
+          <p className='dsh-git-changes__diff-status' role='status' data-git-change-diff-status='loading'>{t('diff.loading')}</p>
+        </>
+      )
     }
     if (entry.state === 'error' && entry.error !== undefined) {
       return (
-        <div className='dsh-git-changes__diff-error' data-git-change-diff-status='error'>
-          <GitErrorNotice error={entry.error} t={t} />
-          <button
-            type='button'
-            className='dsh-git-changes__diff-retry'
-            data-git-change-diff-retry=''
-            onClick={() => { loadDiff(row.scope, row.path) }}
-          >
-            {t('common.retry')}
-          </button>
-        </div>
+        <>
+          {modeBar}
+          <div className='dsh-git-changes__diff-error' data-git-change-diff-status='error'>
+            <GitErrorNotice error={entry.error} t={t} />
+            <button
+              type='button'
+              className='dsh-git-changes__diff-retry'
+              data-git-change-diff-retry=''
+              onClick={() => { loadDiff(row.scope, row.path) }}
+            >
+              {t('common.retry')}
+            </button>
+          </div>
+        </>
       )
     }
     if (entry.file === undefined) {
-      return <p className='dsh-git-changes__diff-status' data-git-change-diff-status='empty'>{t('diff.empty')}</p>
+      return (
+        <>
+          {modeBar}
+          <p className='dsh-git-changes__diff-status' data-git-change-diff-status='empty'>{t('diff.empty')}</p>
+        </>
+      )
     }
-    return <FileDiffView file={entry.file} t={t} />
+    return (
+      <>
+        {modeBar}
+        <FileDiffView file={entry.file} t={t} />
+      </>
+    )
   }
 
   const onCheck = (row: ChangeRow): void => {
@@ -360,6 +444,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
               onCheck={onCheck}
               onAction={onAction}
               onRowKeyDown={onRowKeyDown}
+              onHistory={openFileHistory}
               t={t}
             />
           ))}

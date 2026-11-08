@@ -191,6 +191,32 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.worktreeRemove must not be called by the changes store')
   }
 
+  // V2 批次二历史面 6 方法（blame/compareBranches/cherryPick/revert/reset/
+  // abortOperation）——变更面板 store 不消费；断言守卫桩（FakeRpc.status 同款）。
+  async blame(): Promise<never> {
+    throw new Error('FakeRpc.blame must not be called by the changes store')
+  }
+
+  async compareBranches(): Promise<never> {
+    throw new Error('FakeRpc.compareBranches must not be called by the changes store')
+  }
+
+  async cherryPick(): Promise<never> {
+    throw new Error('FakeRpc.cherryPick must not be called by the changes store')
+  }
+
+  async revert(): Promise<never> {
+    throw new Error('FakeRpc.revert must not be called by the changes store')
+  }
+
+  async reset(): Promise<never> {
+    throw new Error('FakeRpc.reset must not be called by the changes store')
+  }
+
+  async abortOperation(): Promise<never> {
+    throw new Error('FakeRpc.abortOperation must not be called by the changes store')
+  }
+
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan

@@ -10,7 +10,9 @@
  *     契约 SOURCES.md:106——进行中的 more 请求期间再触发直接忽略）；
  *   - `refs`：RefsSnapshot 快照（head 三态供布局 headOid 与 HEAD chip）；
  *   - `details`：oid → CommitDetail 缓存（getCommitDetail 列表态 + 文件 patch 态
- *     splice——点文件按 path 重取详情，把带 patch 的文件并回缓存）。
+ *     splice——点文件按 path 重取详情，把带 patch 的文件并回缓存）；
+ *   - `filter`：log 过滤态（V2 批次二 [35]/[60]——搜索两维 + 单文件历史 path；
+ *     分页状态机不动，过滤只改 log 附加参数并触发清窗重载）。
  *
  * 失效语义（spec §1.9/§2.3 + F7 任务口径）：host 对 log/refs/show 无缓存，client
  * 的失效由 **状态订阅** 承担——status 源的 `branch.oid` 变化（提交/切分支）→
@@ -23,6 +25,8 @@
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { CommitDetail, CommitInfo, LogOptions, LogPage, RefsSnapshot, ShowOptions } from 'dsh-gitkit/types'
+import { normalizeSearchFilter, searchLogOptions } from '../graph-search.js'
+import type { GraphSearchFilter } from '../graph-search.js'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
 import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
 import type { GitStatusSource } from './git-status-source.js'
@@ -32,6 +36,20 @@ export const GRAPH_PAGE_LIMIT = 500
 
 /** 滚动分页触发余量（workflow ask §③：滚到 total-30 触发）。 */
 export const GRAPH_LOAD_MORE_TAIL = 30
+
+/**
+ * log 过滤态（V2 批次二 [35]/[60]；plan §4.6）：搜索两维（query/author——`--grep -F`
+ * / `--author` 附加参数）+ 单文件历史 path 模式（`--follow`，[60]）。null = 未激活。
+ * 分页状态机不动——过滤只改变 log 命令的附加参数与 reload 触发（plan §4.6「结果走
+ * 既有分页」）。
+ */
+export interface GraphLogFilter extends GraphSearchFilter {
+  /** 单文件历史 path（null = 全图模式）。 */
+  path: string | null
+}
+
+/** 全空过滤（重置态）。 */
+export const EMPTY_LOG_FILTER: GraphLogFilter = { query: null, author: null, path: null }
 
 /** 一个 oid 的详情加载态（spec §3.2 CommitDetailState；'idle' 由「键缺席」表达）。 */
 export interface CommitDetailState {
@@ -63,6 +81,8 @@ export interface GitGraphState {
   }
   /** 详情缓存；键 = commit oid。 */
   details: Record<string, CommitDetailState>
+  /** log 过滤态（V2 批次二 [35]/[60]；顶栏 chip/path chip 的单一事实源）。 */
+  filter: GraphLogFilter
 }
 
 /** 本 store 消费的 RPC 面（spec §3.2 GitRpcClient 的 log/refs/show 切片）。 */
@@ -91,6 +111,10 @@ export interface GitGraphStore {
    * （置 loading）并重新拉取（详情面板重试按钮走的就是这条路；reloadLog 也清 error 槽）。
    */
   showCommit(oid: string, path?: string | null): Promise<void>
+  /** 顶栏搜索过滤（[35]）：草稿经 normalizeSearchFilter 归一；变化 ⇒ 清窗重载。 */
+  setSearchFilter(query: string, author: string): void
+  /** 单文件历史 path 模式（[60]）：path 非 null ⇒ log 携带 {path, follow:true}；变化 ⇒ 清窗重载。 */
+  setHistoryPath(path: string | null): void
   /** connection/reset：清全部缓存 + 代际递增（在途响应丢弃）+ 立即按当前快照重载。 */
   reset(): void
   /** 终结：退订状态源 + 代际递增（ctx.effect 清理半）。 */
@@ -122,6 +146,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     refsError: null,
     log: { ...INITIAL_LOG, commits: [] },
     details: {},
+    filter: { ...EMPTY_LOG_FILTER },
   })
   let generation = 0
   /**
@@ -130,6 +155,20 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
    */
   let lastBranchOid: string | null | undefined = undefined
   const detailPending = new Map<string, Promise<void>>()
+
+  /**
+   * log 命令入参装配（V2 批次二）：搜索两维走 searchLogOptions（null 维不产键——
+   * wire 纪律「可选字段省略传递」，无过滤时产出与 v1 形状逐键相等）；path 模式追加
+   * `{path, follow: true}`（[60]；follow 仅在 path 给定时合法——host 侧校验）。
+   */
+  function logOptions(skip: number): LogOptions {
+    const filter = store.getSnapshot().filter
+    const search: GraphSearchFilter | null = filter.query !== null || filter.author !== null
+      ? { query: filter.query, author: filter.author }
+      : null
+    const base = searchLogOptions(search, GRAPH_PAGE_LIMIT, skip)
+    return filter.path !== null ? { ...base, path: filter.path, follow: true } : base
+  }
 
   /** branch.oid 变化 → 清窗重载 + refs 重取（失效语义见文件头；无快照时不记游标）。 */
   const reconcile = (): void => {
@@ -158,7 +197,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     })
     let page: RemoteResult<LogPage>
     try {
-      page = await rpc.log({ limit: GRAPH_PAGE_LIMIT, skip: 0 })
+      page = await rpc.log(logOptions(0))
     } catch (cause) {
       if (gen !== generation) return
       store.update((draft) => {
@@ -216,7 +255,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     })
     let page: RemoteResult<LogPage>
     try {
-      page = await rpc.log({ limit: GRAPH_PAGE_LIMIT, skip })
+      page = await rpc.log(logOptions(skip))
     } catch (cause) {
       if (gen !== generation) return
       store.update((draft) => {
@@ -321,6 +360,24 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     reloadLog,
     refreshRefs,
     showCommit,
+    setSearchFilter(query, author) {
+      const next = normalizeSearchFilter(query, author) ?? { query: null, author: null }
+      const current = store.getSnapshot().filter
+      if (current.query === next.query && current.author === next.author) return
+      store.update((draft) => {
+        draft.filter.query = next.query
+        draft.filter.author = next.author
+      })
+      void reloadLog()
+    },
+    setHistoryPath(path) {
+      const next = path !== null && path.trim() !== '' ? path.trim() : null
+      if (store.getSnapshot().filter.path === next) return
+      store.update((draft) => {
+        draft.filter.path = next
+      })
+      void reloadLog()
+    },
     reset() {
       generation += 1
       detailPending.clear()
@@ -330,6 +387,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
         draft.refsError = null
         draft.log = { ...INITIAL_LOG, commits: [] }
         draft.details = {}
+        draft.filter = { ...EMPTY_LOG_FILTER }
       })
       reconcile()
     },

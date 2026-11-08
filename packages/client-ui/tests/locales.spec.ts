@@ -63,6 +63,28 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     ]) {
       expect(keys.has(key), `缺 ${key}`).toBe(true)
     }
+    // V2 批次二历史面（plan §4.4/§4.6）：4 新码 error.* 行 + abort 动作 + 搜索/WIP/
+    // 对比/path 模式/blame/时间旅行键组到齐。
+    for (const key of [
+      'error.blame-oversized', 'error.merge-conflict', 'error.unknown-revision',
+      'error.operation-in-progress', 'error.action.abort',
+      'menu.branchCompare', 'menu.branchReset', 'menu.commitCherryPick', 'menu.commitRevert',
+      'graph.search.placeholder', 'graph.search.authorPlaceholder', 'graph.search.authorHint',
+      'graph.search.chipQuery', 'graph.search.chipAuthor', 'graph.search.clear', 'graph.search.emptyResult',
+      'graph.wip.label', 'graph.wip.counts',
+      'graph.compare.title', 'graph.compare.ahead', 'graph.compare.behind', 'graph.compare.mergeBase',
+      'graph.compare.empty', 'graph.compare.pending', 'graph.compare.close',
+      'graph.path.chip', 'graph.path.exit',
+      'changes.blameMode', 'changes.diffMode', 'changes.fileHistory',
+      'blame.loading', 'blame.empty', 'blame.chunkHint', 'blame.oversizedFallback',
+      'blame.time.now', 'blame.time.minutes', 'blame.time.hours', 'blame.time.days',
+      'timeTravel.cherryPick.title', 'timeTravel.cherryPick.message',
+      'timeTravel.revert.title', 'timeTravel.revert.message',
+      'timeTravel.reset.title', 'timeTravel.reset.kindLabel', 'timeTravel.reset.soft',
+      'timeTravel.reset.mixed', 'timeTravel.reset.hard', 'timeTravel.reset.hardMessage',
+    ]) {
+      expect(keys.has(key), `缺 ${key}`).toBe(true)
+    }
   })
 
   it('V2 批次一清理：死键不复存在（P3-4/5 双删 + sync 占位键随转真移除）', () => {

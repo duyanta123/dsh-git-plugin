@@ -297,8 +297,43 @@ export interface GeneratedCommitMessage {
 
 // ---------- log/refs/show 入参 ----------
 
-/** limit 钳到 [1, logMaxLimit]；skip ≥ 0。 */
-export interface LogOptions { limit: number; skip: number }
+/**
+ * limit 钳到 [1, logMaxLimit]；skip ≥ 0。
+ *
+ * v2 批次二扩展（docs/v2-implementation-plan.md §4.2，[清单 35/60]）：可选过滤参数
+ * ——strict codec 丢弃编译类型未声明的字段，任何 client 调用先于此扩展落库（变更链
+ * §1 第 1 步）。缺省语义与 v1 完全一致（全量 HEAD topo 分页）。
+ */
+export interface LogOptions {
+  limit: number
+  skip: number
+  /**
+   * [清单 35] 提交 message 搜索词：`--grep=<query> -F`（**固定串**语义——不含正则
+   * 元字符解释，UI 可直接透传用户输入）；空串/缺省 = 不过滤。
+   */
+  query?: string
+  /**
+   * [清单 35] 作者过滤：`--author=<author>`（git 的**正则**语义，子串命中即匹配——
+   * 与 query 的固定串不同，UI 需提示「按子串/正则匹配」）；空串/缺省 = 不过滤。
+   */
+  author?: string
+  /**
+   * [清单 35/60] pathspec（单路径）：只列触及该路径的提交（`-- <path>`，字面路径
+   * ——runner env GIT_LITERAL_PATHSPECS=1）；空串/null/缺省 = 不限路径。
+   */
+  path?: string | null
+  /**
+   * [清单 60] `--follow`：单文件历史跨 rename 跟踪（git 尽力跟踪有限 rename 链）。
+   * **仅在 path 为单路径时合法**——违反 ⇒ git/bad-request（reason
+   * 'follow-without-path'，零命令执行）。
+   */
+  follow?: boolean
+  /**
+   * [清单 35/60] 分页起点 revision（分支名/tag/oid 等 rev-parse 可解析修订）；
+   * null/缺省 = HEAD。不可解析 ⇒ git/unknown-revision（details.op='log'）。
+   */
+  ref?: string | null
+}
 /** path=null：仅 meta+numstat；path 给定：含该文件 patch。 */
 export interface ShowOptions { oid: string; path: string | null }
 
@@ -436,6 +471,164 @@ export interface WorktreeRemoveOptions {
 
 /** `git.worktreeRemove` 出参：removed = 传给 git 的路径（与入参同形）。 */
 export interface WorktreeRemoveResult { removed: string }
+
+// ---------- v2 批次二：历史面（[清单 34] blame / [清单 36] 分支对比 / [清单 37] 时间旅行） ----------
+
+/**
+ * `git.blame` 入参（[清单 34]；D3=B 拍板的 `-L` 区间分片 wire 承载）：
+ * ref=null/缺省 = blame 工作区文件（含未提交行——porcelain 以全零 oid + author
+ * 「Not Committed Yet」标注，真实世界如实过线）；ref 给定 = blame 该修订的版本。
+ * range=null/缺省 = 全区（受单次行数硬顶钳制，见 {@link BlameResult}）。
+ */
+export interface BlameOptions {
+  /** 仓库相对路径（字面路径语义——GIT_LITERAL_PATHSPECS=1）。 */
+  path: string
+  /** blame 起点 revision；null/缺省 = 工作区。 */
+  ref?: string | null
+  /** `-L <start>,<end>` 区间（1 起行号，闭区间）；null/缺省 = 全区。 */
+  range?: { start: number; end: number } | null
+}
+
+/** blame 的单段连续同 oid 行区间（同 oid 连续行合并——§4.3 解析纪律）。 */
+export interface BlameRange {
+  /** 区间起始行号（1 起，blame 目标的最终行号——与全区结果可比，§4.7 一致性用例）。 */
+  startLine: number
+  /** 区间行数（≥1）。 */
+  count: number
+  /** 该区间归属提交的全 oid（未提交行 = 全零 oid）。 */
+  oid: string
+  /** 作者名（未提交行 = git 的「Not Committed Yet」）。 */
+  authorName: string
+  /** 作者时间（author-time 转 ISO；未提交行 = 探测时刻）。 */
+  authoredAt: string
+}
+
+/** blame 区间归属提交的展示面（commits 去重清单）。 */
+export interface BlameCommit {
+  oid: string
+  /** oid 前 7 位（展示启发式，BranchState.abbrevOid 同口径）。 */
+  shortOid: string
+  authorName: string
+  /** 提交 subject（summary 行原样）。 */
+  subject: string
+}
+
+/**
+ * `git.blame` 出参。
+ *
+ * 单次行数硬顶（D3=B）：`maxLines` = min(50_000, floor(outputMaxBytes /
+ * 128))——上限不得高于 outputMaxBytes 可承载量，两值互相校验（§4.10）。
+ *   - 全区请求且总行数 > maxLines ⇒ git/blame-oversized（details.lineCount =
+ *     精确总行数，引导 client 转 `-L` 区间分片）；
+ *   - 区间请求跨度 > maxLines ⇒ **同钳**：end 钳到 start+maxLines-1，
+ *     `truncated=true`（防失控区间的防御性截断，client 以下一片续读）。
+ *
+ * `lineCount` = blame 目标版本的总行数（探测精确值）；探测不可得时 =
+ * 本次结果覆盖的末行行号（下界，如实降级）。
+ */
+export interface BlameResult {
+  /** 回传入参 path（解析的仓库相对路径）。 */
+  path: string
+  /** blame 起点 revision（null = 工作区）。 */
+  ref: string | null
+  /** blame 目标版本总行数（探测不可得时 = 本次覆盖末行行号，见类型注）。 */
+  lineCount: number
+  /** 区间请求被单次硬顶钳制（end 被截短）；全区成功恒 false。 */
+  truncated: boolean
+  /** 行区间（按 startLine 升序、互不重叠；同 oid 连续行已合并）。 */
+  ranges: BlameRange[]
+  /** ranges 覆盖的提交去重清单（首现序）。 */
+  commits: BlameCommit[]
+}
+
+/** `git.compareBranches` 入参（[清单 36]）：base/compare 均为可解析修订。 */
+export interface CompareOptions {
+  /** 基准分支（behind 侧——base 独有的提交落在 behind）。 */
+  base: string
+  /** 对比分支（ahead 侧——compare 独有的提交落在 ahead）。 */
+  compare: string
+}
+
+/**
+ * `git.compareBranches` 出参（[清单 36]）：ahead = compare 独有（`git log
+ * base..compare`）；behind = base 独有（`git log compare..base`）；计数来自
+ * `rev-list --left-right --count base...compare`（rev-count.ts 提共享）并与列表
+ * 长度互检（不一致 = 契约破坏要响）。列表不做分页钳制——对比是管理面单次查询，
+ * 输出超预算由 runner 的 stdout 上限如实兜底（截断 ⇒ git-error，不静默截取）。
+ */
+export interface BranchCompareResult {
+  base: string
+  compare: string
+  /** merge-base oid； histories 不相交时 null（exit 1 如实归 null）。 */
+  mergeBase: string | null
+  /** compare 独有提交（topo 序，children-first）。 */
+  ahead: CommitInfo[]
+  /** base 独有提交（topo 序，children-first）。 */
+  behind: CommitInfo[]
+  /** ahead.length 的 rev-list 独立计数（互检一致才返回）。 */
+  aheadCount: number
+  behindCount: number
+}
+
+/**
+ * `git.cherryPick` 入参（[清单 37]；discard 三重守卫同款——acknowledged + baseRevision
+ * 乐观并发，任一失败零命令执行）。
+ */
+export interface CherryPickOptions {
+  /** 要摘取的提交（rev-parse 可解析的 commit-ish；不可解析 ⇒ git/unknown-revision）。 */
+  oid: string
+  /** C 级二次确认旗标（false ⇒ git/bad-request 'unacknowledged'）。 */
+  acknowledged: boolean
+  /**
+   * 乐观并发基线 = 客户端发起请求时持有的 HEAD 全 oid（null = 不参与校验）；
+   * 与最新 status 的 branch.oid 不一致 ⇒ git/bad-request 'stale-base-revision'。
+   */
+  baseRevision: string | null
+}
+
+/** `git.revert` 入参（与 CherryPickOptions 同形；语义 = 逆向应用该提交）。 */
+export interface RevertOptions {
+  /** 要逆向的提交。 */
+  oid: string
+  /** C 级二次确认旗标。 */
+  acknowledged: boolean
+  /** 乐观并发基线（同 CherryPickOptions）。 */
+  baseRevision: string | null
+}
+
+/**
+ * `git.reset` 入参（[清单 37]）：soft = 只移 HEAD、mixed = +重置 index（unstage
+ * 场景 target=null 用 mixed）、hard = +重置工作区（丢弃未提交改动——其语义即清理，
+ * 脏区不拦，§4.10）。三档均需 acknowledged（C 级）；UI 侧 hard 另走 danger 勾选闸。
+ */
+export interface ResetOptions {
+  kind: 'soft' | 'mixed' | 'hard'
+  /** 重置目标；null = HEAD。不可解析 ⇒ git/unknown-revision。 */
+  target: string | null
+  /** C 级二次确认旗标。 */
+  acknowledged: boolean
+  /** 乐观并发基线（同 CherryPickOptions）。 */
+  baseRevision: string | null
+}
+
+/**
+ * cherry-pick / revert / reset 的统一出参：oldOid = 操作前 HEAD（fresh 快照回读），
+ * newOid = 操作后 HEAD 回读（rev-parse；三者均不产生 unborn——null 仅为 wire
+ * 前向兼容保留，实现恒回读非空）。
+ */
+export interface TimeTravelResult {
+  op: 'cherry-pick' | 'revert' | 'reset'
+  oldOid: string
+  newOid: string | null
+}
+
+/**
+ * `git.abortOperation` 出参（[清单 37]）：aborted = 清除的中间态种类；null =
+ * 无中间态（幂等成功，零命令）。
+ */
+export interface AbortOperationResult {
+  aborted: 'cherry-pick' | 'revert' | null
+}
 
 // ---------- followStatus 流帧（M9；spec §2 host 推送契约的 v1 落地面） ----------
 

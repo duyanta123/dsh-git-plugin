@@ -30,6 +30,12 @@ export interface ChangeCardProps {
   onStage(): void
   onUnstage(): void
   onDiscard(): void
+  /**
+   * 文件历史动作（V2 批次二 [60]；plan §4.6「文件卡片『文件历史』动作 → 图 tab
+   * path 模式」）。回调由 tab 半提供（跨 tab 意图通道 graph-intent-store）；缺席
+   * 不渲染（测试桩/旧装配兼容）。
+   */
+  onHistory?(): void
   /** 行级快捷键（④-K ask §②：Space=暂存切换 / Enter=行按钮原生展开 / Delete=丢弃；父级装配语义）。 */
   onKeyDown?(event: ReactKeyboardEvent): void
 }
@@ -51,7 +57,7 @@ function Counts({ row }: { row: ChangeRow }): ReactNode {
  * @param props - 行模型与回调。
  */
 export function ChangeCard(props: ChangeCardProps): ReactNode {
-  const { row, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onKeyDown } = props
+  const { row, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onHistory, onKeyDown } = props
   const { change } = row
   const renamed = change.origPath !== null
   return (
@@ -109,6 +115,17 @@ export function ChangeCard(props: ChangeCardProps): ReactNode {
           {row.actions.discard && (
             <button type='button' className='dsh-git-change-card__action' data-git-change-action='discard' onClick={onDiscard}>
               {t('changes.discard')}
+            </button>
+          )}
+          {onHistory !== undefined && (
+            <button
+              type='button'
+              className='dsh-git-change-card__action'
+              data-git-change-action='history'
+              aria-label={t('changes.fileHistory')}
+              onClick={onHistory}
+            >
+              {t('changes.fileHistory')}
             </button>
           )}
         </span>

@@ -10,10 +10,12 @@
  */
 
 import type {
-  BranchCreateOptions, BranchCreateResult, BranchDeleteOptions, BranchDeleteResult,
-  BranchSwitchResult, FetchOptions, FetchResult, PullResult, PushOptions, PushResult, RefInfo,
-  RemoteListResult, TagCreateOptions, TagCreateResult, TagDeleteResult, WorktreeAddOptions,
-  WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
+  AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
+  BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult,
+  CherryPickOptions, CompareOptions, FetchOptions, FetchResult, PullResult, PushOptions,
+  PushResult, RefInfo, RemoteListResult, ResetOptions, RevertOptions, TagCreateOptions,
+  TagCreateResult, TagDeleteResult, TimeTravelResult, WorktreeAddOptions, WorktreeAddResult,
+  WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
 import type { RemoteResult } from './remote/mount.js'
 import type { GitRpcFace } from './remote/mount.js'
@@ -36,6 +38,14 @@ export interface GitAdminFace {
   push(options: PushOptions): Promise<RemoteResult<PushResult>>
   pull(): Promise<RemoteResult<PullResult>>
   fetch(options: FetchOptions): Promise<RemoteResult<FetchResult>>
+  /** V2 批次二历史面（plan §4.3/§4.6）：对比 / blame / cherry-pick / revert / reset / abort。 */
+  compareBranches(options: CompareOptions): Promise<RemoteResult<BranchCompareResult>>
+  blame(options: BlameOptions): Promise<RemoteResult<BlameResult>>
+  cherryPick(options: CherryPickOptions): Promise<RemoteResult<TimeTravelResult>>
+  revert(options: RevertOptions): Promise<RemoteResult<TimeTravelResult>>
+  reset(options: ResetOptions): Promise<RemoteResult<TimeTravelResult>>
+  /** 放弃中间态操作（幂等安全：无中间态 ⇒ 空成功——plan §4.3 abortOperation 行）。 */
+  abortOperation(): Promise<RemoteResult<AbortOperationResult>>
 }
 
 /** 铸管理面业务面（工厂——模块级句柄禁止，map §3.4）。 */
@@ -58,6 +68,13 @@ export function createGitAdminFace(rpc: GitRpcFace): GitAdminFace {
     push: (options) => rpc.push(options),
     pull: () => rpc.pull(),
     fetch: (options) => rpc.fetch(options),
+    // V2 批次二历史面（plan §4.3）：直通 rpc（守卫在 host；UI 半 = 确认框架 + danger 闸）。
+    compareBranches: (options) => rpc.compareBranches(options),
+    blame: (options) => rpc.blame(options),
+    cherryPick: (options) => rpc.cherryPick(options),
+    revert: (options) => rpc.revert(options),
+    reset: (options) => rpc.reset(options),
+    abortOperation: () => rpc.abortOperation(),
   }
 }
 

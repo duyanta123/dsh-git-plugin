@@ -40,6 +40,11 @@ const ALL_GIT_CODES: readonly GitCode[] = [
   'git/tag-exists',
   'git/tag-not-found',
   'git/worktree-failed',
+  // V2 批次二历史面新码（host blame/time-travel/graph 扩展；plan §4.4）。
+  'git/blame-oversized',
+  'git/merge-conflict',
+  'git/unknown-revision',
+  'git/operation-in-progress',
 ]
 
 describe('ERROR_MAP — Record 穷尽约束（运行期镜像）', () => {
@@ -153,5 +158,37 @@ describe('errorNoticeView — 视图模型', () => {
     expect(worktree.params).toEqual({ path: 'D:/wt' })
     expect(worktree.detailsText).toContain('token=***')
     expect(worktree.detailsText).not.toContain('token=abc')
+  })
+
+  it('V2 批次二历史面码：blame-oversized 三参 / unknown-revision / operation-in-progress', () => {
+    const blame = errorNoticeView({
+      code: 'git/blame-oversized', message: 'oversized',
+      details: { path: 'big.txt', lineCount: 120_000, maxLines: 50_000 },
+    })
+    expect(blame.key).toBe('error.blame-oversized')
+    expect(blame.params).toEqual({ path: 'big.txt', lineCount: 120_000, maxLines: 50_000 })
+    const unknown = errorNoticeView({
+      code: 'git/unknown-revision', message: 'unknown', details: { op: 'compareBranches', revision: 'nope' },
+    })
+    expect(unknown.key).toBe('error.unknown-revision')
+    expect(unknown.params).toEqual({ op: 'compareBranches', revision: 'nope' })
+    const inProgress = errorNoticeView({
+      code: 'git/operation-in-progress', message: 'busy', details: { op: 'cherry-pick' },
+    })
+    expect(inProgress.key).toBe('error.operation-in-progress')
+    expect(inProgress.params).toEqual({ op: 'cherry-pick' })
+  })
+
+  it('merge-conflict：op + conflicted 计数进插值；动作 = abort（放弃操作按钮——plan §4.10）', () => {
+    const conflict = errorNoticeView({
+      code: 'git/merge-conflict', message: 'conflict',
+      details: { op: 'cherry-pick', conflicted: ['a.ts', 'b.ts'], abortable: true },
+    })
+    expect(conflict.key).toBe('error.merge-conflict')
+    expect(conflict.params).toEqual({ op: 'cherry-pick', count: 2 })
+    expect(conflict.actions).toEqual(['abort'])
+    // details 形状漂移（conflicted 缺席）⇒ 计数安全降级 0。
+    const drifted = errorNoticeView({ code: 'git/merge-conflict', message: 'conflict', details: undefined })
+    expect(drifted.params).toEqual({ op: '', count: 0 })
   })
 })

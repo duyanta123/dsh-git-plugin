@@ -6,7 +6,8 @@
 import { describe, expect, it } from 'vitest'
 import type { WorktreeInfo } from 'dsh-gitkit/types'
 import {
-  branchCreateDraft, tagCreateDraft, worktreeAddDraft, worktreeRemovePlan, worktreeRows,
+  branchCreateDraft, resetPlan, tagCreateDraft, timeTravelOptions, worktreeAddDraft,
+  worktreeRemovePlan, worktreeRows,
 } from '../src/client/admin-view-model.ts'
 import { pushRoute } from '../src/client/admin-face.ts'
 
@@ -105,5 +106,41 @@ describe('pushRoute — 推送行路由（菜单直推 vs 对话框）', () => {
     expect(pushRoute(5)).toBe('dialog')
     expect(pushRoute(1)).toBe('direct')
     expect(pushRoute(0)).toBe('direct')
+  })
+})
+
+describe('resetPlan — 重置当前分支的确认计划（V2 批次二 [37]）', () => {
+  it('soft/mixed ⇒ normal 档 + acknowledged/baseRevision 组装（discard 三重守卫同款）', () => {
+    expect(resetPlan({ kind: 'soft', target: 'dev', baseRevision: 'a'.repeat(40), acked: false }))
+      .toEqual({ valid: true, severity: 'normal', options: { kind: 'soft', target: 'dev', acknowledged: true, baseRevision: 'a'.repeat(40) } })
+    expect(resetPlan({ kind: 'mixed', target: 'dev', baseRevision: 'a'.repeat(40), acked: false }).severity).toBe('normal')
+  })
+
+  it('hard 未过勾选闸 ⇒ 不可发起（severity danger + options null）；勾选后放行', () => {
+    const blocked = resetPlan({ kind: 'hard', target: 'dev', baseRevision: 'a'.repeat(40), acked: false })
+    expect(blocked).toEqual({ valid: false, severity: 'danger', options: null })
+    const allowed = resetPlan({ kind: 'hard', target: 'dev', baseRevision: 'a'.repeat(40), acked: true })
+    expect(allowed.valid).toBe(true)
+    expect(allowed.options).toEqual({ kind: 'hard', target: 'dev', acknowledged: true, baseRevision: 'a'.repeat(40) })
+  })
+
+  it('baseRevision 缺席（detached/unborn 的 HEAD oid null）⇒ 不可发起（乐观并发基线缺失）', () => {
+    expect(resetPlan({ kind: 'mixed', target: 'dev', baseRevision: null, acked: false }).options).toBeNull()
+    expect(resetPlan({ kind: 'hard', target: 'dev', baseRevision: null, acked: true }).options).toBeNull()
+    expect(resetPlan({ kind: 'mixed', target: '', baseRevision: 'a'.repeat(40), acked: false }).options).toBeNull()
+  })
+})
+
+describe('timeTravelOptions — cherry-pick/revert 入参组装（V2 批次二 [37]）', () => {
+  it('oid + baseRevision 在场 ⇒ acknowledged:true + 基线透传（按 kind 收窄返回型）', () => {
+    expect(timeTravelOptions('cherry-pick', { oid: 'b'.repeat(40), baseRevision: 'a'.repeat(40) }))
+      .toEqual({ oid: 'b'.repeat(40), acknowledged: true, baseRevision: 'a'.repeat(40) })
+    expect(timeTravelOptions('revert', { oid: 'b'.repeat(40), baseRevision: 'a'.repeat(40) }))
+      .toEqual({ oid: 'b'.repeat(40), acknowledged: true, baseRevision: 'a'.repeat(40) })
+  })
+
+  it('baseRevision null / oid 空 ⇒ 不可发起（入口闸）', () => {
+    expect(timeTravelOptions('cherry-pick', { oid: 'b'.repeat(40), baseRevision: null })).toBeNull()
+    expect(timeTravelOptions('revert', { oid: '', baseRevision: 'a'.repeat(40) })).toBeNull()
   })
 })

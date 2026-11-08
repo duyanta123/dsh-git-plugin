@@ -23,8 +23,12 @@ import { redact } from './m13/redact.js'
 /** host 包声明过的域错误码（RemoteErrorDetailsMap 的 git/* 子集——穷尽约束的键域）。 */
 export type GitCode = Extract<RemoteErrorCode, `git/${string}`>
 
-/** GitErrorNotice 按码提供的动作（spec §3.4 动作清单）。 */
-export type ErrorAction = 'retry' | 'set-upstream' | 'fetch' | 'pull'
+/**
+ * GitErrorNotice 按码提供的动作（spec §3.4 动作清单；V2 批次二 + 'abort'——
+ * git/merge-conflict 错误面板的「放弃操作」按钮 = abortOperation RPC（plan §4.10
+ * 「必须把放弃操作按钮放进 merge-conflict 错误面板」）。
+ */
+export type ErrorAction = 'retry' | 'set-upstream' | 'fetch' | 'pull' | 'abort'
 
 /** 一个码的展示条目：词典键 + details→插值参数 + 动作。 */
 export interface ErrorMapEntry {
@@ -138,6 +142,42 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
     key: 'error.worktree-failed',
     params: (details) => ({ path: text((details as { path?: unknown }).path) }),
   },
+  // V2 批次二历史面新码（host blame/time-travel/graph 扩展；plan §4.4）。Record 穷尽
+  // 约束随 GitCode 键域扩张——host 侧声明这批码后本表即编译期闭合。bad-request 的
+  // reason 联合扩值（'follow-without-path'）复用既有 'error.bad-request' 插值，不新增键。
+  'git/blame-oversized': {
+    // D3=B：占位终点变分片引导——主文案引导按区间分片；blame 视图对 'blame-oversized'
+    // 有专属处理（git-blame-store 转 -L 区间模式），错误条形态只在无法分片的兜底出现。
+    key: 'error.blame-oversized',
+    params: (details) => ({
+      path: text((details as { path?: unknown }).path),
+      lineCount: num((details as { lineCount?: unknown }).lineCount),
+      maxLines: num((details as { maxLines?: unknown }).maxLines),
+    }),
+  },
+  'git/merge-conflict': {
+    // op 是 string（批次三 stash-pop 复用此码不再改类型，plan §4.4）；conflicted
+    // 数组只插值计数，文件清单在 details 折叠区过 redact 展示。abort 动作 =
+    // abortOperation（幂等安全；无中间态时空成功）。
+    key: 'error.merge-conflict',
+    params: (details) => ({
+      op: text((details as { op?: unknown }).op),
+      count: listCount((details as { conflicted?: unknown }).conflicted),
+    }),
+    actions: ['abort'],
+  },
+  'git/unknown-revision': {
+    key: 'error.unknown-revision',
+    params: (details) => ({
+      op: text((details as { op?: unknown }).op),
+      revision: text((details as { revision?: unknown }).revision),
+    }),
+  },
+  'git/operation-in-progress': {
+    key: 'error.operation-in-progress',
+    params: (details) => ({ op: text((details as { op?: unknown }).op) }),
+    actions: ['abort'],
+  },
 }
 
 /** 查一个错误码的展示条目；陌生 code → null（透传 error.message 的回落路径）。 */
@@ -193,6 +233,11 @@ function num(value: unknown): number {
 
 function list(value: unknown): string {
   return Array.isArray(value) ? value.map((item) => text(item)).filter((item) => item !== '').join(', ') : ''
+}
+
+/** 数组字段的长度插值（merge-conflict 的 conflicted 计数；非数组/缺失安全降级 0）。 */
+function listCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
 }
 
 function codeOf(details: unknown): string {

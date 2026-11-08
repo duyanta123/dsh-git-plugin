@@ -44,6 +44,8 @@ export const gitZh = {
   'menu.pull': '拉取',
   'menu.fetch': '获取',
   'menu.branches': '分支',
+  'menu.branchCompare': '与当前分支比较…',
+  'menu.branchReset': '重置当前分支…',
   'menu.branchCreate': '新建分支…',
   'menu.tagCreate': '打标签…',
   'menu.worktree': 'Worktree…',
@@ -64,6 +66,28 @@ export const gitZh = {
   'graph.loading': '加载中…',
   'graph.detail.files': '变更文件（{count}）',
   'graph.detail.totalTruncated': '变更文件清单超过预算，仅显示部分。',
+  // ── graph.search：图 tab 顶栏搜索框 + 过滤 chip（V2 批次二 [35]；plan §4.6）──
+  'graph.search.placeholder': '搜索提交信息…',
+  'graph.search.authorPlaceholder': '搜索作者…',
+  'graph.search.authorHint': '作者按子串或正则匹配。',
+  'graph.search.chipQuery': '消息：{query}',
+  'graph.search.chipAuthor': '作者：{author}',
+  'graph.search.clear': '清除过滤',
+  'graph.search.emptyResult': '没有匹配的提交。',
+  // ── graph.wip：图首页「未提交改动」合成节点（[38]；plan §4.6 纯 client 合成）──
+  'graph.wip.label': '未提交的更改',
+  'graph.wip.counts': '已暂存 {staged} · 更改 {unstaged} · 未跟踪 {untracked} · 冲突 {conflicted}',
+  // ── graph.compare：分支对比面板（[36]；plan §4.6 ahead/behind 两列）──
+  'graph.compare.title': '分支对比：{compare} ← {base}',
+  'graph.compare.ahead': '领先 {base}（{count}）',
+  'graph.compare.behind': '落后 {base}（{count}）',
+  'graph.compare.mergeBase': '合并基：{oid}',
+  'graph.compare.empty': '该方向没有独有提交。',
+  'graph.compare.pending': '对比加载中…',
+  'graph.compare.close': '关闭对比',
+  // ── graph.path：单文件历史 path 模式顶栏（[60]；plan §4.6 path chip + 退出）──
+  'graph.path.chip': '文件历史：{path}',
+  'graph.path.exit': '退出文件历史',
   // ── changes：C2 GitChangesTab —— spec §4 changes 键组（种子全集）+ 组装所需动作/提示 ──
   // P3-5（v2 plan §10）：死键 'changes.oversized' 双删——实际占位走 'diff.oversized'
   // （FileDiffView.tsx 的占位形态）。
@@ -82,12 +106,24 @@ export const gitZh = {
   'changes.checkAria': '切换 {path} 的暂存勾选',
   'changes.submodule': '子模块',
   'changes.discardConflict': '若文件仍存在未合并的冲突，请先解决冲突再丢弃。',
+  'changes.blameMode': '追溯',
+  'changes.diffMode': '差异',
+  'changes.fileHistory': '文件历史',
   // ── diff：FileDiffView 占位与渲染注记（C2/C3 共用；本模块 ask §⑥ 补齐） ──
   'diff.loading': '差异加载中…',
   'diff.binary': '二进制文件，没有文本差异。',
   'diff.oversized': '该文件的差异超过大小上限，未加载。',
   'diff.truncated': '差异过长，仅渲染前 {count} 行。',
   'diff.empty': '该文件没有文本差异。',
+  // ── blame：ChangesTab 文件详情区 blame 模式（[34]；D3=B -L 区间分片；plan §4.6）──
+  'blame.loading': '追溯加载中…',
+  'blame.empty': '该文件没有可追溯的行。',
+  'blame.chunkHint': '文件较大，追溯按可视区间分片加载。',
+  'blame.oversizedFallback': '该文件的追溯超出单次上限，无法分片加载。',
+  'blame.time.now': '刚刚',
+  'blame.time.minutes': '{count} 分钟前',
+  'blame.time.hours': '{count} 小时前',
+  'blame.time.days': '{count} 天前',
   // ── confirm：C5 GitConfirmDialog（danger 语义 + 确认勾选 + 路径全量列表） ──
   'confirm.ok': '确认',
   'confirm.cancel': '取消',
@@ -140,6 +176,19 @@ export const gitZh = {
   'push.force': '强制推送（覆盖远端）',
   'push.forceMessage': '强制推送将用本地分支覆盖远端分支，远端独有的提交会丢失且无法恢复。',
   'push.forceConfirmTitle': '确认强制推送',
+  // ── timeTravel：[37] cherry-pick / revert / reset（plan §4.6 行菜单 + reset 子菜单）──
+  'menu.commitCherryPick': 'Cherry-pick 到当前分支',
+  'menu.commitRevert': 'Revert 此提交',
+  'timeTravel.cherryPick.title': 'Cherry-pick 提交',
+  'timeTravel.cherryPick.message': '将把 {shortOid} {subject} 应用到当前分支。',
+  'timeTravel.revert.title': 'Revert 提交',
+  'timeTravel.revert.message': '将创建一个撤销 {shortOid} {subject} 的新提交。',
+  'timeTravel.reset.title': '重置当前分支到 {target}',
+  'timeTravel.reset.kindLabel': '重置模式',
+  'timeTravel.reset.soft': 'soft——更改保留在暂存区',
+  'timeTravel.reset.mixed': 'mixed——更改保留在工作区（未暂存）',
+  'timeTravel.reset.hard': 'hard——丢弃全部未提交更改（不可逆）',
+  'timeTravel.reset.hardMessage': '将丢弃 {count} 个文件的未提交更改，且无法撤销。',
   // ── commit：C4 GitCommitDialog —— spec §4 commit dialog 键组（种子全集，值随
   //    host locale/*.json 包资产同文案）+ ④-K 组件所需的动作/确认/计数扩充键 ──
   'commit.title': '提交',
@@ -192,11 +241,18 @@ export const gitZh = {
   'error.tag-exists': '标签 {name} 已存在。',
   'error.tag-not-found': '标签 {name} 不存在。',
   'error.worktree-failed': 'worktree 操作失败（{path}）。',
+  // V2 批次二历史面新码（plan §4.4；bad-request 的 reason 联合扩值
+  // 'follow-without-path' 复用既有 'error.bad-request' 文案插值，不新增键）。
+  'error.blame-oversized': '文件 {path} 的追溯共 {lineCount} 行，超出单次上限（{maxLines}）；请按区间分片浏览。',
+  'error.merge-conflict': '操作 {op} 遇到冲突（{count} 个文件）：请解决冲突，或放弃本次操作。',
+  'error.unknown-revision': 'git 无法解析 {revision}（{op}）。',
+  'error.operation-in-progress': '已有进行中的 {op} 操作：请先解决冲突，或放弃该操作后再试。',
   'error.gateway-service-unavailable': 'git 服务尚未就绪，请重试。',
   'error.gateway': '请求失败（{code}）。',
   'error.action.setUpstream': '设置 upstream 并推送',
   'error.action.fetch': '获取（fetch）',
   'error.action.pull': '拉取（pull）',
+  'error.action.abort': '放弃操作',
   // ── common：错误面板动作与折叠区（spec §4） ──
   'common.retry': '重试',
   'common.details': '详情',
@@ -222,6 +278,8 @@ export const gitEn = {
   'menu.pull': 'Pull',
   'menu.fetch': 'Fetch',
   'menu.branches': 'Branches',
+  'menu.branchCompare': 'Compare with current branch…',
+  'menu.branchReset': 'Reset current branch…',
   'menu.branchCreate': 'New branch…',
   'menu.tagCreate': 'Create tag…',
   'menu.worktree': 'Worktree…',
@@ -243,6 +301,28 @@ export const gitEn = {
   'graph.loading': 'Loading…',
   'graph.detail.files': 'Changed files ({count})',
   'graph.detail.totalTruncated': 'The changed-file list was truncated by the budget.',
+  // ── graph.search：graph tab top bar search + filter chips (V2 batch 2 [35]) ──
+  'graph.search.placeholder': 'Search commit messages…',
+  'graph.search.authorPlaceholder': 'Search author…',
+  'graph.search.authorHint': 'The author matches by substring or regex.',
+  'graph.search.chipQuery': 'Message: {query}',
+  'graph.search.chipAuthor': 'Author: {author}',
+  'graph.search.clear': 'Clear filters',
+  'graph.search.emptyResult': 'No commits match the filters.',
+  // ── graph.wip：synthetic WIP node at the top of the graph ([38]) ──
+  'graph.wip.label': 'Uncommitted changes',
+  'graph.wip.counts': 'Staged {staged} · Changes {unstaged} · Untracked {untracked} · Conflicts {conflicted}',
+  // ── graph.compare：branch compare panel ([36]) ──
+  'graph.compare.title': 'Compare branches: {compare} ← {base}',
+  'graph.compare.ahead': 'Ahead of {base} ({count})',
+  'graph.compare.behind': 'Behind {base} ({count})',
+  'graph.compare.mergeBase': 'Merge base: {oid}',
+  'graph.compare.empty': 'No commits unique to this side.',
+  'graph.compare.pending': 'Loading compare…',
+  'graph.compare.close': 'Close compare',
+  // ── graph.path：single-file history path mode top bar ([60]) ──
+  'graph.path.chip': 'File history: {path}',
+  'graph.path.exit': 'Exit file history',
   // ── changes：C2 GitChangesTab ──
   // P3-5 (v2 plan §10): dead key 'changes.oversized' removed — the actual placeholder
   // is 'diff.oversized' (FileDiffView.tsx).
@@ -261,12 +341,24 @@ export const gitEn = {
   'changes.checkAria': 'Toggle the staged checkbox for {path}',
   'changes.submodule': 'Submodule',
   'changes.discardConflict': 'If the file still has unresolved conflict markers, resolve them before discarding.',
+  'changes.blameMode': 'Blame',
+  'changes.diffMode': 'Diff',
+  'changes.fileHistory': 'File history',
   // ── diff：FileDiffView ──
   'diff.loading': 'Loading diff…',
   'diff.binary': 'Binary file — no textual diff.',
   'diff.oversized': 'The diff of this file exceeds the size limit and was not loaded.',
   'diff.truncated': 'The diff is long; only the first {count} lines are rendered.',
   'diff.empty': 'This file has no textual diff.',
+  // ── blame：ChangesTab file detail blame mode ([34]; D3=B -L slice loading) ──
+  'blame.loading': 'Loading blame…',
+  'blame.empty': 'This file has no blameable lines.',
+  'blame.chunkHint': 'Large file: blame loads in slices as you scroll.',
+  'blame.oversizedFallback': 'Blame for this file exceeds the per-call cap and cannot be sliced.',
+  'blame.time.now': 'just now',
+  'blame.time.minutes': '{count} min ago',
+  'blame.time.hours': '{count} h ago',
+  'blame.time.days': '{count} d ago',
   // ── confirm ──
   'confirm.ok': 'Confirm',
   'confirm.cancel': 'Cancel',
@@ -319,6 +411,19 @@ export const gitEn = {
   'push.force': 'Force push (overwrites the remote)',
   'push.forceMessage': 'Force push overwrites the remote branch with the local one; commits unique to the remote are lost and cannot be recovered.',
   'push.forceConfirmTitle': 'Confirm force push',
+  // ── timeTravel：[37] cherry-pick / revert / reset (row menu + reset submenu) ──
+  'menu.commitCherryPick': 'Cherry-pick onto current branch',
+  'menu.commitRevert': 'Revert this commit',
+  'timeTravel.cherryPick.title': 'Cherry-pick commit',
+  'timeTravel.cherryPick.message': 'Applies {shortOid} {subject} onto the current branch.',
+  'timeTravel.revert.title': 'Revert commit',
+  'timeTravel.revert.message': 'Creates a new commit undoing {shortOid} {subject}.',
+  'timeTravel.reset.title': 'Reset current branch to {target}',
+  'timeTravel.reset.kindLabel': 'Reset mode',
+  'timeTravel.reset.soft': 'soft — keep changes staged',
+  'timeTravel.reset.mixed': 'mixed — keep changes in the working tree (unstaged)',
+  'timeTravel.reset.hard': 'hard — discard all uncommitted changes (irreversible)',
+  'timeTravel.reset.hardMessage': 'Discards the uncommitted changes of {count} file(s); this cannot be undone.',
   // ── commit：C4 GitCommitDialog（en 与 zh 逐键对齐；种子值随 host locale/en.json）──
   'commit.title': 'Commit',
   'commit.placeholder': 'Commit message (Conventional Commits recommended)',
@@ -370,11 +475,18 @@ export const gitEn = {
   'error.tag-exists': 'Tag {name} already exists.',
   'error.tag-not-found': 'Tag {name} does not exist.',
   'error.worktree-failed': 'The worktree operation failed ({path}).',
+  // V2 batch-2 history codes (plan §4.4); the bad-request reason union extension
+  // ('follow-without-path') reuses the existing 'error.bad-request' interpolation.
+  'error.blame-oversized': 'Blame for {path} has {lineCount} lines, above the per-call cap ({maxLines}); browse by line ranges.',
+  'error.merge-conflict': 'The {op} operation hit conflicts ({count} file(s)): resolve them, or abort the operation.',
+  'error.unknown-revision': 'Git cannot resolve {revision} ({op}).',
+  'error.operation-in-progress': 'A {op} operation is already in progress: resolve it or abort it first.',
   'error.gateway-service-unavailable': 'The git service is not ready yet. Retry.',
   'error.gateway': 'The request failed ({code}).',
   'error.action.setUpstream': 'Set upstream and push',
   'error.action.fetch': 'Fetch',
   'error.action.pull': 'Pull',
+  'error.action.abort': 'Abort operation',
   // ── common ──
   'common.retry': 'Retry',
   'common.details': 'Details',

@@ -66,6 +66,22 @@
  *         git/push force 无 acknowledged ⇒ git/bad-request 'force-unacknowledged'
  *         （[清单 27] 双闸 host 半的真宿主面）→ worktreeRemove（world 重读目录消失 +
  *         list 回落单条目）→ worktreeRemove 再删 ⇒ git/worktree-failed。
+ *      M. v2 批次二历史面六方法各一条真宿主 RPC 往返（docs/v2-implementation-plan.md
+ *         §4.7「verify-load 断言面扩展」硬前提——断言链 A–L 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖）：blame（world re-read `git blame --porcelain` 首段 oid
+ *         对照）→ compareBranches（world 建分支 + 提交后 ahead/behind 计数与列表、
+ *         mergeBase 对照 git merge-base）→ reset 三档（soft/hard/mixed 各自 world 重读
+ *         HEAD/staged/工作区）→ reset hard 无 acknowledged ⇒ git/bad-request
+ *         'unacknowledged'（零命令）→ cherryPick 冲突 ⇒ git/merge-conflict 真宿主形状
+ *         （details.op='cherry-pick'、conflicted == world diff-filter=U、abortable）+
+ *         CHERRY_PICK_HEAD 在场 ⇒ git/operation-in-progress（cherryPick/reset 叠加皆
+ *         拒）→ abortOperation（world 重读 HEAD/中间态/工作区复原；再 abort 幂等
+ *         null）→ cherryPick 成功路径（world HEAD 前进）→ revert 成功（world 文件消失）
+ *         → 空 revert ⇒ git-error op 'revert'。
+ *         **批次三硬前提（plan §5.7）**：stashPop 落地时本断言面必须随之扩展——
+ *         stashPop 冲突断言 `git/merge-conflict` 真宿主形状（op 'stash-pop'，该码
+ *         注册于批次二 §4.4；§8 D9 对调时随移）+ stashPush/List/Pop/Drop 各一条往返，
+ *         否则批次三新方法端到端零覆盖（§3.8 注同款纪律）。
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
@@ -214,6 +230,9 @@ async function main() {
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fixtureRepo, stdio: 'ignore' })
   execFileSync('git', ['config', 'user.name', 'verify-user'], { cwd: fixtureRepo, stdio: 'ignore' })
   execFileSync('git', ['config', 'user.email', 'verify@example.com'], { cwd: fixtureRepo, stdio: 'ignore' })
+  // 断言 M 的文件内容 world 重读（abort 后 seed.md 内容对照）需要确定性行尾：钉死
+  // autocrlf=false（本机全局 true 会把恢复的检出文件 smudge 成 CRLF）。
+  execFileSync('git', ['config', 'core.autocrlf', 'false'], { cwd: fixtureRepo, stdio: 'ignore' })
   writeFileSync(join(fixtureRepo, 'seed.md'), 'dsh verify-load seed\n')
   execFileSync('git', ['add', 'seed.md'], { cwd: fixtureRepo, stdio: 'ignore' })
   execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load seed'], { cwd: fixtureRepo, stdio: 'ignore' })
@@ -676,6 +695,193 @@ async function main() {
     assert(worktreeMissing.ok === false && worktreeMissing.error?.code === 'git/worktree-failed',
       `removing a missing worktree should be git/worktree-failed: ${JSON.stringify(worktreeMissing)}`)
     step('worktreeRemove missing OK: git/worktree-failed')
+
+    // ── 5.95 断言 M（v2 批次二 §4.7 verify-load 扩展）：历史面六方法各一条真宿主
+    //        往返 + 时间旅行冲突真宿主形状。world 重读纪律同 K/L：每个写断言后用独立
+    //        git 进程重读 HEAD/refs/工作区，不信 RPC 自述。夹具当前 HEAD = main @
+    //        commitValue.oid（K 链提交），clean。
+    const worldGit = (...args) => execFileSync('git', args, { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    const worldStatusPorcelain = () => execFileSync('git', ['status', '--porcelain'], { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+    const worldStaged = () => worldStatusPorcelain().split('\n').filter((line) => line.startsWith('M ') || line.startsWith('A ') || line.startsWith('D '))
+    const pseudoHeadExists = (head) => {
+      try {
+        execFileSync('git', ['rev-parse', '--verify', '--quiet', head], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    // M-1 blame：chain.txt（K 链提交的单行文件）→ world 首段 oid 对照。
+    const blame = await rpcCall(base.origin, apiCookie, 'git/blame', { options: { path: 'chain.txt' } })
+    assert(blame.ok === true, `git/blame failed: ${JSON.stringify(blame)}`)
+    assert(blame.value?.truncated === false && blame.value?.lineCount === 1
+      && Array.isArray(blame.value?.ranges) && blame.value.ranges.length === 1
+      && Array.isArray(blame.value?.commits) && blame.value.commits.length === 1,
+    `git/blame value wrong for a one-line file: ${JSON.stringify(blame.value)}`)
+    const worldBlameFirst = worldGit('blame', '--porcelain', '--', 'chain.txt').split('\n')[0] ?? ''
+    const worldBlameOid = worldBlameFirst.split(' ')[0] ?? ''
+    assert(/^[0-9a-f]{40}$/.test(worldBlameOid) && blame.value.ranges[0]?.oid === worldBlameOid,
+      `git/blame range oid should match world re-read git blame --porcelain: ${String(blame.value?.ranges?.[0]?.oid)} vs ${worldBlameOid}`)
+    assert(blame.value.commits[0]?.oid === worldBlameOid, 'git/blame commits[0].oid should match world re-read')
+    step(`blame RPC round-trip OK: chain.txt @ ${worldBlameOid.slice(0, 7)} (world re-read git blame --porcelain matches)`)
+
+    // M-2 compareBranches：world 建分支 verify-cmp @ commitValue + main 前进一笔 →
+    // ahead = main 独有 1 笔、behind = 0、mergeBase = verify-cmp。
+    worldGit('branch', 'verify-cmp', commitValue.oid)
+    writeFileSync(join(fixtureRepo, 'cmp.txt'), 'dsh verify-load compare seed\n')
+    worldGit('add', 'cmp.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load compare commit')
+    const cmpOid = worldGit('rev-parse', 'HEAD')
+    const compare = await rpcCall(base.origin, apiCookie, 'git/compareBranches', { options: { base: 'verify-cmp', compare: 'main' } })
+    assert(compare.ok === true, `git/compareBranches failed: ${JSON.stringify(compare)}`)
+    assert(compare.value?.aheadCount === 1 && compare.value?.behindCount === 0
+      && Array.isArray(compare.value?.ahead) && compare.value.ahead.length === 1
+      && compare.value.ahead[0]?.oid === cmpOid,
+    `git/compareBranches value wrong: ${JSON.stringify(compare.value)}`)
+    assert(compare.value?.mergeBase === commitValue.oid,
+      `mergeBase should equal world git merge-base (verify-cmp): ${String(compare.value?.mergeBase)} vs ${commitValue.oid}`)
+    assert(worldGit('merge-base', 'verify-cmp', 'main') === compare.value.mergeBase,
+      'mergeBase should match world re-read git merge-base')
+    step('compareBranches RPC round-trip OK: main ahead 1 of verify-cmp, mergeBase world-matched')
+
+    // M-3 reset 三档 world 重读（K 链夹具是真仓库，reset 目标 = 对比提交链）。
+    writeFileSync(join(fixtureRepo, 'cmp2.txt'), 'dsh verify-load reset seed\n')
+    worldGit('add', 'cmp2.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load reset commit')
+    const cmp2Oid = worldGit('rev-parse', 'HEAD')
+    const resetSoft = await rpcCall(base.origin, apiCookie, 'git/reset', {
+      options: { kind: 'soft', target: 'HEAD~1', acknowledged: true, baseRevision: cmp2Oid },
+    })
+    assert(resetSoft.ok === true && resetSoft.value?.op === 'reset'
+      && resetSoft.value?.oldOid === cmp2Oid && resetSoft.value?.newOid === cmpOid,
+    `git/reset soft failed: ${JSON.stringify(resetSoft)}`)
+    assert(worldGit('rev-parse', 'HEAD') === cmpOid && worldStaged().length === 1,
+      `after reset --soft the world should be HEAD=cmpOid with 1 staged entry (got porcelain ${JSON.stringify(worldStatusPorcelain())})`)
+    step('reset soft RPC OK: HEAD stepped back, cmp2.txt staged (world re-read)')
+
+    const resetHard = await rpcCall(base.origin, apiCookie, 'git/reset', {
+      options: { kind: 'hard', target: null, acknowledged: true, baseRevision: cmpOid },
+    })
+    assert(resetHard.ok === true && resetHard.value?.op === 'reset' && resetHard.value?.newOid === cmpOid,
+      `git/reset hard failed: ${JSON.stringify(resetHard)}`)
+    assert(worldGit('rev-parse', 'HEAD') === cmpOid && worldStatusPorcelain() === '',
+      'after reset --hard the world should be clean at cmpOid (cmp2.txt gone from index and worktree)')
+    step('reset hard RPC OK: index and worktree reset, world clean')
+
+    // 无 acknowledged ⇒ git/bad-request 'unacknowledged'（零命令——HEAD 不动）。
+    const resetUnack = await rpcCall(base.origin, apiCookie, 'git/reset', {
+      options: { kind: 'hard', target: null, acknowledged: false, baseRevision: cmpOid },
+    })
+    assert(resetUnack.ok === false && resetUnack.error?.code === 'git/bad-request'
+      && resetUnack.error?.details?.reason === 'unacknowledged',
+    `reset hard without acknowledgement should be git/bad-request unacknowledged: ${JSON.stringify(resetUnack)}`)
+    assert(worldGit('rev-parse', 'HEAD') === cmpOid, 'rejected reset should execute zero commands (HEAD unchanged)')
+    step('reset guard OK: hard without acknowledged rejected (zero commands)')
+
+    writeFileSync(join(fixtureRepo, 'cmp3.txt'), 'dsh verify-load mixed seed\n')
+    worldGit('add', 'cmp3.txt')
+    const resetMixed = await rpcCall(base.origin, apiCookie, 'git/reset', {
+      options: { kind: 'mixed', target: null, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
+    })
+    assert(resetMixed.ok === true && resetMixed.value?.op === 'reset',
+      `git/reset mixed failed: ${JSON.stringify(resetMixed)}`)
+    assert(worldStaged().length === 0 && worldStatusPorcelain() === '?? cmp3.txt',
+      `after reset --mixed the staged entry should be untracked in the world: ${JSON.stringify(worldStatusPorcelain())}`)
+    step('reset mixed RPC OK: staged entry returned to the worktree as untracked (world re-read)')
+    rmSync(join(fixtureRepo, 'cmp3.txt'), { force: true })
+
+    // M-4 cherryPick 冲突 ⇒ git/merge-conflict 真宿主形状 + 叠加拒绝 + abort 复原。
+    worldGit('checkout', '-q', '-b', 'verify-cp')
+    writeFileSync(join(fixtureRepo, 'seed.md'), 'cp branch edit\n')
+    worldGit('add', 'seed.md')
+    worldGit('commit', '-q', '-m', 'chore: verify-load cp edit')
+    const cpOid = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'main')
+    writeFileSync(join(fixtureRepo, 'seed.md'), 'main edit\n')
+    worldGit('add', 'seed.md')
+    worldGit('commit', '-q', '-m', 'chore: verify-load main edit')
+    const mainEditOid = worldGit('rev-parse', 'HEAD')
+    const cpConflict = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+      options: { oid: cpOid, acknowledged: true, baseRevision: mainEditOid },
+    })
+    assert(cpConflict.ok === false && cpConflict.error?.code === 'git/merge-conflict',
+      `conflicting cherryPick should be git/merge-conflict: ${JSON.stringify(cpConflict)}`)
+    const worldUnmerged = worldGit('diff', '--name-only', '--diff-filter=U').split('\n').filter((line) => line !== '')
+    assert(cpConflict.error?.details?.op === 'cherry-pick'
+      && Array.isArray(cpConflict.error?.details?.conflicted)
+      && JSON.stringify(cpConflict.error.details.conflicted) === JSON.stringify(worldUnmerged)
+      && cpConflict.error?.details?.abortable === true,
+    `merge-conflict details should carry op/conflicted(world diff-filter=U)/abortable: ${JSON.stringify(cpConflict.error)}`)
+    assert(pseudoHeadExists('CHERRY_PICK_HEAD') === true && pseudoHeadExists('REVERT_HEAD') === false,
+      'world re-read: CHERRY_PICK_HEAD should exist (and REVERT_HEAD not) after the conflicting pick')
+    assert(worldGit('rev-parse', 'HEAD') === mainEditOid, 'HEAD should not advance on a conflicted pick')
+    step('cherryPick conflict OK: git/merge-conflict real-host shape (conflicted world-matched, abortable)')
+
+    const cpOverlap = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+      options: { oid: cpOid, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
+    })
+    assert(cpOverlap.ok === false && cpOverlap.error?.code === 'git/operation-in-progress'
+      && cpOverlap.error?.details?.op === 'cherry-pick',
+    `overlapping cherryPick during an in-progress pick should be git/operation-in-progress: ${JSON.stringify(cpOverlap)}`)
+    const resetOverlap = await rpcCall(base.origin, apiCookie, 'git/reset', {
+      options: { kind: 'soft', target: null, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
+    })
+    assert(resetOverlap.ok === false && resetOverlap.error?.code === 'git/operation-in-progress',
+      `reset during an in-progress pick should be git/operation-in-progress: ${JSON.stringify(resetOverlap)}`)
+    step('operation-in-progress OK: overlapping cherryPick and reset both rejected (CHERRY_PICK_HEAD present)')
+
+    const abort = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    assert(abort.ok === true && abort.value?.aborted === 'cherry-pick',
+      `git/abortOperation failed: ${JSON.stringify(abort)}`)
+    assert(worldGit('rev-parse', 'HEAD') === mainEditOid && !pseudoHeadExists('CHERRY_PICK_HEAD')
+      && worldStatusPorcelain() === ''
+      && readFileSync(join(fixtureRepo, 'seed.md'), 'utf8') === 'main edit\n',
+    'world re-read after abort: HEAD restored, intermediate state cleared, worktree clean, seed.md back to the main edit')
+    step('abortOperation OK: world restored to the pre-pick HEAD (CHERRY_PICK_HEAD cleared)')
+
+    const abortAgain = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    assert(abortAgain.ok === true && abortAgain.value?.aborted === null,
+      `idempotent abortOperation should return aborted=null: ${JSON.stringify(abortAgain)}`)
+    step('abortOperation idempotent OK: aborted=null with no intermediate state')
+
+    // M-5 cherryPick 成功路径（非冲突提交摘到 main）：world HEAD 前进 + 文件落盘。
+    worldGit('checkout', '-q', 'verify-cp')
+    writeFileSync(join(fixtureRepo, 'cpfile.txt'), 'dsh verify-load cp file\n')
+    worldGit('add', 'cpfile.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load cp file')
+    const cpFileOid = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'main')
+    const cpOk = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+      options: { oid: cpFileOid, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
+    })
+    assert(cpOk.ok === true && cpOk.value?.op === 'cherry-pick' && cpOk.value?.oldOid === mainEditOid
+      && cpOk.value?.newOid === worldGit('rev-parse', 'HEAD'),
+    `git/cherryPick success path failed: ${JSON.stringify(cpOk)}`)
+    assert(existsSync(join(fixtureRepo, 'cpfile.txt')) && worldStatusPorcelain() === '',
+      'world re-read after the pick: cpfile.txt present and worktree clean')
+    const pickedOid = worldGit('rev-parse', 'HEAD')
+    step('cherryPick success RPC OK: HEAD advanced, cpfile.txt landed (world re-read)')
+
+    // M-6 revert：逆向摘到的提交（文件消失，world HEAD 前进）；空 revert ⇒ git-error op revert。
+    const revert = await rpcCall(base.origin, apiCookie, 'git/revert', {
+      options: { oid: pickedOid, acknowledged: true, baseRevision: pickedOid },
+    })
+    assert(revert.ok === true && revert.value?.op === 'revert' && revert.value?.oldOid === pickedOid,
+      `git/revert failed: ${JSON.stringify(revert)}`)
+    assert(!existsSync(join(fixtureRepo, 'cpfile.txt')) && worldStatusPorcelain() === ''
+      && worldGit('rev-parse', 'HEAD') === revert.value?.newOid,
+    'world re-read after revert: cpfile.txt gone, worktree clean, HEAD advanced to the revert commit')
+    const revertHead = worldGit('rev-parse', 'HEAD')
+    const emptyRevert = await rpcCall(base.origin, apiCookie, 'git/revert', {
+      options: { oid: pickedOid, acknowledged: true, baseRevision: revertHead },
+    })
+    assert(emptyRevert.ok === false && emptyRevert.error?.code === 'git/git-error'
+      && emptyRevert.error?.details?.op === 'revert',
+    `an empty revert (already reverted) should be git-error op=revert: ${JSON.stringify(emptyRevert)}`)
+    assert(worldGit('rev-parse', 'HEAD') === revertHead && worldStatusPorcelain() === '' && !pseudoHeadExists('REVERT_HEAD'),
+      'world re-read after the empty revert: HEAD unchanged, no intermediate state left')
+    step('revert RPC OK: picked commit reverted (world re-read) + empty revert ⇒ git-error op=revert')
 
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的

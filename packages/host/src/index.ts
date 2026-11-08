@@ -49,6 +49,15 @@
  * 16→25）+ push 的 force/acknowledged/remote 入参（[清单 27/57]，remote-ops.ts 扩展）
  * + Config autoFetchIntervalMs（[清单 58] 定时 fetch，D6=B 默认 300_000、0=关；
  * Cordis effect 挂 interval，失败仅 warn 不投 UI）。
+ * v2 批次二（2026-11-08，docs/v2-implementation-plan.md §4）接线：BlameEngine
+ * （blame.ts，[清单 34] blame --porcelain + D3=B 的 -L 区间分片与单次 50_000 行
+ * 硬顶/outputMaxBytes 互相校验）+ TimeTravelEngine（time-travel.ts，[清单 37]
+ * cherry-pick/revert/reset/abortOperation，write runner 档 + 三重守卫 + 中间态
+ * 探测）+ GraphEngine 扩 log 过滤参数（[清单 35/60]）与 compareBranches（[清单 36]，
+ * revListCounts 提共享 rev-count.ts）+ `@Remote blame()/compareBranches()/cherryPick()/
+ * revert()/reset()/abortOperation()`（六方法，REMOTE_METHODS 25→31）+ 域码四码
+ * （blame-oversized/merge-conflict/unknown-revision/operation-in-progress）+
+ * bad-request reason += 'follow-without-path'。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -66,6 +75,8 @@ import { RemoteOpsEngine } from './remote-ops.ts'
 import { MessageGenEngine, DEFAULT_LLM_MAX_INPUT_BYTES } from './message-gen.ts'
 import type { GitLlmFace, GitRouteEventHost } from './message-gen.ts'
 import { GraphEngine, DEFAULT_LOG_DEFAULT_LIMIT, DEFAULT_LOG_MAX_LIMIT } from './graph.ts'
+import { BlameEngine } from './blame.ts'
+import { TimeTravelEngine } from './time-travel.ts'
 import { RefsAdminEngine } from './refs-admin.ts'
 import { StatusEngine, STATUS_CACHE_TTL_MS } from './status.ts'
 import { StatusWatcher, DEFAULT_DEBOUNCE_MS, DEFAULT_POLL_INTERVAL_MS } from './watcher.ts'
@@ -73,12 +84,13 @@ import type { GitFsWatchFace } from './watcher.ts'
 import { WorkspaceResolver } from './workspace.ts'
 import type { GitSessionEventHost, GitWorkspaceResolution } from './workspace.ts'
 import type {
-  BranchCreateOptions, BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult,
-  CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope, DiscardOptions, DiscardResult,
+  AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions, BranchCreateResult,
+  BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
+  CommitDetail, CommitOptions, CommitResult, CompareOptions, DiffResult, DiffScope, DiscardOptions, DiscardResult,
   FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult,
   GitStatusFrame, GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
-  RemoteListResult, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
-  UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
+  RemoteListResult, ResetOptions, RevertOptions, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  TimeTravelResult, UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -168,7 +180,7 @@ export interface Config {
 }
 
 /** `ping`/`identity`/`status`/`diff`/`followStatus`/写操作之外的可读常量：本服务当前端点清单（诊断用）。 */
-export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove'] as const
+export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation'] as const
 
 /**
  * Git 插件 host 服务。构造即注册（`ctx.reflect.provide`），
@@ -205,6 +217,8 @@ export class GitService extends TypertRemoteService {
   private readonly commitEngine: CommitEngine
   private readonly remoteOps: RemoteOpsEngine
   private readonly refsAdmin: RefsAdminEngine
+  private readonly blameEngine: BlameEngine
+  private readonly timeTravel: TimeTravelEngine
   private readonly messageGen: MessageGenEngine
   private readonly graph: GraphEngine
   private readonly statusWatcher: StatusWatcher
@@ -245,6 +259,15 @@ export class GitService extends TypertRemoteService {
     // 不相关但 WRITE_PREFIX 前缀集一致），查询/预检/回读走只读实例 + fresh 扫描（脏区
     // 守卫）+ workspace 探测（repoRoot 发现，graph.ts 同款）。
     this.refsAdmin = new RefsAdminEngine(this.runners.write, this.runners.readonly, this.statusEngine, this.workspace)
+    // blame 引擎（v2 批次二 [清单 34]）：只读实例 + workspace 探测 + outputMaxBytes
+    // 互相校验（单次 50_000 行硬顶 = min(50_000, floor(outputMaxBytes/128))）。
+    this.blameEngine = new BlameEngine(this.runners.readonly, this.workspace, {
+      outputMaxBytes: resolved.outputMaxBytes,
+    })
+    // 时间旅行引擎（v2 批次二 [清单 37]）：执行走 write 实例（fastTimeoutMs——§4.5
+    // 定死「写 runner 档」，commitTimeoutMs 只属 commit runner），预检/回读走只读
+    // 实例，守卫走 fresh 扫描（acknowledged/baseRevision/中间态/no-branch）。
+    this.timeTravel = new TimeTravelEngine(this.runners.write, this.runners.readonly, this.statusEngine)
     this.logger = (ctx as unknown as { logger: GitLoggerFace }).logger
     // AI 提交信息引擎（spec §1.7 + M7 任务口径）：只读实例 + DiffEngine staged 路 +
     // 宿主 ctx.llm 结构切片（缺席不阻断激活——调用时落 git/llm-failed call）；
@@ -877,6 +900,160 @@ export class GitService extends TypertRemoteService {
       return result
     } catch (cause) {
       logFailure(this.logger, 'worktreeRemove', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  // ── v2 批次二：历史面（[清单 34/35/36/37/60]；引擎半 = blame.ts / time-travel.ts / graph.ts） ──
+
+  /**
+   * blame 逐行（[清单 34]；权限 A，只读）：`git blame --porcelain [-L <s>,<e>]
+   * [<ref>] -- <path>` 解析为 ranges（同 oid 连续行合并）+ commits。D3=B 分片纪律：
+   * 单次 50_000 行硬顶（与 outputMaxBytes 互相校验）——全区超限 ⇒ git/blame-oversized
+   * （details.lineCount 引导 client 转 -L 区间分片）；区间超限 ⇒ 同钳（end 截短 +
+   * truncated=true）。ref 缺省 = 工作区（未提交行以全零 oid 如实过线）。
+   * @throws git/bad-request 'invalid-options'、git/blame-oversized、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async blame(options: BlameOptions, signal?: AbortSignal): Promise<BlameResult> {
+    const startedAt = Date.now()
+    const result = await this.blameEngine.blame(options, signal)
+    logRead(this.logger, 'blame', {
+      path: options.path,
+      ref: result.ref ?? '(worktree)',
+      rangeCount: result.ranges.length,
+      lineCount: result.lineCount,
+      truncated: result.truncated,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * 分支对比（[清单 36]；权限 A，只读）：revListCounts（rev-count.ts 提共享）
+   * 双向计数 + `git log --topo-order` 两列 + merge-base；计数与列表长度互检。
+   * ahead = compare 独有、behind = base 独有。
+   * @throws git/bad-request 'invalid-options'、git/unknown-revision、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async compareBranches(options: CompareOptions, signal?: AbortSignal): Promise<BranchCompareResult> {
+    const startedAt = Date.now()
+    const result = await this.graph.compareBranches(options, signal)
+    logRead(this.logger, 'compareBranches', {
+      base: result.base,
+      compare: result.compare,
+      aheadCount: result.aheadCount,
+      behindCount: result.behindCount,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * cherry-pick（[清单 37]；权限 C）：discard 三重守卫同款（acknowledged +
+   * baseRevision 乐观并发 + fresh 扫描）+ 中间态探测（git/operation-in-progress）+
+   * 修订预检（git/unknown-revision）→ `git cherry-pick <oid>`。冲突 ⇒
+   * git/merge-conflict（仓库留中间态，错误面板给「放弃操作」调 abortOperation——
+   * 完整解决 UI 是 v3 [13]）。
+   * @throws git/bad-request、git/operation-in-progress、git/no-branch、
+   *   git/unknown-revision、git/merge-conflict、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async cherryPick(options: CherryPickOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.timeTravel.cherryPick(options, signal)
+      logWrite(this.logger, 'cherryPick', {
+        oid: options.oid.slice(0, 12),
+        oldOid: result.oldOid.slice(0, 12),
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'cherryPick', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * revert（[清单 37]；权限 C）：守卫链同 cherryPick → `git revert --no-edit <oid>`
+   * （--no-edit 防编辑器挂起）。空 revert ⇒ git/git-error（op 'revert'）；冲突 ⇒
+   * git/merge-conflict（op 'revert'）。
+   * @throws 同 cherryPick。
+   */
+  @Remote
+  async revert(options: RevertOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.timeTravel.revert(options, signal)
+      logWrite(this.logger, 'revert', {
+        oid: options.oid.slice(0, 12),
+        oldOid: result.oldOid.slice(0, 12),
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'revert', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * reset（[清单 37]；权限 C）：soft/mixed/hard 三档；target null = HEAD（unstage
+   * 场景用 mixed）。守卫链同 cherryPick；脏区不拦（hard 的语义即清理，§4.10；UI 侧
+   * hard 另走 danger 勾选闸）。
+   * @throws git/bad-request、git/operation-in-progress、git/no-branch、
+   *   git/unknown-revision、git/no-repository、git/session-workspace-unresolved、
+   *   git/timeout、git/git-error。
+   */
+  @Remote
+  async reset(options: ResetOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.timeTravel.reset(options, signal)
+      logWrite(this.logger, 'reset', {
+        kind: options.kind,
+        target: options.target ?? '(HEAD)',
+        oldOid: result.oldOid.slice(0, 12),
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'reset', errorCodeOf(cause))
+      throw cause
+    }
+  }
+
+  /**
+   * 放弃中间态操作（[清单 37]；权限 B，幂等安全）：探测 CHERRY_PICK_HEAD /
+   * REVERT_HEAD → `git cherry-pick --abort` / `git revert --abort`；无中间态 ⇒
+   * 空成功（{ aborted: null }，零命令）。无 acknowledged 闸——abort 是治愈路径。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error。
+   */
+  @Remote
+  async abortOperation(signal?: AbortSignal): Promise<AbortOperationResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.timeTravel.abortOperation(signal)
+      logWrite(this.logger, 'abortOperation', {
+        aborted: result.aborted ?? '(none)',
+        durationMs: Date.now() - startedAt,
+      })
+      // abort 只在清掉中间态时改仓库状态——null 短路也走 afterWrite（幂等失效无害）。
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      logFailure(this.logger, 'abortOperation', errorCodeOf(cause))
       throw cause
     }
   }

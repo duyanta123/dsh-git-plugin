@@ -44,14 +44,28 @@
  * :2487/:1822）不移植（前者在 client store 落地，后者随 ZCode over-fetch 语义达成）。
  * opencode `plugin/vcs/git.ts:260` 的 `symbolic-ref --quiet --short HEAD`（MIT）为
  * head 解析语义来源（C 级）。
+ *
+ * v2 批次二扩展（2026-11-08，docs/v2-implementation-plan.md §4.5）：
+ *   - `log(options)` 接受过滤参数（[清单 35/60]）：`--grep=<q> -F`（固定串）/
+ *     `--author=<a>`（正则语义）/ `--follow`（仅单 path 合法——违反 ⇒ bad-request
+ *     'follow-without-path' 零命令）/ `-- <path>` / `<ref>` 起点（不可解析 ⇒
+ *     unknown-revision 预检）。LOG_PRETTY_FORMAT 与钳制零改动复用；本机实测
+ *     `--follow` 与 `--topo-order` 兼容（git 2.55.0.windows.2 exit 0）。
+ *   - `compareBranches(options)`（[清单 36]）：revListCounts（rev-count.ts 提共享）
+ *     双向计数 + log 两列（base..compare = ahead / compare..base = behind）+
+ *     merge-base；计数与列表长度互检。
  */
 
 import { resolve } from 'node:path'
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
+import { revListCounts } from './rev-count.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { DiffEngine } from './diff.ts'
 import type { WorkspaceResolver } from './workspace.ts'
-import type { CommitDetail, CommitInfo, LogOptions, LogPage, RefInfo, RefType, RefsSnapshot, ShowOptions } from './types.ts'
+import type {
+  BranchCompareResult, CommitDetail, CommitInfo, CompareOptions, LogOptions, LogPage,
+  RefInfo, RefType, RefsSnapshot, ShowOptions,
+} from './types.ts'
 
 /** spec §1.0.2 默认每页条数（logDefaultLimit；client 可传更小/更大的有限值，钳制见 normalizeLogLimit）。 */
 export const DEFAULT_LOG_DEFAULT_LIMIT = 500
@@ -212,17 +226,48 @@ export class GraphEngine {
   /**
    * 提交分页（spec §1.8 log [清单 31]）。取 limit+1 条判 hasMore（A 级 ZCode
    * over-fetch 语义）后截回 limit；unborn HEAD ⇒ 空页（[清单 64]，不抛错）。
+   *
+   * v2 批次二过滤参数扩展（docs/v2-implementation-plan.md §4.5，[清单 35/60]）：
+   * `--grep=<query> -F`（固定串）/ `--author=<author>`（正则语义）/ `--follow`（仅
+   * 单 path 合法，违反 ⇒ bad-request 'follow-without-path' 零命令）/ `-- <path>` /
+   * `<ref>` 起点。`LOG_PRETTY_FORMAT` 与钳制零改动复用；`skip`+过滤组合的分页语义
+   * 与 v1 相同（--skip 由 git 在过滤结果上滑动，over-fetch limit+1 不变）。
    * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/bad-request（'follow-without-path'）、git/unknown-revision（ref 不可解析）、
    *   git/git-error（记录解析契约破坏 / git 失败兜底）。
    */
   async log(options: LogOptions, signal?: AbortSignal): Promise<LogPage> {
     const limit = normalizeLogLimit(options.limit, this.logDefaultLimit, this.logMaxLimit)
     const skip = normalizeLogSkip(options.skip)
     const repoRoot = await this.resolveRepoRoot('log', signal)
-    const result = await this.git.run(
-      ['log', '--topo-order', `--pretty=format:${LOG_PRETTY_FORMAT}`, '-n', String(limit + 1), '--skip', String(skip)],
-      { cwd: repoRoot, op: 'log', signal: signal ?? neverAborted() },
-    )
+    // 过滤参数组装（§4.5）：空串/null 一律按缺省（不进命令）。
+    const path = typeof options.path === 'string' && options.path !== '' ? options.path : null
+    const ref = typeof options.ref === 'string' && options.ref !== '' ? options.ref : null
+    if (options.follow === true && path === null) {
+      // 守卫零命令（--follow 无单 path 是 git 自身也会拒绝的用法，但这里前置拒绝
+      // 才能给出可读域码——reason 'follow-without-path'）。
+      throw gitError('git/bad-request', 'git log: follow=true requires a single path (path is missing)', {
+        reason: 'follow-without-path', paths: [], expected: null, actual: null,
+      })
+    }
+    const args = ['log', '--topo-order', `--pretty=format:${LOG_PRETTY_FORMAT}`, '-n', String(limit + 1), '--skip', String(skip)]
+    if (typeof options.query === 'string' && options.query !== '') args.push(`--grep=${options.query}`, '-F')
+    if (typeof options.author === 'string' && options.author !== '') args.push(`--author=${options.author}`)
+    if (options.follow === true) args.push('--follow')
+    if (ref !== null) {
+      // 起点 revision 预检（exit 1 = 不可解析 ⇒ unknown-revision，details 带原词）。
+      const probed = await this.git.run(['rev-parse', '--verify', '--quiet', ref], {
+        cwd: repoRoot, op: 'log(rev-parse --verify ref)', signal: signal ?? neverAborted(),
+      })
+      if (probed.exitCode !== 0) {
+        throw gitError('git/unknown-revision', `git log: revision '${ref}' could not be resolved`, {
+          op: 'log', revision: ref,
+        })
+      }
+      args.push(ref)
+    }
+    if (path !== null) args.push('--', path)
+    const result = await this.git.run(args, { cwd: repoRoot, op: 'log', signal: signal ?? neverAborted() })
     if (result.exitCode === 128 && UNBORN_STDERR_PATTERN.test(result.stderr)) {
       return { commits: [], hasMore: false, skipUsed: skip, limitUsed: limit }
     }
@@ -318,6 +363,80 @@ export class GraphEngine {
   }
 
   /**
+   * 分支对比（v2 批次二 [清单 36]，docs/v2-implementation-plan.md §4.3）：
+   * revListCounts（rev-count.ts 提共享，`base...compare` 双向计数）+ `git log
+   * --topo-order` 两列（base..compare = ahead / compare..base = behind，
+   * LOG_PRETTY_FORMAT 复用）+ merge-base。计数与列表长度互检（rev-list 与 log
+   * 的语义应恒等——不一致 = 契约破坏要响）。
+   * @throws git/bad-request（'invalid-options'）、git/unknown-revision（base/compare
+   *   不可解析）、git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（rev-list 失败 / 计数列表互检不一致 / merge-base 失败兜底）。
+   */
+  async compareBranches(options: CompareOptions, signal?: AbortSignal): Promise<BranchCompareResult> {
+    const base = requireRevision(options.base, 'compareBranches', 'base')
+    const compare = requireRevision(options.compare, 'compareBranches', 'compare')
+    const repoRoot = await this.resolveRepoRoot('compareBranches', signal)
+    const active = signal ?? neverAborted()
+    await this.requireRevisionResolvable(repoRoot, 'compareBranches', base, active)
+    await this.requireRevisionResolvable(repoRoot, 'compareBranches', compare, active)
+
+    const counts = await revListCounts(this.git, repoRoot, base, compare, 'compareBranches', active)
+    if (counts === null) {
+      // 预检已证两修订可解析，rev-list 失败 = 仓库状态异常（浅克隆截断等），如实兜底。
+      throw gitError('git/git-error', 'git compareBranches: rev-list --left-right --count failed', {
+        op: 'compareBranches(rev-list --left-right --count)', exitCode: null, stderr: '', truncated: false,
+      })
+    }
+    const [ahead, behind] = await Promise.all([
+      this.logRange(repoRoot, `${base}..${compare}`, 'compareBranches(log base..compare)', active),
+      this.logRange(repoRoot, `${compare}..${base}`, 'compareBranches(log compare..base)', active),
+    ])
+    // rev-list 计数与 log 列表长度互检（两者对同一集合的不同命令面，应恒等）。
+    if (ahead.length !== counts.ahead || behind.length !== counts.behind) {
+      throw gitError('git/git-error', `git compareBranches: rev-list counts (${String(counts.ahead)}/${String(counts.behind)}) disagree with log lists (${String(ahead.length)}/${String(behind.length)})`, {
+        op: 'compareBranches(count cross-check)', exitCode: null, stderr: '', truncated: false,
+      })
+    }
+    const mergeBase = await this.mergeBase(repoRoot, base, compare, active)
+    return {
+      base, compare, mergeBase, ahead, behind,
+      aheadCount: ahead.length, behindCount: behind.length,
+    }
+  }
+
+  /** `git log --topo-order --pretty=format:<LOG_PRETTY_FORMAT> <range>`（对比单列）。 */
+  private async logRange(repoRoot: string, range: string, op: string, active: AbortSignal): Promise<CommitInfo[]> {
+    const result = await this.git.run(
+      ['log', '--topo-order', `--pretty=format:${LOG_PRETTY_FORMAT}`, range],
+      { cwd: repoRoot, op, signal: active },
+    )
+    assertGitOk(result, op)
+    return parseLogCommits(result.stdout)
+  }
+
+  /** `git merge-base <base> <compare>`（exit 0 = oid；exit 1 = 不相交 ⇒ null；其余要响）。 */
+  private async mergeBase(repoRoot: string, base: string, compare: string, active: AbortSignal): Promise<string | null> {
+    const result = await this.git.run(['merge-base', base, compare], {
+      cwd: repoRoot, op: 'compareBranches(merge-base)', signal: active,
+    })
+    if (result.exitCode === 0) return result.stdout.trim()
+    if (result.exitCode === 1) return null
+    throw gitRunError('compareBranches(merge-base)', result.exitCode, result.stderr, result.truncated)
+  }
+
+  /** 修订可解析预检（`rev-parse --verify --quiet`；exit 1 ⇒ unknown-revision）。 */
+  private async requireRevisionResolvable(repoRoot: string, op: string, revision: string, active: AbortSignal): Promise<void> {
+    const probed = await this.git.run(['rev-parse', '--verify', '--quiet', revision], {
+      cwd: repoRoot, op: `${op}(rev-parse --verify)`, signal: active,
+    })
+    if (probed.exitCode !== 0) {
+      throw gitError('git/unknown-revision', `git ${op}: revision '${revision}' could not be resolved`, {
+        op, revision,
+      })
+    }
+  }
+
+  /**
    * repo 发现（dsh forge git.ts:99-103 范式，diff.ts/status.ts 同款再应用）：
    * exit 128 + "not a git repository" ⇒ git/no-repository（details.probed = 工作区）。
    */
@@ -340,4 +459,14 @@ export class GraphEngine {
 function neverAborted(): AbortSignal {
   const controller = new AbortController()
   return controller.signal
+}
+
+/** 非空修订守卫（compareBranches 的 base/compare；空 ⇒ bad-request 'invalid-options'）。 */
+function requireRevision(value: string, op: string, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw gitError('git/bad-request', `git ${op}: a non-empty ${field} revision is required`, {
+      reason: 'invalid-options', paths: [], expected: null, actual: null,
+    })
+  }
+  return value
 }

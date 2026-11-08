@@ -87,14 +87,15 @@ export function headerViewModel(state: GitStatusSourceState): HeaderView {
 
 /**
  * C1 菜单条目的纯模型（V2 批次一扩行：打开变更面板 / 提交图 / 提交… / 提交并推送… /
- * 推送 / 拉取 / 获取 / 分支子菜单 / 新建分支… / 打标签… / Worktree… / 删除分支…）。
- * v1 的 `sync` 占位行已拆为 push/pull/fetch 三真行（plan §3.6）——`placeholder` 位随
- * 最后一个占位行消失而移除。
+ * 推送 / 拉取 / 获取 / 分支子菜单 / 新建分支… / 打标签… / Worktree… / 删除分支…；
+ * V2 批次二再扩两行：与当前分支比较…（[36] 对比入口）/ 重置当前分支…（[37] reset
+ * 子菜单））。v1 的 `sync` 占位行已拆为 push/pull/fetch 三真行（plan §3.6）。
  */
 export type HeaderMenuId =
   | 'open-changes' | 'open-graph' | 'commit' | 'commit-push'
   | 'push' | 'pull' | 'fetch'
-  | 'branches' | 'branch-create' | 'tag-create' | 'worktree' | 'branch-delete'
+  | 'branches' | 'branch-compare' | 'branch-reset'
+  | 'branch-create' | 'tag-create' | 'worktree' | 'branch-delete'
 
 export interface HeaderMenuItem {
   id: HeaderMenuId
@@ -118,6 +119,11 @@ export function headerMenuItems(view: HeaderView): ReadonlyArray<HeaderMenuItem 
     // （数据由 admin-face refs()/分支清单装配，见 branchSubmenuEntries /
     // branchDeleteEntries）；branch-create/tag-create/worktree 三行拉起对话框。
     { id: 'branches', labelKey: 'menu.branches' },
+    // V2 批次二扩行（plan §4.6）：branch-compare 行挂「非当前分支」子菜单（[36]
+    // 对比入口）；branch-reset 行挂 reset 目标子菜单（[37]，soft/mixed/hard 在
+    // 选中目标后的对话框内选择——hard 走 danger 勾选闸）。
+    { id: 'branch-compare', labelKey: 'menu.branchCompare' },
+    { id: 'branch-reset', labelKey: 'menu.branchReset' },
     { id: 'branch-create', labelKey: 'menu.branchCreate' },
     { id: 'tag-create', labelKey: 'menu.tagCreate' },
     { id: 'worktree', labelKey: 'menu.worktree' },
@@ -184,6 +190,36 @@ export function branchDeleteEntries(params: {
   return params.branches
     .filter((branch) => branch.shortName !== params.headName)
     .map((branch) => ({ id: `branch-delete:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+}
+
+/**
+ * 「与当前分支比较」子菜单的渲染模型（V2 批次二 [36]；plan §4.6）：compare 半 =
+ * 当前分支，base 半从非当前分支选——当前分支不进清单；无当前分支（detached/unborn）
+ * ⇒ 空清单（整行禁用由装配半承担，compareEntryEnabled 同口径）。
+ */
+export function branchCompareEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+}): HeaderSubmenuEntry[] {
+  if (params.headName === null) return []
+  return params.branches
+    .filter((branch) => branch.shortName !== params.headName)
+    .map((branch) => ({ id: `branch-compare:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+}
+
+/**
+ * reset 目标子菜单的渲染模型（V2 批次二 [37]；plan §4.6）：重置语义 = 当前分支移到
+ * 目标——当前分支不进清单（重置到自己无意义）；detached/unborn（无当前分支）⇒ 空
+ * 清单。soft/mixed/hard 三档在选中目标后的对话框内选择（hard 走 danger 勾选闸）。
+ */
+export function branchResetEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+}): HeaderSubmenuEntry[] {
+  if (params.headName === null) return []
+  return params.branches
+    .filter((branch) => branch.shortName !== params.headName)
+    .map((branch) => ({ id: `branch-reset:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
 }
 
 /**

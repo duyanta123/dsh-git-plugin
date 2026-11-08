@@ -158,6 +158,32 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.worktreeRemove must not be called by the source')
   }
 
+  // V2 批次二历史面 6 方法（blame/compareBranches/cherryPick/revert/reset/
+  // abortOperation）——状态源不消费；断言守卫桩（FakeRpc.diff 同款）。
+  async blame(): Promise<never> {
+    throw new Error('FakeRpc.blame must not be called by the source')
+  }
+
+  async compareBranches(): Promise<never> {
+    throw new Error('FakeRpc.compareBranches must not be called by the source')
+  }
+
+  async cherryPick(): Promise<never> {
+    throw new Error('FakeRpc.cherryPick must not be called by the source')
+  }
+
+  async revert(): Promise<never> {
+    throw new Error('FakeRpc.revert must not be called by the source')
+  }
+
+  async reset(): Promise<never> {
+    throw new Error('FakeRpc.reset must not be called by the source')
+  }
+
+  async abortOperation(): Promise<never> {
+    throw new Error('FakeRpc.abortOperation must not be called by the source')
+  }
+
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
     this.gate = new Promise<void>((resolve) => { this.openGate = resolve })

@@ -34,20 +34,25 @@
  * GitNamespaceFace + GitRpcFace + GIT_NAMESPACE_METHODS + createGitRpcClient 逐方法
  * 包装块（变更链 §1 第 4 步；wire 类型 = v2-implementation-plan §3.2，import 面
  * `dsh-gitkit/types`）。
+ *
+ * **V2 批次二（历史面，2026-11-08）扩展**：host blame/time-travel/graph 扩展的
+ * 6 个新 @Remote 方法（blame/compareBranches/cherryPick/revert/reset/abortOperation）
+ * 同款四处同步（plan §4.2/§4.3；wire 类型 = plan §4.2，import 面 `dsh-gitkit/types`）。
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
 import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  BranchCreateOptions, BranchCreateResult, BranchDeleteOptions, BranchDeleteResult,
-  BranchSwitchResult, CommitDetail, CommitOptions, CommitResult, DiffResult, DiffScope,
+  AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
+  BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
+  CommitDetail, CommitOptions, CommitResult, CompareOptions, DiffResult, DiffScope,
   DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage,
   GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult, GitStatusFrame,
   GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
-  RemoteListResult, ShowOptions, StageResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
-  UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions,
-  WorktreeRemoveResult,
+  RemoteListResult, ResetOptions, RevertOptions, ShowOptions, StageResult, TagCreateOptions,
+  TagCreateResult, TagDeleteResult, TimeTravelResult, UnstageResult, WorktreeAddOptions,
+  WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
 
 /**
@@ -103,6 +108,13 @@ interface GitNamespaceFace {
   log(options: LogOptions, signal?: AbortSignal): Promise<RemoteResult<LogPage>>
   refs(signal?: AbortSignal): Promise<RemoteResult<RefsSnapshot>>
   getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<RemoteResult<CommitDetail>>
+  /** V2 批次二历史面切片（host blame/time-travel/graph 扩展；plan §4.3 的 6 方法签名）。 */
+  blame(options: BlameOptions, signal?: AbortSignal): Promise<RemoteResult<BlameResult>>
+  compareBranches(options: CompareOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCompareResult>>
+  cherryPick(options: CherryPickOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  revert(options: RevertOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  reset(options: ResetOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  abortOperation(signal?: AbortSignal): Promise<RemoteResult<AbortOperationResult>>
   /** V2 批次一管理面切片（host refs-admin 模块；plan §3.3 的 9 方法签名）。 */
   branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCreateResult>>
   branchSwitch(name: string, signal?: AbortSignal): Promise<RemoteResult<BranchSwitchResult>>
@@ -128,6 +140,8 @@ export const GIT_NAMESPACE_METHODS = [
   // V2 批次一管理面（host refs-admin 模块；plan §3.3）。
   'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete',
   'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove',
+  // V2 批次二历史面（host blame/time-travel/graph 扩展；plan §4.3）。
+  'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation',
 ] as const
 
 /** 本模块消费的 RPC 面（spec §3.2 GitRpcClient 全量 = host REMOTE_METHODS 镜像；store/组件按切片消费）。 */
@@ -148,6 +162,13 @@ export interface GitRpcFace {
   log(options: LogOptions, signal?: AbortSignal): Promise<RemoteResult<LogPage>>
   refs(signal?: AbortSignal): Promise<RemoteResult<RefsSnapshot>>
   getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<RemoteResult<CommitDetail>>
+  /** V2 批次二历史面切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  blame(options: BlameOptions, signal?: AbortSignal): Promise<RemoteResult<BlameResult>>
+  compareBranches(options: CompareOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCompareResult>>
+  cherryPick(options: CherryPickOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  revert(options: RevertOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  reset(options: ResetOptions, signal?: AbortSignal): Promise<RemoteResult<TimeTravelResult>>
+  abortOperation(signal?: AbortSignal): Promise<RemoteResult<AbortOperationResult>>
   /** V2 批次一管理面切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
   branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<RemoteResult<BranchCreateResult>>
   branchSwitch(name: string, signal?: AbortSignal): Promise<RemoteResult<BranchSwitchResult>>
@@ -361,6 +382,49 @@ export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>):
     async worktreeRemove(options, signal) {
       try {
         return await (await namespace()).worktreeRemove(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V2 批次二历史面（host blame/time-travel/graph 扩展；plan §4.3）──
+    async blame(options, signal) {
+      try {
+        return await (await namespace()).blame(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async compareBranches(options, signal) {
+      try {
+        return await (await namespace()).compareBranches(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async cherryPick(options, signal) {
+      try {
+        return await (await namespace()).cherryPick(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async revert(options, signal) {
+      try {
+        return await (await namespace()).revert(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async reset(options, signal) {
+      try {
+        return await (await namespace()).reset(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async abortOperation(signal) {
+      try {
+        return await (await namespace()).abortOperation(signal)
       } catch (cause) {
         return unavailableResult(cause)
       }

@@ -48,9 +48,12 @@ import { createCommitDialogFace } from './commit-dialog-face.js'
 import { gitEn, gitZh, NS } from './locales.js'
 import { createGitRpcClient, mountGitRemote } from './remote/mount.js'
 import { createChangesTabStore } from './store/changes-tab-store.js'
+import { createGitBlameStore } from './store/git-blame-store.js'
 import { createGitChangesStore } from './store/git-changes-store.js'
+import { createGitCompareStore } from './store/git-compare-store.js'
 import { createGitGraphStore } from './store/git-graph-store.js'
 import { createGraphTabStore } from './store/graph-tab-store.js'
+import { createGraphIntentStore } from './store/graph-intent-store.js'
 import { createGitStatusSource } from './store/git-status-source.js'
 
 /**
@@ -81,18 +84,28 @@ export function apply(ctx: ClientContext): void {
   const rpc = createGitRpcClient(ctx, mounted)
   const source = createGitStatusSource(rpc)
   const changesStore = createGitChangesStore(rpc, source)
-  // 提交图缓存（F7 模块）：log 窗口 + refs + 详情；失效 = 状态订阅 branch.oid 变化。
+  // 提交图缓存（F7 模块）：log 窗口 + refs + 详情 + 过滤态；失效 = 状态订阅 branch.oid 变化。
   const graphStore = createGitGraphStore(rpc, source)
+  // V2 批次二（plan §4.6）：跨槽位意图通道（header 对比入口 / changes 文件历史 →
+  // 图 tab 模式切换）+ 分支对比面板缓存 + blame 分片缓存——三个 root 作用域 store
+  // （范式 A；无订阅者，无需 disposer；connection/reset 一并清空）。
+  const graphIntent = createGraphIntentStore()
+  const compareStore = createGitCompareStore(rpc, source)
+  const blameStore = createGitBlameStore(rpc)
   // 提交对话框业务面（④-K）：commit/push/AI 生成/身份/HEAD 预取——header 与变更面板
   // 两个拉起方共享同一闭包（apply 顶层单例，无第二份状态）。
   const commitDialogFace = createCommitDialogFace(rpc)
   // 管理面业务面（V2 批次一）：分支/标签/worktree/远端/推送路由——header 按钮与
   // 提交图 tab（tag chip 菜单）共享同一闭包（commitDialogFace 同款单例纪律）。
+  // V2 批次二：时间旅行（cherry-pick/revert/reset）与 abortOperation 同面扩入。
   const adminFace = createGitAdminFace(rpc)
   ctx.on('connection/reset', () => {
     source.reset()
     changesStore.reset()
     graphStore.reset()
+    compareStore.reset()
+    blameStore.reset()
+    graphIntent.consume()
   })
   ctx.effect(() => async () => {
     source.dispose()
@@ -147,6 +160,8 @@ export function apply(ctx: ClientContext): void {
         hooks: {
           gitStatus: source.store,
           gitChanges: changesStore.store,
+          // V2 批次二（[34]）：blame 分片缓存（blame 模式的数据半）。
+          gitBlame: blameStore.store,
         },
         loadDiff: (scope, path) => { void changesStore.loadDiff(scope, path) },
         stage: (paths) => { void changesStore.stage(paths) },
@@ -155,6 +170,13 @@ export function apply(ctx: ClientContext): void {
         refresh: () => { source.refresh() },
         dismissMutationError: () => { changesStore.dismissMutationError() },
         commitDialog: commitDialogFace,
+        // V2 批次二：blame 首载/分片 + 文件历史（[60] 跨 tab 意图 → 图 tab path 模式）。
+        blameEnsure: (path) => { void blameStore.ensure(path) },
+        blameEnsureRange: (path, start, end) => { void blameStore.ensureRange(path, start, end) },
+        openFileHistory: (path) => {
+          graphIntent.request({ kind: 'path', path })
+          ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS)
+        },
       }),
     }, GitChangesTab)
     yield ctx.slots.register({
@@ -162,17 +184,34 @@ export function apply(ctx: ClientContext): void {
       key: 'dsh-plugin.git.graph',
       locale: NS,
       store: createGraphTabStore(),
-      inject: (): GraphInjected => ({
+      // inject 工厂首参 = 框架解析的 sessionId（GitHeaderButton 同款——registry.ts
+      // runInject：session scope 传入 binding.key）：WIP 节点点击（[38]）用它铸造
+      // 会话域变更面板地址。
+      inject: (sessionId: string): GraphInjected => ({
         hooks: {
           gitGraph: graphStore.store,
           gitStatus: source.store,
+          // V2 批次二：跨槽位意图通道 + 分支对比面板缓存。
+          gitIntent: graphIntent.store,
+          gitCompare: compareStore.store,
         },
         loadMore: () => { void graphStore.loadMore() },
         reload: () => { void graphStore.reloadLog() },
         refreshRefs: () => { void graphStore.refreshRefs() },
         showCommit: (oid, path) => { void graphStore.showCommit(oid, path) },
-        // V2 批次一：tag chip 菜单（删 tag / 在该提交打标签）消费的管理面。
+        // V2 批次一：tag chip 菜单（删 tag / 在该提交打标签）消费的管理面；
+        // V2 批次二：时间旅行（cherry-pick/revert/reset）与 abortOperation 同面。
         admin: adminFace,
+        // [38] WIP 节点点击 → 变更面板（会话域地址）。
+        openChanges: () => { ctx.sidebarRight.openResource(gitChangesAddress(sessionId)) },
+        // [35] 顶栏搜索过滤 + [60] path 模式开合（store 半归一化 + 变化清窗重载）。
+        setSearchFilter: (query, author) => { graphStore.setSearchFilter(query, author) },
+        setHistoryPath: (path) => { graphStore.setHistoryPath(path) },
+        // [36] 对比面板命令半 + 意图消费信号。
+        compareOpen: (base) => { void compareStore.open(base) },
+        compareClose: () => { compareStore.close() },
+        compareRetry: () => { void compareStore.retry() },
+        consumeIntent: () => { graphIntent.consume() },
       }),
     }, GitGraphTab)
   }), 'dsh-plugin-git: tab bodies')
@@ -189,6 +228,12 @@ export function apply(ctx: ClientContext): void {
       hooks: { gitStatus: source.store },
       openChangesPanel: () => { ctx.sidebarRight.openResource(gitChangesAddress(sessionId)) },
       openGraphPanel: () => { ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS) },
+      // V2 批次二（[36]）：「与当前分支比较」→ 图 tab 对比面板（跨槽位意图 +
+      // 静态地址打开图 tab——图 tab 消费意图后进入对比模式）。
+      openComparePanel: (base: string) => {
+        graphIntent.request({ kind: 'compare', base })
+        ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS)
+      },
       // ④-K：提交…/提交并推送… 菜单项拉起 GitCommitDialog（portal 浮层，组件内开合）。
       commitDialog: commitDialogFace,
       // V2 批次一：管理面业务面 + R5 manual 刷新（fetch/branchSwitch 成功后的

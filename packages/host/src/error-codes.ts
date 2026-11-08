@@ -28,6 +28,17 @@
  * newBranch 互斥与至少其一契约的守卫面——方案 §3.2 类型注记要求该契约生效，方案未指认
  * 承载码，取 bad-request 最贴近语义，登记为偏差）。
  *
+ * v2 批次二（2026-11-08，docs/v2-implementation-plan.md §4.4）续增四码 + 一处联合扩展：
+ * `git/blame-oversized`（blame 单次 50_000 行硬顶（D3=B），details.lineCount 引导
+ * client 转 `-L` 区间分片）、`git/merge-conflict`（cherry-pick/revert/stash-pop 类
+ * 冲突的结构化报错——details.op 定为 **string** 而非窄联合（方案 §4.4 注：批次三
+ * stash-pop 复用此码时不再改类型），conflicted = `diff --name-only --diff-filter=U`
+ * 回读、abortable = 中间态伪引用在场）、`git/unknown-revision`（compareBranches/log/
+ * 时间旅行的修订解析失败）、`git/operation-in-progress`（时间旅行写前探测
+ * CHERRY_PICK_HEAD/REVERT_HEAD 中间态，拒绝叠操作）；
+ * `git/bad-request` reason 联合 `+= 'follow-without-path'`（方案 §4.2：`--follow`
+ * 仅在 path 为单路径时合法）。
+ *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
  * `declare module '@deepseek-ai/dsh-typert-protocol'` + `interface RemoteErrorDetailsMap`，
@@ -69,9 +80,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
        * 守卫失败原因：v1 三守卫（unacknowledged / stale-base-revision / not-discardable）+
        * v2 批次一 'force-unacknowledged'（force push / `-D` 删分支 / tag `-f` / worktree
        * remove `--force` 共用的「危险动作未确认」闸）+ 'invalid-options'（调用方入参违反
-       * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一）。
+       * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一）+
+       * v2 批次二 'follow-without-path'（log 的 follow=true 而无单 path——§4.2）。
        */
-      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options'
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options' | 'follow-without-path'
       /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
       paths: string[]
       /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
@@ -90,6 +102,20 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/tag-exists': { name: string }
     'git/tag-not-found': { name: string }
     'git/worktree-failed': { path: string; stderr: string }
+    // —— v2 批次二四码（blame/graph/time-travel 消费；docs/v2-implementation-plan.md §4.4）——
+    /** blame 全区超单次行数硬顶（D3=B）：lineCount 引导 client 转 `-L` 区间分片。 */
+    'git/blame-oversized': { path: string; lineCount: number; maxLines: number }
+    /**
+     * cherry-pick/revert（批次三 stash-pop 复用）的冲突结构化报错。op 为 **string**
+     * （方案 §4.4 定死——批次三 stash-pop 冲突复用此码时不再改类型）；conflicted =
+     * `diff --name-only --diff-filter=U` 回读；abortable = 中间态伪引用在场（true 时
+     * 错误面板给「放弃操作」入口调 abortOperation）。
+     */
+    'git/merge-conflict': { op: string; conflicted: string[]; abortable: boolean }
+    /** compareBranches / log(ref) / 时间旅行的修订解析失败（rev-parse --verify 预检）。 */
+    'git/unknown-revision': { op: string; revision: string }
+    /** 时间旅行写前探测到中间态（CHERRY_PICK_HEAD/REVERT_HEAD 在场），拒绝叠操作。 */
+    'git/operation-in-progress': { op: 'cherry-pick' | 'revert' }
   }
 }
 

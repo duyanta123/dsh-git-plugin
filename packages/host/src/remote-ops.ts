@@ -74,6 +74,7 @@
 
 import { assertGitOk, classifyStderr, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
 import type { GitStderrClass } from './error-codes.ts'
+import { revListCounts } from './rev-count.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { GitRunResult } from './git-runner.ts'
 import type { StatusEngine } from './status.ts'
@@ -234,7 +235,7 @@ export class RemoteOpsEngine {
       ? merge.slice('refs/heads/'.length)
       : (explicitRemote !== null ? branch : (upstream.slice(remote.length + 1) || branch))
     if (options.force !== true) {
-      const counts = await this.revListCounts(repoRoot, `${remote}/${remoteBranch}`, 'push', signal)
+      const counts = await revListCounts(this.gitRead, repoRoot, `${remote}/${remoteBranch}`, 'HEAD', 'push', signal)
       if (counts !== null && counts.ahead > 0 && counts.behind > 0) {
         throw gitError('git/diverged', `git push: local and remote have diverged (ahead ${counts.ahead}, behind ${counts.behind})`, {
           branch,
@@ -319,7 +320,7 @@ export class RemoteOpsEngine {
     const upstream = snapshot.branch.upstream as string
 
     // diverged 预检（spec §1.6 同 §1.5-2；分叉 ⇒ git/pull-diverged）。
-    const counts = await this.revListCounts(repoRoot, upstream, 'pull', signal)
+    const counts = await revListCounts(this.gitRead, repoRoot, upstream, 'HEAD', 'pull', signal)
     if (counts !== null && counts.ahead > 0 && counts.behind > 0) {
       throw gitError('git/pull-diverged', `git pull: local and remote have diverged (ahead ${counts.ahead}, behind ${counts.behind})`, {
         branch,
@@ -367,7 +368,7 @@ export class RemoteOpsEngine {
       case 'push-rejected': {
         // 运行期拒绝（normal 态才走到这，rev-list 合法）：pull 的 fetch 已刷新跟踪
         // 引用，重读给真实计数；读不到（再次失败的边缘）回落 git-error。
-        const counts = await this.revListCounts(repoRoot, upstream, 'pull(health-check)', signal)
+        const counts = await revListCounts(this.gitRead, repoRoot, upstream, 'HEAD', 'pull(health-check)', signal)
         if (counts !== null) {
           throw gitError('git/pull-diverged', `git pull: fast-forward refused (ahead ${counts.ahead}, behind ${counts.behind})`, {
             branch, upstream, ahead: counts.ahead, behind: counts.behind,
@@ -430,24 +431,6 @@ export class RemoteOpsEngine {
       throw gitError('git/no-branch', 'git: HEAD is detached (no current branch)', { state: 'detached' })
     }
     return snapshot.branch.name
-  }
-
-  /** diverged 预检的 rev-list 计数（`<upstream>...HEAD` → behind<TAB>ahead，本机实测列序）。 */
-  private async revListCounts(
-    repoRoot: string,
-    upstream: string,
-    op: string,
-    signal?: AbortSignal,
-  ): Promise<{ ahead: number; behind: number } | null> {
-    const result = await this.gitRead.run(['rev-list', '--left-right', '--count', `${upstream}...HEAD`], {
-      cwd: repoRoot, op: `${op}(rev-list --left-right --count)`, signal: active(signal),
-    })
-    if (result.exitCode !== 0) return null
-    const [left, right] = result.stdout.trim().split(/\s+/)
-    const behind = Number(left)
-    const ahead = Number(right)
-    if (!Number.isFinite(behind) || !Number.isFinite(ahead)) return null
-    return { ahead, behind }
   }
 
   /** `branch.<name>.remote`（exit 1 / 空值 ⇒ null，调用方进解析链）；坏命令面 git-error。 */

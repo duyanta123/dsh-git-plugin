@@ -53,11 +53,20 @@ export interface CommitDetailPanelProps {
   onTagDelete(name: string): void
   /** tag chip 菜单：在该提交打标签（tab 侧拉起 GitTagCreateDialog）。 */
   onTagCreate(oid: string): void
+  /**
+   * 提交行菜单（V2 批次二 [37]）：cherry-pick 到当前分支 / revert。**落点注记**：
+   * plan §4.6 的「图 tab 提交行菜单」——log 行是虚拟化 `<button>`（批次一 tag chip
+   * 先例已裁定 button-in-button 非法 DOM，openIssues），菜单挂本面板头部（选中行的
+   * 详情区，TagChip Menu 同款浮层）。两个回调由 tab 半提供（确认框架在 tab 侧）；
+   * 缺席的项不渲染。
+   */
+  onCherryPick?(oid: string): void
+  onRevert?(oid: string): void
 }
 
 /** 提交详情面板（提交图 tab 的选中态下半区）。 */
 export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
-  const { oid, state, view, t, onRetry, onFileClick, onClose, onTagDelete, onTagCreate } = props
+  const { oid, state, view, t, onRetry, onFileClick, onClose, onTagDelete, onTagCreate, onCherryPick, onRevert } = props
   // 详情错误槽的动作面（评审第 1 轮）：面板只服务 retry——仅当错误码的映射动作
   // **全为** retry（现状即 gateway/service-unavailable）时才把 onAction 交给
   // notice，动作行才渲染；携带 set-upstream/fetch/pull 的码（git/no-upstream、
@@ -76,6 +85,17 @@ export function CommitDetailPanel(props: CommitDetailPanelProps): ReactNode {
         <div className='dsh-git-graph-detail__title'>
           <span className='dsh-git-graph-detail__subject' data-git-graph-detail-subject=''>{view.subject}</span>
           <span className='dsh-git-graph-detail__oid' data-git-graph-detail-oid-short=''>{view.shortOid}</span>
+          {/* [37] 提交行菜单（cherry-pick / revert；落点注记见 props 文档）。 */}
+          {(onCherryPick !== undefined || onRevert !== undefined) && (
+            <CommitActionsMenu
+              oid={oid}
+              t={t}
+              // 回调可选属性：条件展开表达「不传」（exactOptionalPropertyTypes 不接受
+              // 显式 undefined——同文件 onAction 既有先例）。
+              {...(onCherryPick !== undefined ? { onCherryPick } : {})}
+              {...(onRevert !== undefined ? { onRevert } : {})}
+            />
+          )}
         </div>
         <p className='dsh-git-graph-detail__meta' data-git-graph-detail-meta=''>
           {view.author}{view.date === '' ? '' : ` · ${view.date}`}
@@ -195,6 +215,51 @@ function DetailFileRow(props: {
         <p className='dsh-git-graph-detail__note'>{t('changes.loadFailed')}</p>
       )}
     </div>
+  )
+}
+
+/**
+ * 提交行菜单（V2 批次二 [37]）：面板头部的动作 Menu（cherry-pick 到当前分支 /
+ * revert——plan §4.6）。TagChip 同款浮层形态；回调缺席的项不渲染（GitGraphTab 在
+ * baseRevision 缺席——detached/unborn——时不给 cherry-pick/revert 回调）。
+ */
+function CommitActionsMenu(props: {
+  oid: string
+  t: CommitDetailPanelProps['t']
+  onCherryPick?(oid: string): void
+  onRevert?(oid: string): void
+}): ReactNode {
+  const { oid, t, onCherryPick, onRevert } = props
+  const [open, setOpen] = useState(false)
+  const items = [
+    ...(onCherryPick !== undefined ? [{ id: 'cherry-pick', label: t('menu.commitCherryPick') }] : []),
+    ...(onRevert !== undefined ? [{ id: 'revert', label: t('menu.commitRevert') }] : []),
+  ]
+  if (items.length === 0) return null
+  return (
+    <Menu
+      open={open}
+      anchor={
+        <button
+          type='button'
+          className='dsh-git-graph-detail__actions'
+          data-git-graph-commit-actions=''
+          aria-haspopup='menu'
+          aria-expanded={open}
+          onClick={() => { setOpen((value) => !value) }}
+        >
+          {'⋯'}
+        </button>
+      }
+      portal
+      items={items}
+      onSelect={(id) => {
+        setOpen(false)
+        if (id === 'cherry-pick') onCherryPick?.(oid)
+        else if (id === 'revert') onRevert?.(oid)
+      }}
+      onClose={() => { setOpen(false) }}
+    />
   )
 }
 

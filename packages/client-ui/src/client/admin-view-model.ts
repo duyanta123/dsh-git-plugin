@@ -11,7 +11,8 @@
  */
 
 import type {
-  BranchCreateOptions, PushOptions, RemoteInfo, TagCreateOptions, WorktreeAddOptions, WorktreeInfo,
+  BranchCreateOptions, CherryPickOptions, PushOptions, RemoteInfo, ResetOptions, RevertOptions,
+  TagCreateOptions, WorktreeAddOptions, WorktreeInfo,
 } from 'dsh-gitkit/types'
 
 // ── 推送对话框（[27][57]）────────────────────────────────────────────────────
@@ -202,4 +203,46 @@ export function worktreeAddDraft(input: {
   const newBranch = input.newBranch.trim()
   if (newBranch === '') return { valid: false, missing: 'branch', options: null }
   return { valid: true, missing: null, options: { path, newBranch } }
+}
+
+// ── 时间旅行（V2 批次二 [37]；plan §4.2/§4.6）────────────────────────────────
+
+/** reset 档位（plan §4.2 ResetOptions.kind）。 */
+export type ResetKind = 'soft' | 'mixed' | 'hard'
+
+/**
+ * reset 确认计划（plan §4.6「reset 子菜单（soft/mixed/hard；hard 走 danger 勾选闸）」
+ * + §4.10「UI 需列出将丢弃的文件计数」的纯决策半）：hard ⇒ severity danger（确认
+ * 勾选闸 confirmButtonEnabled('danger', checked) 承担）；baseRevision = 当前 HEAD oid
+ * （discard 三重守卫同款乐观并发基线——null ⇒ 不可发起）。
+ */
+export function resetPlan(input: {
+  kind: ResetKind
+  target: string
+  baseRevision: string | null
+  acked: boolean
+}): { valid: boolean; severity: 'normal' | 'danger'; options: ResetOptions | null } {
+  const severity = input.kind === 'hard' ? 'danger' : 'normal'
+  if (input.target === '' || input.baseRevision === null) return { valid: false, severity, options: null }
+  if (input.kind === 'hard' && !input.acked) return { valid: false, severity, options: null }
+  return {
+    valid: true,
+    severity,
+    options: { kind: input.kind, target: input.target, acknowledged: true, baseRevision: input.baseRevision },
+  }
+}
+
+/**
+ * cherry-pick / revert 的入参组装（plan §4.2：acknowledged + baseRevision——discard
+ * 三重守卫同款；baseRevision null ⇒ 不可发起，调用方禁用入口）。重载按 kind 收窄
+ * 返回型（调用半 admin.cherryPick/admin.revert 各吃各的入参型）。
+ */
+export function timeTravelOptions(kind: 'cherry-pick', input: { oid: string; baseRevision: string | null }): CherryPickOptions | null
+export function timeTravelOptions(kind: 'revert', input: { oid: string; baseRevision: string | null }): RevertOptions | null
+export function timeTravelOptions(
+  _kind: 'cherry-pick' | 'revert',
+  input: { oid: string; baseRevision: string | null },
+): CherryPickOptions | RevertOptions | null {
+  if (input.oid === '' || input.baseRevision === null) return null
+  return { oid: input.oid, acknowledged: true, baseRevision: input.baseRevision }
 }

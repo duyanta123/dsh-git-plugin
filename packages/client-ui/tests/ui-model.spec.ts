@@ -4,12 +4,15 @@
  * V2 批次一扩面（plan §3.7）：sync 占位消失（推送/拉取/获取三真行）、管理面扩行、
  * 分支子菜单渲染模型（当前分支打勾 / detached 短 oid 信息行）、删除分支清单
  * （当前分支除外）。
+ * V2 批次二扩面（plan §4.7）：菜单两新行（与当前分支比较 / 重置当前分支）+ 两个
+ * 「非当前分支」子菜单的可见性模型（compare / reset——当前分支除外 + detached/unborn
+ * 空清单）。
  */
 
 import { describe, expect, it } from 'vitest'
 import {
-  badgeCount, branchDeleteEntries, branchSubmenuEntries, confirmButtonEnabled, headerMenuItems,
-  headerViewModel,
+  badgeCount, branchCompareEntries, branchDeleteEntries, branchResetEntries, branchSubmenuEntries,
+  confirmButtonEnabled, headerMenuItems, headerViewModel,
 } from '../src/client/ui-model.ts'
 import type { GitStatusSourceState } from '../src/client/store/git-status-source.ts'
 import type { GitStatusSnapshot } from 'dsh-gitkit/types'
@@ -123,13 +126,13 @@ describe('headerViewModel — C1 渲染决策', () => {
 })
 
 describe('headerMenuItems — V2 批次一菜单模型（同步占位转真 + 管理面扩行）', () => {
-  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行全部可点', () => {
+  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行 + 批次二两新行全部可点', () => {
     const view = headerViewModel(mkState({ status: mkSnapshot() }))
     const items = headerMenuItems(view)
     expect(items.map((item) => item.id)).toEqual([
       'open-changes', 'open-graph', 'commit', 'commit-push',
       'push', 'pull', 'fetch',
-      'branches', 'branch-create', 'tag-create', 'worktree', 'branch-delete',
+      'branches', 'branch-compare', 'branch-reset', 'branch-create', 'tag-create', 'worktree', 'branch-delete',
     ])
     expect(items.every((item) => item.enabled)).toBe(true)
     expect(items.map((item) => item.id as string)).not.toContain('sync')
@@ -218,6 +221,36 @@ describe('branchDeleteEntries — 删除分支子菜单（当前分支除外）'
     expect(branchDeleteEntries({ branches: [{ shortName: 'a' }, { shortName: 'b' }], headName: null })
       .map((entry) => entry.id)).toEqual(['branch-delete:a', 'branch-delete:b'])
     expect(branchDeleteEntries({ branches: [{ shortName: 'main' }], headName: 'main' })).toEqual([])
+  })
+})
+
+describe('branchCompareEntries — 「与当前分支比较」子菜单（V2 批次二 [36]）', () => {
+  it('非当前分支逐行（compare 半 = 当前分支，base 从清单选）；id 前缀 branch-compare:', () => {
+    const entries = branchCompareEntries({
+      branches: [{ shortName: 'main' }, { shortName: 'feature/a' }],
+      headName: 'main',
+    })
+    expect(entries.map((entry) => entry.id)).toEqual(['branch-compare:feature/a'])
+    expect(entries.every((entry) => !entry.disabled)).toBe(true)
+  })
+
+  it('detached/unborn（无当前分支）⇒ 空清单（整行禁用由装配半承担——compareEntryEnabled 同口径）', () => {
+    expect(branchCompareEntries({ branches: [{ shortName: 'main' }], headName: null })).toEqual([])
+  })
+})
+
+describe('branchResetEntries — reset 目标子菜单（V2 批次二 [37]）', () => {
+  it('非当前分支逐行（重置到自己无意义——当前分支除外）；id 前缀 branch-reset:', () => {
+    const entries = branchResetEntries({
+      branches: [{ shortName: 'main' }, { shortName: 'dev' }, { shortName: 'feature/a' }],
+      headName: 'dev',
+    })
+    expect(entries.map((entry) => entry.id)).toEqual(['branch-reset:main', 'branch-reset:feature/a'])
+    expect(entries.every((entry) => !entry.disabled)).toBe(true)
+  })
+
+  it('detached/unborn（无当前分支）⇒ 空清单（重置当前分支的语义需要分支在场）', () => {
+    expect(branchResetEntries({ branches: [{ shortName: 'main' }], headName: null })).toEqual([])
   })
 })
 

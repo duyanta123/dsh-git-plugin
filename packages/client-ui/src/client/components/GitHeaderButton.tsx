@@ -33,7 +33,10 @@ import type { RefInfo } from 'dsh-gitkit/types'
 import type { GitAdminFace } from '../admin-face.js'
 import { pushRoute } from '../admin-face.js'
 import type { HeaderMenuId, HeaderSubmenuEntry } from '../ui-model.js'
-import { branchDeleteEntries, branchSubmenuEntries, headerMenuItems, headerViewModel } from '../ui-model.js'
+import {
+  branchCompareEntries, branchDeleteEntries, branchResetEntries, branchSubmenuEntries,
+  headerMenuItems, headerViewModel,
+} from '../ui-model.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import { GitBranchCreateDialog } from './GitBranchCreateDialog.js'
@@ -42,6 +45,7 @@ import type { GitCommitDialogFace } from '../commit-dialog-face.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 import { GitPushDialog } from './GitPushDialog.js'
+import { GitResetDialog } from './GitResetDialog.js'
 import { GitTagCreateDialog } from './GitTagCreateDialog.js'
 import { GitWorktreeDialog } from './GitWorktreeDialog.js'
 
@@ -58,6 +62,12 @@ export interface GitHeaderButtonProps {
   openChangesPanel(): void
   /** 打开提交图 tab（openResource 幂等；静态地址 GIT_GRAPH_ADDRESS——F7 提交图模块）。 */
   openGraphPanel(): void
+  /**
+   * 打开图 tab 的分支对比面板（V2 批次二 [36]；plan §4.6「分支选择器内『与当前分支
+   * 比较』→ 图 tab 内对比面板」）。跨槽位通道：意图投 graph-intent-store + 静态地址
+   * 打开图 tab（apply 半装配）。
+   */
+  openComparePanel(base: string): void
   /** 提交对话框业务面（④-K：commit/push/AI/身份/HEAD 预取——apply 顶层单例闭包）。 */
   commitDialog: GitCommitDialogFace
   /** 管理面业务面（V2 批次一：refs/分支/标签/worktree/推送路由——apply 顶层单例闭包）。 */
@@ -81,7 +91,7 @@ type AdminTaskResult = Promise<GitErrorLike | null>
 type AdminTask = () => AdminTaskResult
 
 export function GitHeaderButton(props: GitHeaderButtonProps) {
-  const { t, useGitStatus, openChangesPanel, openGraphPanel, commitDialog, admin, refresh } = props
+  const { t, useGitStatus, openChangesPanel, openGraphPanel, openComparePanel, commitDialog, admin, refresh } = props
   const state = useGitStatus((s) => s)
   const view = headerViewModel(state)
   const menu = headerMenuItems(view)
@@ -94,6 +104,8 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const [tagCreateIntent, setTagCreateIntent] = useState(false)
   const [worktreeIntent, setWorktreeIntent] = useState(false)
   const [deleteAsk, setDeleteAsk] = useState<string | null>(null)
+  // ── V2 批次二：reset 目标意图（[37]——soft/mixed/hard 与 hard danger 闸在对话框内）──
+  const [resetAsk, setResetAsk] = useState<string | null>(null)
   const [branchList, setBranchList] = useState<readonly RefInfo[]>([])
   const [busy, setBusy] = useState(false)
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
@@ -198,12 +210,24 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
       setDeleteAsk(id.slice('branch-delete:'.length))
       return
     }
+    // V2 批次二（[36]/[37]）：对比目标 / reset 目标两个子菜单行。
+    if (id.startsWith('branch-compare:')) {
+      setOpen(false)
+      openComparePanel(id.slice('branch-compare:'.length))
+      return
+    }
+    if (id.startsWith('branch-reset:')) {
+      setOpen(false)
+      setResetAsk(id.slice('branch-reset:'.length))
+      return
+    }
     runMenuId(id as HeaderMenuId)
   }
 
   const label = t(view.labelKey, view.params)
   // ── 菜单面（原语 Menu）：摘要/冲突 label 行 + 数据行（子菜单挂 branches /
-  // branch-delete 两行；branch-delete 无可删分支时整行禁用）+ 页脚 label 行。
+  // branch-compare / branch-reset / branch-delete 四行；无可选分支时整行禁用）+
+  // 页脚 label 行。
   const switchEntries = branchSubmenuEntries({
     branches: branchList,
     headName,
@@ -211,6 +235,8 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     abbrevOid: branch?.abbrevOid ?? null,
   })
   const deleteEntries = branchDeleteEntries({ branches: branchList, headName })
+  const compareEntries = branchCompareEntries({ branches: branchList, headName })
+  const resetEntries = branchResetEntries({ branches: branchList, headName })
   const menuEntries: MenuEntry[] = [
     {
       type: 'label' as const,
@@ -234,6 +260,12 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
       }
       if (item.id === 'branches' && switchEntries.length > 0) {
         return { ...base, submenu: switchEntries.map((entry) => toSubmenuItem(entry, t)) }
+      }
+      if (item.id === 'branch-compare') {
+        return { ...base, disabled: !item.enabled || compareEntries.length === 0, ...(compareEntries.length > 0 ? { submenu: compareEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
+      }
+      if (item.id === 'branch-reset') {
+        return { ...base, disabled: !item.enabled || resetEntries.length === 0, ...(resetEntries.length > 0 ? { submenu: resetEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
       }
       if (item.id === 'branch-delete') {
         return { ...base, disabled: !item.enabled || deleteEntries.length === 0, ...(deleteEntries.length > 0 ? { submenu: deleteEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
@@ -345,6 +377,19 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
         cancelLabel={t('confirm.cancel')}
         onConfirm={() => { if (deleteAsk !== null) deleteBranch(deleteAsk) }}
         onCancel={() => { setDeleteAsk(null) }}
+      />
+      {/* V2 批次二 [37]：重置当前分支（reset 子菜单选中目标后拉起；soft/mixed/hard
+          三档 + hard 的 danger 勾选闸在对话框内；baseRevision = 当前 HEAD oid，
+          hard 将丢弃的文件计数 = 去重路径角标）。 */}
+      <GitResetDialog
+        open={resetAsk !== null}
+        target={resetAsk}
+        headOid={branch?.oid ?? null}
+        discardCount={view.badge}
+        t={t}
+        face={admin}
+        onDone={() => { refresh() }}
+        onClose={() => { setResetAsk(null) }}
       />
     </div>
   )

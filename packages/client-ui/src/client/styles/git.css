@@ -1345,3 +1345,521 @@
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
+
+/* ══ V2 批次二历史面（图 tab 顶栏搜索/过滤 chip/WIP 节点/对比面板/path 模式、
+ *    blame 视图、reset 对话框、提交行菜单、变更面板 blame 切换条）颜色纪律同全文件：
+ *    只引宿主 --dsw-alias-* token，零色值字面量（tests/css-token-guard.spec 守卫）══ */
+
+/* ── 图 tab 顶栏：搜索框 + 过滤 chip（[35]）── */
+.dsh-git-graph__topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dsh-git-graph__search {
+  min-width: 0;
+  flex: 1 1 120px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 3px 8px;
+}
+
+.dsh-git-graph__search::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.dsh-git-graph__search:focus-visible {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.dsh-git-graph__chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dsh-git-graph__chip {
+  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32ch;
+}
+
+.dsh-git-graph__chip-clear {
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.dsh-git-graph__chip-clear:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── 图 tab 顶栏：单文件历史 path chip + 退出（[60]）── */
+.dsh-git-graph__pathbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dsh-git-graph__path-chip {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 2px 8px;
+}
+
+.dsh-git-graph__path-exit {
+  flex: none;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.dsh-git-graph__path-exit:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── WIP 未提交节点（[38]）：图首页顶部合成行——虚线边框 + 菱形前缀做样式区分 ── */
+.dsh-git-graph__wip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0.5px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.dsh-git-graph__wip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-graph__wip:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.dsh-git-graph__wip-label {
+  flex: none;
+  font-weight: 600;
+}
+
+.dsh-git-graph__wip-label::before {
+  content: '◇ ';
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-graph__wip-counts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── 分支对比面板（[36]）：ahead/behind 两列 ── */
+.dsh-git-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dsh-git-compare__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-git-compare__title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.dsh-git-compare__merge-base {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-compare__close {
+  flex: none;
+  margin-left: auto;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-compare__close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-compare__error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-git-compare__retry {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-compare__retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-compare__status {
+  margin: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-compare__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dsh-git-compare__column {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dsh-git-compare__column-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 6px 2px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-compare__column-count {
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}
+
+.dsh-git-compare__column-base {
+  color: var(--dsw-alias-label-dimmed);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxxs-11-font-size);
+  padding: 0 6px;
+}
+
+.dsh-git-compare__empty {
+  margin: 2px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-compare__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 3px 6px;
+  text-align: left;
+}
+
+.dsh-git-compare__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-compare__row:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.dsh-git-compare__row-oid {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+}
+
+.dsh-git-compare__row-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-compare__row-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* ── blame 视图（[34]）：行号 gutter 注记（折叠渲染——注记只在 run 首行）── */
+.dsh-git-blame {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dsh-git-blame__status {
+  margin: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-blame__hint {
+  margin: 2px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-blame__error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-git-blame__retry {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-blame__retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-blame__list {
+  overflow: auto;
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-blame__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 6px;
+  box-sizing: border-box;
+}
+
+.dsh-git-blame__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-blame__line {
+  flex: none;
+  width: 5ch;
+  text-align: right;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.dsh-git-blame__note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-blame__oid {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.dsh-git-blame__author {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-git-blame__time {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-git-blame__continue {
+  color: var(--dsw-alias-label-dimmed);
+  user-select: none;
+}
+
+/* ── 重置当前分支对话框（[37]）：三档模式 + hard danger 勾选闸 ── */
+.dsh-git-reset-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-reset-dialog__kind-label {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-reset-dialog__modes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-reset-dialog__mode {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.dsh-git-reset-dialog__mode[aria-checked='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-reset-dialog__hard-warning {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-reset-dialog__checkbox {
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+/* danger 确认按钮：GitConfirmDialog 同款 token 覆写（已装 Button 无 danger variant）。 */
+.dsh-git-reset-dialog__confirm[data-git-reset-danger] {
+  --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
+  --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
+}
+
+/* ── 提交行菜单锚（[37]）：详情面板头部的动作按钮（Menu 浮层本体在原语）── */
+.dsh-git-graph-detail__actions {
+  flex: none;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 6px;
+}
+
+.dsh-git-graph-detail__actions:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── 变更面板 diff/blame 切换条（[34]）── */
+.dsh-git-changes__diff-modes {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.dsh-git-changes__diff-mode {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 1px 8px;
+}
+
+.dsh-git-changes__diff-mode[aria-pressed='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
