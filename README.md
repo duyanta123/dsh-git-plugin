@@ -1,11 +1,11 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-发布版本 **v0.1.2**（代码定稿；尚未打 tag/发 npm，随 V2 首版一并发布），由三部分组成（pnpm workspace）：
+发布版本 **v0.2.0**（含 v0.1.2 全部内容，随 V2 首版一次发布；尚未打 tag/发 npm），由三部分组成（pnpm workspace）：
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
-| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：25 个 `@Remote` 方法（v1 十六：`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`；V2 批次一九：`branchCreate`/`branchSwitch`/`branchDelete`/`tagCreate`/`tagDelete`/`remoteList`/`worktreeList`/`worktreeAdd`/`worktreeRemove`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系（spec §①②） |
+| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：44 个 `@Remote` 方法（v1 十六：`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`；V2 四批二十八——批次一九：`branchCreate`/`branchSwitch`/`branchDelete`/`tagCreate`/`tagDelete`/`remoteList`/`worktreeList`/`worktreeAdd`/`worktreeRemove`、批次二六：`blame`/`compareBranches`/`cherryPick`/`revert`/`reset`/`abortOperation`、批次三七：`stagePatch`/`stashPush`/`stashList`/`stashPop`/`stashDrop`/`scanStaged`/`repoDiagnostics`、批次四六：`initRepository`/`submoduleStatus`/`auditLog`/`generatePrDescription`/`createPr`/`prForBranch`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系 37 码（spec §①②） |
 | `packages/client-ui` | `dsh-gitkit-ui` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
 | `git-bundle` | `dsh-gitkit-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
 
@@ -183,7 +183,7 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
 pnpm --dir dsh-git-plugin install         # workspace 安装
 pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 三工程 tsc
 pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + git-bundle 一致性检查
-pnpm --dir dsh-git-plugin test            # vitest run（49 文件；用例数未知，实跑未记总数——解析器快照、真仓库集成、合规守卫）
+pnpm --dir dsh-git-plugin test            # vitest run（57 文件 = 26 host + 29 client + 2 root；820 用例，v0.2.0 终检实测——解析器快照、真仓库集成、合规守卫）
 pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 双包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
 pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 git-bundle 安装 → dump-config 两行 → web → status() ready → HTML 含两包；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
 ```
@@ -244,18 +244,22 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
 - **push 真实凭证/网络失败未自动化**：sync 测试用本地 bare 远端 + stderr 分类器夹具覆盖
   （无凭证管理器，可离线确定）；真实网络路径靠 verify:load 的人工走查。
 
-## 6. 门禁（v0.1.0 首发实测，此后每次发布经 release.yml 同口径复跑）
+## 6. 门禁（v0.2.0 终检实测回填，不预设通过的纪律不变）
 
-结果列为 v0.1.0 首发实测的存档口径——**0.1.2 起一律以实跑回填、不预设通过**；
-release.yml 在每次 `v*` 标签发布前按同口径复跑门禁（typecheck/test/build + verify 安装矩阵 npm 列）。
+下表为 **v0.2.0 发布终检（2026-11-10）实跑回填：全绿**——结果以实跑回填
+（0.1.2 起一律以实跑回填、不预设通过的纪律不变）；release.yml 在每次 `v*` 标签发布前按同口径
+复跑门禁（typecheck/test/build + verify 安装矩阵 npm 列）。`check:locale` 不在 CI 门禁内，
+须本机补跑；verify 矩阵列口径见 §4（dev-tree / npm / 现成可执行三列，退出码 0=pass / 1=fail /
+2=skip，skip 永不记 pass）。
 
 | 门禁 | 命令 | 结果 |
 |---|---|---|
-| typecheck | `pnpm --dir dsh-git-plugin run typecheck` | **exit 0**（2026-11-07 前置修复批实测；v0.1.0 首发 exit 0） |
-| test | `pnpm --dir dsh-git-plugin run test` | **用例全过**（2026-11-07 实测；现树 30 文件 = 13 host + 15 client + 2 root；用例数未知——实跑输出未记总数） |
-| build | `pnpm --dir dsh-git-plugin run build` | **exit 0**（2026-11-07 实测；client bundle 281426 bytes，`wc -c packages/client-ui/lib/client.js`——构建日志曾按字符数误记 256568；host typert/remote 产物 + git-bundle 一致性检查同跑通过） |
-| check:locale | `pnpm --dir dsh-git-plugin run check:locale` | **exit 0**（2026-11-07 实测） |
-| verify:install | `pnpm --dir dsh-git-plugin run verify:install` | **dev-tree 列两相 PASS=true**（working-copy 相 + clean-clone 相，2026-11-07 实测）；npm 列与现成可执行列未跑（如实标注）——两相门禁：working-copy 相（全新 profile 单条安装 → dump-config git/ui-git 两行 → web boot → status() ready → HTML 含两包）+ clean-clone 相（git clone 本仓库 → frozen-lockfile 安装 + build → 同一断言链） |
+| typecheck | `pnpm --dir dsh-git-plugin run typecheck` | **exit 0**（v0.2.0 终检实测回填） |
+| test | `pnpm --dir dsh-git-plugin run test` | **exit 0，820 用例全过**（v0.2.0 终检实测回填；57 文件 = 26 host + 29 client + 2 root） |
+| build | `pnpm --dir dsh-git-plugin run build` | **exit 0**（v0.2.0 终检实测回填） |
+| check:locale | `pnpm --dir dsh-git-plugin run check:locale` | **exit 0**（v0.2.0 终检实测回填） |
+| verify:load | `pnpm --dir dsh-git-plugin run verify:load` | **未回填**（本次终检回填未含本项，结果未提供——不预设通过；真实网络/凭证路径人工走查不进自动门禁） |
+| verify:install | `pnpm --dir dsh-git-plugin run verify:install` | **dev-tree 列两相 PASS**（working-copy 相 + clean-clone 相，v0.2.0 终检实测回填；npm 列与现成可执行列本次回填未含；clean-clone 相为本地发布门禁，CI 设 `DSH_VERIFY_INSTALL_SKIP_CLONE=1` 跳过） |
 
 ## 7. 许可
 

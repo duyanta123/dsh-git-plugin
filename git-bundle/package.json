@@ -1,6 +1,6 @@
 {
   "name": "dsh-gitkit-bundle",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "dsh Git 插件发布薄包（零代码）：单一 file: 安装入口，经 dsh.bundle.patch 一次挂上 dsh-gitkit 与 dsh-gitkit-ui 两层",
   "type": "module",
   "license": "Apache-2.0",

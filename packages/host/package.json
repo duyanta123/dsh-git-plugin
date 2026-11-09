@@ -1,6 +1,6 @@
 {
   "name": "dsh-gitkit",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "dsh Git 插件 host 半（node 侧 RPC 服务：status/diff/stage/commit/push/log/...）；接口权威 = docs/capability-spec.md §①",
   "type": "module",
   "license": "Apache-2.0",

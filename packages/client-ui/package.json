@@ -1,6 +1,6 @@
 {
   "name": "dsh-gitkit-ui",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "dsh Git 插件 client 半（web 面：header 入口 / 变更审查 tab / 提交图 tab）；接口权威 = docs/capability-spec.md §③",
   "type": "module",
   "license": "Apache-2.0",
