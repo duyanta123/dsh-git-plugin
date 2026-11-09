@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Path | npm name | Role |
 |---|---|---|
-| `packages/host` | `dsh-gitkit` | Node-side Cordis plugin. A `TypertRemoteService` exposed on wire namespace `git` with 38 `@Remote` methods. |
+| `packages/host` | `dsh-gitkit` | Node-side Cordis plugin. A `TypertRemoteService` exposed on wire namespace `git` with 44 `@Remote` methods. |
 | `packages/client-ui` | `dsh-gitkit-ui` | Web client bundle: header entry, Changes tab, Commit-graph tab. |
 | `git-bundle` | `dsh-gitkit-bundle` | Zero-code release shim and the single `file:` install entry; pulls both packages into a dsh profile. |
 | `packages/typert-protocol` | `@deepseek-ai/dsh-typert-protocol` | Unmodified vendored npm copy (0.2.2-alpha.2), build-time/type-plane only. |
@@ -25,7 +25,7 @@ Run from the repository root. The README's `pnpm --dir dsh-git-plugin …` form 
 pnpm install                 # workspace install
 pnpm run typecheck           # build:host (typert generation) then tsc for root/host/client
 pnpm run build               # host bundle + typert artifacts + client bundle + git-bundle checks
-pnpm test                    # vitest run (49 spec files; case count: unknown, not captured from a run)
+pnpm test                    # vitest run (57 spec files; case count: unknown, not captured from a run)
 pnpm exec vitest run packages/host/tests/status.spec.ts   # one file
 pnpm exec vitest run -t "substring of test name"          # one test by name
 pnpm run check:locale        # zh/en key+placeholder parity and no bare JSX strings
@@ -93,7 +93,7 @@ The client bundle is not built by tsdown. `scripts/build-client.mjs` uses rolldo
 ## Cross-cutting contracts
 
 - **Wire types** (`packages/host/src/types.ts`): only null/string/boolean/finite number/plain objects/arrays cross the RPC boundary. No `Map`/`Set` in outputs, `Date` only as ISO strings, optional inputs omitted rather than passed as `undefined`. The strict codec drops fields not declared in the type.
-- **Error catalog**: `git/no-repository`, `identity-missing`, `nothing-staged`, `empty-message`, `no-upstream`, `no-remote`, `diverged`, `push-rejected`, `auth-failed`, `pull-diverged`, `timeout`, `git-error`, `llm-route-unresolved`, `llm-failed`, `session-workspace-unresolved`, `no-paths`, `bad-request`, `hook-failed`, `no-branch`, `dirty-worktree`, `choose-remote`, `branch-exists`, `tag-exists`, `branch-not-found`, `tag-not-found`, `branch-not-merged`, `worktree-failed`, `blame-oversized`, `merge-conflict`, `unknown-revision`, `operation-in-progress`, `stage-patch-failed`, `stash-not-found`, `commit-blocked`. Clients switch on `code`, never `instanceof`.
+- **Error catalog**: `git/no-repository`, `identity-missing`, `nothing-staged`, `empty-message`, `no-upstream`, `no-remote`, `diverged`, `push-rejected`, `auth-failed`, `pull-diverged`, `timeout`, `git-error`, `llm-route-unresolved`, `llm-failed`, `session-workspace-unresolved`, `no-paths`, `bad-request`, `hook-failed`, `no-branch`, `dirty-worktree`, `choose-remote`, `branch-exists`, `tag-exists`, `branch-not-found`, `tag-not-found`, `branch-not-merged`, `worktree-failed`, `blame-oversized`, `merge-conflict`, `unknown-revision`, `operation-in-progress`, `stage-patch-failed`, `stash-not-found`, `commit-blocked`, `init-failed`, `pr-tool-missing`, `pr-create-failed`. Clients switch on `code`, never `instanceof`.
 - **Locale**: `packages/client-ui/src/client/locales.ts` must stay import-free (the checker evaluates it directly). `gitZh` is the key authority; every key and `{placeholder}` must exist in both `gitZh` and `gitEn`; JSX may not contain bare user-visible strings. `pnpm run check:locale` plus `packages/client-ui/tests/locales.spec.ts` enforce this.
 - **Manifests**: host `exports` must expose `./typert` and `./remote` with the exact shapes; `files` must include `lib/index.js`, `lib/types.js`, `lib/*.d.ts`, the four typert artifacts, `locale`, `cordis.patch.yml`, and the license trio (the `lib/*.d.ts` glob covers per-module declarations — dropping it produces type-less tarballs). Client `files` is `lib` plus the patch and license trio; `dsh.client.platform` is `web`, `exports["./client"]` must exist, and `dsh.client.inject` must include `dsh-gitkit` plus the client packages/slots it consumes. Each package's `cordis.patch.yml` `id`/`name` must match its identity. `tests/skeleton.spec.ts` asserts all of this.
 - **Typert workspace root**: the generator locates the workspace by finding a directory that contains both `tsconfig.host.json` and `packages/`, then follows `projectReferences`. Do not remove or rename `tsconfig.host.json`, and keep `packages/host` + `packages/typert-protocol` in its references. `pnpm-workspace.yaml` links `@deepseek-ai/dsh-typert-protocol` to `packages/typert-protocol` because the generator only registers packages under the root `packages/`; do not replace that with a registry dependency.
@@ -102,7 +102,7 @@ The client bundle is not built by tsdown. `scripts/build-client.mjs` uses rolldo
 
 ## Tests and verification
 
-- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 49 files total (22 host, 25 client, 2 root compliance guards); the case count is unknown — not captured from a run (earlier docs recorded two disagreeing figures — assert neither). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
+- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 57 files total (26 host, 29 client, 2 root compliance guards); the case count is unknown — not captured from a run (earlier docs recorded two disagreeing figures — assert neither). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
 - Host tests create real temporary git repositories and assert the world by re-reading it (`packages/host/tests/support.ts` provides `scratchRepo`, `git`, a real-spawn `SubprocessFace`, and a chokidar-backed fs face). Client tests use fake RPC faces and view-model assertions.
 - `verify:load` covers the deep path (both packages installed, real host, RPC round-trips for status/commit/graph/AI negative path). `verify:install` is the release gate and runs **two phases**: `working-copy` (fresh `DSH_HOME`/profile → single `file:` git-bundle install → dump-config two id lines → web boot → `git/status` ready → served HTML contains both packages) and `clean-clone` (`git clone` of this repo at committed HEAD → `pnpm install --frozen-lockfile` + `pnpm run build` inside the clone → the same assertion chain; `DSH_VERIFY_INSTALL_SKIP_CLONE=1` skips it, which CI sets explicitly — the clean-clone phase stays a local release-gate concern). Both scripts take their column from `scripts/verify-target.mjs`: default = dev-tree column (CLI source entry from `DSH_TREE`, strict assertions), `DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm column (npm view probe + temp-prefix install, relaxed assertions with WARN), `DSH_BIN=<pkgRoot>/lib/bin.js` = prebuilt-binary column (setting both → exit 1); exit codes 0=pass / 1=fail / 2=skip (npm column: missing npm-cli.js or failed view/install without `DSH_VERIFY_ALLOW_SKIP=1`; with ALLOW the run exits 0 but the RESULT line reads `outcome=SKIPPED-ALLOWED` — a skip is never recorded as a pass). Both create a temporary `DSH_HOME`, kill host process trees, and clean up.
 
@@ -123,13 +123,16 @@ packages/host/src/        index.ts (service, @Remote, Config, REMOTE_METHODS)
                           watcher.ts error-codes.ts types.ts
                           blame.ts rev-count.ts time-travel.ts（v2 批次二）
                           staging-patch.ts stash.ts guard-scan.ts diagnostics.ts（v2 批次三）
-packages/host/tests/      support.ts + 22 specs
+                          admin-repo.ts submodule.ts audit.ts pr.ts（v2 批次四）
+packages/host/tests/      support.ts + 26 specs
 packages/client-ui/src/client/  index.ts (apply), remote/mount.ts, locales.ts, ui-model.ts,
                           admin-face.ts admin-view-model.ts,
                           blame-view.ts graph-compare.ts graph-search.ts wip-node.ts（v2 批次二）,
                           changes-ops-face.ts stash-view-model.ts（v2 批次三）,
+                          init-empty-state.ts pr-face.ts pr-view-model.ts submodule-view-model.ts
+                          commands-face.ts（v2 批次四）,
                           store/*, components/*, graph/*, diff/*, m13/*
-packages/client-ui/tests/ 25 specs
+packages/client-ui/tests/ 29 specs
 scripts/                  build-client.mjs (bundle + git-bundle check) check-locale.mjs
                           verify-load.mjs verify-install.mjs verify-target.mjs verify-release-tarball.mjs
 tests/                    skeleton.spec.ts licenses.spec.ts

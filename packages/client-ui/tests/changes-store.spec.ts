@@ -248,6 +248,33 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.repoDiagnostics must not be called by the changes store')
   }
 
+  // V2 批次四体验集成 6 方法（initRepository/submoduleStatus/auditLog/
+  // generatePrDescription/createPr/prForBranch）——变更面板 store 不消费（init 走
+  // changes-ops-face、pr 走 pr-face，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
+  async initRepository(): Promise<never> {
+    throw new Error('FakeRpc.initRepository must not be called by the changes store')
+  }
+
+  async submoduleStatus(): Promise<never> {
+    throw new Error('FakeRpc.submoduleStatus must not be called by the changes store')
+  }
+
+  async auditLog(): Promise<never> {
+    throw new Error('FakeRpc.auditLog must not be called by the changes store')
+  }
+
+  async generatePrDescription(): Promise<never> {
+    throw new Error('FakeRpc.generatePrDescription must not be called by the changes store')
+  }
+
+  async createPr(): Promise<never> {
+    throw new Error('FakeRpc.createPr must not be called by the changes store')
+  }
+
+  async prForBranch(): Promise<never> {
+    throw new Error('FakeRpc.prForBranch must not be called by the changes store')
+  }
+
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan

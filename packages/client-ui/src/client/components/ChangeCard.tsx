@@ -36,6 +36,13 @@ export interface ChangeCardProps {
    * 不渲染（测试桩/旧装配兼容）。
    */
   onHistory?(): void
+  /**
+   * 子模块详情动作（V2 批次四 [61]；plan §6.6「submodule 徽标 → 点击详情面板显示
+   * submoduleStatus 列表」）。回调由 tab 半提供（GitSubmodulePanel 拉起）；仅
+   * submodule 文件渲染入口（徽标本身在行按钮内，不可嵌交互元素——动作按钮放
+   * 行内动作区，onHistory 同位）。缺席不渲染。
+   */
+  onSubmoduleDetails?(): void
   /** 行级快捷键（④-K ask §②：Space=暂存切换 / Enter=行按钮原生展开 / Delete=丢弃；父级装配语义）。 */
   onKeyDown?(event: ReactKeyboardEvent): void
 }
@@ -57,7 +64,7 @@ function Counts({ row }: { row: ChangeRow }): ReactNode {
  * @param props - 行模型与回调。
  */
 export function ChangeCard(props: ChangeCardProps): ReactNode {
-  const { row, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onHistory, onKeyDown } = props
+  const { row, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onHistory, onSubmoduleDetails, onKeyDown } = props
   const { change } = row
   const renamed = change.origPath !== null
   return (
@@ -126,6 +133,17 @@ export function ChangeCard(props: ChangeCardProps): ReactNode {
               onClick={onHistory}
             >
               {t('changes.fileHistory')}
+            </button>
+          )}
+          {change.submodule && onSubmoduleDetails !== undefined && (
+            <button
+              type='button'
+              className='dsh-git-change-card__action'
+              data-git-change-action='submodule'
+              aria-label={t('submodule.details')}
+              onClick={onSubmoduleDetails}
+            >
+              {t('submodule.details')}
             </button>
           )}
         </span>

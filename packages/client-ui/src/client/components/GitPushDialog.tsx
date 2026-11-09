@@ -10,6 +10,12 @@
  *
  * 浮层：原语 Modal（拉起方在自身组件树内渲染；不注册 root 槽——map §3.1）。
  * 渲染决策收敛在 admin-view-model.pushDialogView（tests/push-dialog.spec 断言）。
+ *
+ * **V2 批次四扩面（plan §6.6）**：[69] 关联展示——分支可用时经 prFace.prLink 查询
+ * 当前分支关联 PR（无关联/失败 ⇒ null，静默不占位），行内 anchor 打开（原语菜单行
+ * 是 button 不可嵌 anchor，对话框内是合法 anchor 面）；推送成功 → 停留成功态
+ * （「推送完成」+ 关联 PR anchor + 「创建 PR…」引导按钮 [46]——onCreatePr 由拉起方
+ * 装配到 GitPrDialog）。prFace/onCreatePr 双可选：缺席时行为与批次一完全一致。
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -21,6 +27,9 @@ import type { GitAdminFace } from '../admin-face.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import { pushDialogView } from '../admin-view-model.js'
 import type { NS } from '../locales.js'
+import type { GitPrFace } from '../pr-face.js'
+import { prLinkView } from '../pr-view-model.js'
+import type { PrLinkView } from '../pr-view-model.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 
@@ -45,11 +54,20 @@ export interface GitPushDialogProps {
   onDone(): void
   /** 关框（Cancel / Esc / 遮罩点击）。 */
   onClose(): void
+  /**
+   * PR 业务面（V2 批次四 [69]；缺席 = 不做关联查询——批次一行为不回归）。
+   */
+  prFace?: GitPrFace
+  /**
+   * 「创建 PR…」引导（V2 批次四 [46]；推送成功态的引导按钮——拉起方装配
+   * GitPrDialog；缺席不渲染引导）。
+   */
+  onCreatePr?(): void
 }
 
 /** 推送对话框（remote picker + force danger 双闸；原语 Modal 浮层）。 */
 export function GitPushDialog(props: GitPushDialogProps): ReactNode {
-  const { open, t, face, branch, onDone, onClose } = props
+  const { open, t, face, branch, onDone, onClose, prFace, onCreatePr } = props
   const [remotes, setRemotes] = useState<readonly RemoteInfo[]>([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null)
@@ -57,6 +75,9 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
   const [dangerAsk, setDangerAsk] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<GitErrorLike | null>(null)
+  // ── V2 批次四：推送成功态 + [69] 关联 PR（prFace 缺席时恒 null——批次一行为）──
+  const [pushed, setPushed] = useState(false)
+  const [link, setLink] = useState<PrLinkView | null>(null)
 
   // 开框重置 + 取远端清单（失败进错误条，picker 空——可取消重开）。
   useEffect(() => {
@@ -68,6 +89,8 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
     setDangerAsk(false)
     setPending(false)
     setError(null)
+    setPushed(false)
+    setLink(null)
     let cancelled = false
     void face.listRemotes().then((result) => {
       if (cancelled) return
@@ -80,6 +103,22 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
     })
     return () => { cancelled = true }
   }, [open, face])
+
+  // [69] 开框即查当前分支关联 PR（静默降级：无关联/失败 ⇒ null 不占位；
+  // 分支不可用/prFace 缺席 ⇒ 不查——批次一行为不回归）。
+  const linkBranchName = branch !== null && !branch.unborn && !branch.detached ? branch.name : null
+  useEffect(() => {
+    if (!open) return
+    if (prFace === undefined || linkBranchName === null) {
+      setLink(null)
+      return
+    }
+    let cancelled = false
+    void prFace.prLink(linkBranchName).then((value) => {
+      if (!cancelled) setLink(prLinkView({ ok: true, value }))
+    })
+    return () => { cancelled = true }
+  }, [open, linkBranchName, prFace])
 
   // 展示层视图（forceAcked 恒 false——force 勾选后的 options 组装只发生在 runPush
   // 的终态重算里；此处 canConfirm 只表达「确认可点」语义，force 时点击转 danger 闸）。
@@ -98,7 +137,14 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
         return
       }
       setPending(false)
-      onDone()
+      // V2 批次四：推送成功停成功态（「推送完成」+ [69] 关联 PR anchor 重查——
+      // upstream 刚建立/更新，此时查 prForBranch 最准）+ 「创建 PR…」引导。
+      setPushed(true)
+      if (prFace !== undefined && linkBranchName !== null) {
+        void prFace.prLink(linkBranchName).then((value) => {
+          setLink(prLinkView({ ok: true, value }))
+        })
+      }
     })
   }
 
@@ -112,6 +158,61 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
   }
 
   if (!open) return null
+
+  if (pushed) {
+    // V2 批次四：推送成功态——「推送完成」+ [69] 关联 PR anchor（无关联不占位）+
+    // 「创建 PR…」引导（[46]；onCreatePr 缺席不渲染）。
+    return (
+      <Modal
+        open={open}
+        onClose={onDone}
+        title={t('push.title')}
+        closeLabel={t('common.close')}
+        footer={(
+          <>
+            <Button
+              variant='outline'
+              className='dsh-git-push-dialog__cancel'
+              onClick={() => { onDone() }}
+            >
+              {t('common.close')}
+            </Button>
+            {onCreatePr !== undefined && (
+              <Button
+                variant='primary'
+                className='dsh-git-push-dialog__create-pr'
+                data-git-push-create-pr=''
+                onClick={() => { onDone(); onCreatePr() }}
+              >
+                {t('menu.prCreate')}
+              </Button>
+            )}
+          </>
+        )}
+      >
+        <div className='dsh-git-push-dialog' data-git-push-dialog='' data-git-push-pushed=''>
+          <p className='dsh-git-push-dialog__done' data-git-push-done=''>{t('push.done')}</p>
+          {link !== null && (
+            <p className='dsh-git-push-dialog__link' data-git-push-link=''>
+              <span className='dsh-git-push-dialog__link-label'>{t('pr.linkLabel')}</span>
+              <a
+                className='dsh-git-push-dialog__link-anchor'
+                data-git-push-link-anchor=''
+                href={link.url}
+                target='_blank'
+                rel='noreferrer'
+              >
+                {link.number !== null ? t('pr.link.badge', { number: link.number }) : link.url}
+              </a>
+              {link.state !== null && (
+                <span className='dsh-git-push-dialog__link-state' data-git-push-link-state=''>{link.state}</span>
+              )}
+            </p>
+          )}
+        </div>
+      </Modal>
+    )
+  }
 
   return (
     <>
@@ -181,6 +282,24 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
           {view.showSetUpstreamNote && (
             <p className='dsh-git-push-dialog__note' data-git-push-upstream-note=''>
               {t('push.setUpstreamMissing')}
+            </p>
+          )}
+          {/* [69] 当前分支已关联的 PR（无关联/查询失败 ⇒ null 不占位——静默降级）。 */}
+          {link !== null && (
+            <p className='dsh-git-push-dialog__link' data-git-push-link=''>
+              <span className='dsh-git-push-dialog__link-label'>{t('pr.linkLabel')}</span>
+              <a
+                className='dsh-git-push-dialog__link-anchor'
+                data-git-push-link-anchor=''
+                href={link.url}
+                target='_blank'
+                rel='noreferrer'
+              >
+                {link.number !== null ? t('pr.link.badge', { number: link.number }) : link.url}
+              </a>
+              {link.state !== null && (
+                <span className='dsh-git-push-dialog__link-state' data-git-push-link-state=''>{link.state}</span>
+              )}
             </p>
           )}
           <Checkbox

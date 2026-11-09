@@ -105,6 +105,26 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     ]) {
       expect(keys.has(key), `缺 ${key}`).toBe(true)
     }
+    // V2 批次四体验集成（plan §6.4/§6.6）：3 新码 error.* 行 + [8] 初始化空态引导
+    // 卡片与菜单行 + [46] PR 对话框键组 + [69] 关联展示 + [61] 子模块详情面板 +
+    // 快捷键页脚（[51] spike 命中——真实键位提示）到齐。
+    for (const key of [
+      'error.init-failed', 'error.pr-tool-missing', 'error.pr-create-failed',
+      'menu.initRepo', 'menu.prCreate',
+      'init.card.title', 'init.card.body', 'init.card.action', 'init.card.running',
+      'pr.title', 'pr.titleLabel', 'pr.bodyLabel', 'pr.baseLabel', 'pr.baseDefault',
+      'pr.generate', 'pr.generating', 'pr.draft', 'pr.create', 'pr.creating',
+      'pr.createConfirmTitle', 'pr.createConfirmMessage',
+      'pr.aiOverwriteTitle', 'pr.aiOverwriteMessage',
+      'pr.success', 'pr.linkLabel', 'pr.link.badge',
+      'submodule.details', 'submodule.loading', 'submodule.empty',
+      'submodule.state.clean', 'submodule.state.dirty', 'submodule.state.uninitialized',
+      'submodule.state.mismatch', 'submodule.state.unknown',
+      'submodule.recordedOid', 'submodule.currentOid', 'submodule.mismatchHint',
+      'shortcut.hint', 'shortcut.noSession', 'push.done',
+    ]) {
+      expect(keys.has(key), `缺 ${key}`).toBe(true)
+    }
   })
 
   it('V2 批次一清理：死键不复存在（P3-4/5 双删 + sync 占位键随转真移除）', () => {

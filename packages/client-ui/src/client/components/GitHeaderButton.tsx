@@ -23,6 +23,15 @@
  *
  * 菜单直跑动作的错误面：admin 面板（按钮下方浮动卡，GitErrorNotice + 关闭）——
  * 菜单已收起，错误不能丢。对话框动作的错误面在各对话框内。
+ *
+ * **V2 批次四（plan §6.6）扩面**：
+ *   - 无仓库态整菜单收敛为单行「初始化 Git 仓库…」（[8] 空态引导的 header 半；
+ *     成功 → refresh()——workspace unresolved → resolved 的 R5 manual 首帧）；
+ *   - 「创建 PR…」行（[46]）→ GitPrDialog（head = 当前分支；分支不可用行禁用）；
+ *   - [69] 分支选择子菜单行尾 PR 关联徽标（prForBranch 逐分支并行查询——无关联/
+ *     失败静默不占位；菜单行是 button 不可嵌 anchor，链接打开面在推送对话框与
+ *     PR 对话框的成功 URL）；
+ *   - GitPushDialog 增 prFace（[69] 关联 anchor）与推送成功态「创建 PR…」引导。
  */
 
 import { useEffect, useState } from 'react'
@@ -32,6 +41,9 @@ import type { SnapshotSelectorHook, TranslateNS } from '@deepseek-ai/dsh-client-
 import type { RefInfo } from 'dsh-gitkit/types'
 import type { GitAdminFace } from '../admin-face.js'
 import { pushRoute } from '../admin-face.js'
+import type { GitChangesOpsFace } from '../changes-ops-face.js'
+import type { GitPrFace } from '../pr-face.js'
+import { prLinkView } from '../pr-view-model.js'
 import type { HeaderMenuId, HeaderSubmenuEntry } from '../ui-model.js'
 import {
   branchCompareEntries, branchDeleteEntries, branchResetEntries, branchSubmenuEntries,
@@ -44,6 +56,7 @@ import { GitCommitDialog } from './GitCommitDialog.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+import { GitPrDialog } from './GitPrDialog.js'
 import { GitPushDialog } from './GitPushDialog.js'
 import { GitResetDialog } from './GitResetDialog.js'
 import { GitTagCreateDialog } from './GitTagCreateDialog.js'
@@ -72,15 +85,25 @@ export interface GitHeaderButtonProps {
   commitDialog: GitCommitDialogFace
   /** 管理面业务面（V2 批次一：refs/分支/标签/worktree/推送路由——apply 顶层单例闭包）。 */
   admin: GitAdminFace
+  /** 变更动作面（V2 批次四 [8]：initRepository 消费半——apply 顶层单例闭包）。 */
+  ops: GitChangesOpsFace
+  /** PR 业务面（V2 批次四 [46][69]：listRefs/generateDescription/createPr/prLink）。 */
+  pr: GitPrFace
   /** R5 manual 状态刷新（fetch / branchSwitch 成功后的 ahead/behind 与图链路刷新）。 */
   refresh(): void
 }
 
-/** HeaderSubmenuEntry → 原语 MenuItem（'✓ ' 前缀 = 当前分支行——子菜单无 selected 面）。 */
+/** HeaderSubmenuEntry → 原语 MenuItem（'✓ ' 前缀 = 当前分支行——子菜单无 selected 面；
+ *  [69] prNumber 在场时行尾追加 PR 关联徽标词条——无关联分支不带后缀，不占位）。 */
 function toSubmenuItem(entry: HeaderSubmenuEntry, t: GitHeaderButtonProps['t']): MenuItem {
+  const base = entry.labelKey !== undefined
+    ? t(entry.labelKey, entry.params)
+    : entry.current ? `✓ ${entry.label}` : entry.label
   return {
     id: entry.id,
-    label: entry.labelKey !== undefined ? t(entry.labelKey, entry.params) : entry.current ? `✓ ${entry.label}` : entry.label,
+    label: entry.prNumber !== undefined && entry.prNumber !== null
+      ? `${base} ${t('pr.link.badge', { number: entry.prNumber })}`
+      : base,
     disabled: entry.disabled,
   }
 }
@@ -91,7 +114,7 @@ type AdminTaskResult = Promise<GitErrorLike | null>
 type AdminTask = () => AdminTaskResult
 
 export function GitHeaderButton(props: GitHeaderButtonProps) {
-  const { t, useGitStatus, openChangesPanel, openGraphPanel, openComparePanel, commitDialog, admin, refresh } = props
+  const { t, useGitStatus, openChangesPanel, openGraphPanel, openComparePanel, commitDialog, admin, ops, pr, refresh } = props
   const state = useGitStatus((s) => s)
   const view = headerViewModel(state)
   const menu = headerMenuItems(view)
@@ -106,6 +129,9 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const [deleteAsk, setDeleteAsk] = useState<string | null>(null)
   // ── V2 批次二：reset 目标意图（[37]——soft/mixed/hard 与 hard danger 闸在对话框内）──
   const [resetAsk, setResetAsk] = useState<string | null>(null)
+  // ── V2 批次四：创建 PR 对话框意图（[46]）+ [69] 分支关联 PR 徽标数据 ──
+  const [prIntent, setPrIntent] = useState(false)
+  const [prNumbers, setPrNumbers] = useState<Readonly<Record<string, number | null>>>({})
   const [branchList, setBranchList] = useState<readonly RefInfo[]>([])
   const [busy, setBusy] = useState(false)
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
@@ -114,16 +140,33 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const headName = branch !== null && !branch.detached && !branch.unborn ? branch.name : null
 
   // 菜单开着即取本地分支清单（子菜单数据源；每次开菜单重取防陈旧）。
+  // V2 批次四（[69]）：逐分支并行查 prForBranch（静默降级——失败/无关联分支
+  // 不进 prNumbers，行尾无徽标；pr 面缺席同样不查——旧装配兼容）。
   useEffect(() => {
     if (!open) return
     let cancelled = false
     void admin.listLocalBranches().then((result) => {
       if (cancelled) return
-      if (result.ok) setBranchList(result.value)
-      else setAdminError(result.error)
+      if (!result.ok) {
+        setAdminError(result.error)
+        return
+      }
+      setBranchList(result.value)
+      const branches = result.value.map((ref) => ref.shortName)
+      Promise.all(branches.map(async (name) => ({ name, link: await pr.prLink(name) })))
+        .then((rows) => {
+          if (cancelled) return
+          const numbers: Record<string, number | null> = {}
+          for (const row of rows) {
+            const link = prLinkView({ ok: true, value: row.link })
+            if (link !== null && link.number !== null) numbers[row.name] = link.number
+          }
+          setPrNumbers(numbers)
+        })
+        .catch(() => { /* 静默降级——[69] 查询失败不占位不报错 */ })
     })
     return () => { cancelled = true }
-  }, [open, admin])
+  }, [open, admin, pr])
 
   /** 菜单直跑动作的错误折叠 + busy 闸（防双击重入）。 */
   const runAdmin = async (task: AdminTask): Promise<void> => {
@@ -182,7 +225,17 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     else if (id === 'commit') setCommitIntent('commit')
     else if (id === 'commit-push') setCommitIntent('commit-push')
     else if (id === 'push') runPush()
-    else if (id === 'pull') {
+    else if (id === 'pr-create') setPrIntent(true)
+    else if (id === 'init-repo') {
+      // [8] 无仓库空态的初始化行（plan §6.6）：成功 → refresh()（workspace
+      // unresolved → resolved，R5 manual 取 init 后首帧）；失败进 admin 错误卡。
+      void runAdmin(async () => {
+        const result = await ops.initRepository()
+        if (!result.ok) return result.error
+        refresh()
+        return null
+      })
+    } else if (id === 'pull') {
       void runAdmin(async () => {
         const result = await admin.pull()
         return result.ok ? null : result.error
@@ -233,6 +286,7 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     headName,
     detached: branch?.detached ?? false,
     abbrevOid: branch?.abbrevOid ?? null,
+    prNumbers,
   })
   const deleteEntries = branchDeleteEntries({ branches: branchList, headName })
   const compareEntries = branchCompareEntries({ branches: branchList, headName })
@@ -260,6 +314,10 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
       }
       if (item.id === 'branches' && switchEntries.length > 0) {
         return { ...base, submenu: switchEntries.map((entry) => toSubmenuItem(entry, t)) }
+      }
+      // V2 批次四（[46]）：创建 PR 行——分支不可用（detached/unborn/快照未就绪）禁用。
+      if (item.id === 'pr-create') {
+        return { ...base, disabled: !item.enabled || headName === null }
       }
       if (item.id === 'branch-compare') {
         return { ...base, disabled: !item.enabled || compareEntries.length === 0, ...(compareEntries.length > 0 ? { submenu: compareEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
@@ -337,8 +395,22 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
           detached: branch.detached,
           unborn: branch.unborn,
         }}
+        // V2 批次四：[69] 关联 PR anchor + 推送成功态「创建 PR…」引导（关推送框
+        // 后开 PR 对话框——head = 当前分支）。
+        prFace={pr}
+        onCreatePr={() => { setPrIntent(true) }}
         onDone={() => { setPushIntent(false) }}
         onClose={() => { setPushIntent(false) }}
+      />
+      {/* V2 批次四（[46]）：创建 PR 对话框（AI 描述 + base picker + draft + danger 闸 +
+          成功 URL）；head = 当前分支短名（分支不可用时入口行已禁用）。 */}
+      <GitPrDialog
+        open={prIntent}
+        t={t}
+        face={pr}
+        head={headName}
+        onDone={() => { setPrIntent(false) }}
+        onClose={() => { setPrIntent(false) }}
       />
       <GitBranchCreateDialog
         open={branchCreateIntent}

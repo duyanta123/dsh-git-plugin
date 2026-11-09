@@ -48,21 +48,34 @@
  * 定型 wire 对齐：`StashPopOptions{index?}`（null/缺省 = 最新一条，plan §5.3
  * 「默认最近一条 / 可指定 index」）、`StashDropOptions{index, acknowledged}`
  * （acknowledged = UI danger 勾选闸的 host 半旗标）。
+ *
+ * **V2 批次四（体验集成与收尾，2026-11-08）扩展**：host admin-repo/submodule/audit/
+ * message-gen/pr 扩展的 6 个新 @Remote 方法（initRepository/submoduleStatus/
+ * auditLog/generatePrDescription/createPr/prForBranch）同款四处同步（plan §6.2/§6.3；
+ * wire 类型 = plan §6.2，import 面 `dsh-gitkit/types`）。D1=A：createPr 的载体 =
+ * host 半 gh CLI（client 只消费确认闸与结果展示）。prForBranch 的返回 =
+ * `PrLinkResult | null`（null = 无关联/查询失败——[69] UI 静默降级，plan §6.2）；
+ * auditLog 为 [66] 的 RPC 查询半（本插件无专属 UI——plan §6.6，client 面只保方法
+ * 对账不消费）。[70]（合并策略约定段）在 host generatePrDescription 的 prompt 组装，
+ * client 无落点。
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
 import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
-  BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
+  AbortOperationResult, AuditLogOptions, AuditLogResult, BlameOptions, BlameResult,
+  BranchCompareResult, BranchCreateOptions, BranchCreateResult, BranchDeleteOptions,
+  BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
   CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, DiffResult, DiffScope,
   DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage,
   GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult, GitStatusFrame,
-  GitStatusSnapshot, LogOptions, LogPage, PullResult, PushOptions, PushResult, RefsSnapshot,
+  GitStatusSnapshot, InitResult, LogOptions, LogPage, PrCreateOptions, PrDescription, PrLinkResult,
+  PrResult, PullResult, PushOptions, PushResult, RefsSnapshot,
   RemoteListResult, RepoDiagnostics, ResetOptions, RevertOptions, ShowOptions, StagePatchOptions,
   StagePatchResult, StageResult, StashDropOptions, StashListResult, StashOpResult,
-  StashPopOptions, StashPushOptions, TagCreateOptions, TagCreateResult, TagDeleteResult,
+  StashPopOptions, StashPushOptions, SubmoduleStatusResult, TagCreateOptions,
+  TagCreateResult, TagDeleteResult,
   TimeTravelResult, UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult,
   WorktreeRemoveOptions, WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
@@ -146,6 +159,14 @@ interface GitNamespaceFace {
   stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
   scanStaged(signal?: AbortSignal): Promise<RemoteResult<CommitScanResult>>
   repoDiagnostics(signal?: AbortSignal): Promise<RemoteResult<RepoDiagnostics>>
+  /** V2 批次四体验集成切片（host admin-repo/submodule/audit/message-gen/pr；plan §6.3 的 6 方法签名）。
+   *  prForBranch 的 ok 值 = `PrLinkResult | null`（null = 无关联/查询失败——[69] 静默降级）。 */
+  initRepository(signal?: AbortSignal): Promise<RemoteResult<InitResult>>
+  submoduleStatus(signal?: AbortSignal): Promise<RemoteResult<SubmoduleStatusResult>>
+  auditLog(options: AuditLogOptions, signal?: AbortSignal): Promise<RemoteResult<AuditLogResult>>
+  generatePrDescription(signal?: AbortSignal): Promise<RemoteResult<PrDescription>>
+  createPr(options: PrCreateOptions, signal?: AbortSignal): Promise<RemoteResult<PrResult>>
+  prForBranch(branch: string, signal?: AbortSignal): Promise<RemoteResult<PrLinkResult | null>>
 }
 
 /**
@@ -165,6 +186,8 @@ export const GIT_NAMESPACE_METHODS = [
   'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation',
   // V2 批次三提交链路与护栏（host staging-patch/stash/guard-scan/diagnostics；plan §5.3）。
   'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics',
+  // V2 批次四体验集成（host admin-repo/submodule/audit/message-gen/pr；plan §6.3）。
+  'initRepository', 'submoduleStatus', 'auditLog', 'generatePrDescription', 'createPr', 'prForBranch',
 ] as const
 
 /** 本模块消费的 RPC 面（spec §3.2 GitRpcClient 全量 = host REMOTE_METHODS 镜像；store/组件按切片消费）。 */
@@ -210,6 +233,13 @@ export interface GitRpcFace {
   stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<RemoteResult<StashOpResult>>
   scanStaged(signal?: AbortSignal): Promise<RemoteResult<CommitScanResult>>
   repoDiagnostics(signal?: AbortSignal): Promise<RemoteResult<RepoDiagnostics>>
+  /** V2 批次四体验集成切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  initRepository(signal?: AbortSignal): Promise<RemoteResult<InitResult>>
+  submoduleStatus(signal?: AbortSignal): Promise<RemoteResult<SubmoduleStatusResult>>
+  auditLog(options: AuditLogOptions, signal?: AbortSignal): Promise<RemoteResult<AuditLogResult>>
+  generatePrDescription(signal?: AbortSignal): Promise<RemoteResult<PrDescription>>
+  createPr(options: PrCreateOptions, signal?: AbortSignal): Promise<RemoteResult<PrResult>>
+  prForBranch(branch: string, signal?: AbortSignal): Promise<RemoteResult<PrLinkResult | null>>
 }
 
 /** 载波层异常的折叠码（spec §1.0.1：服务未就绪 → gateway/service-unavailable → UI 重试）。 */
@@ -506,6 +536,49 @@ export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>):
     async repoDiagnostics(signal) {
       try {
         return await (await namespace()).repoDiagnostics(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V2 批次四体验集成（host admin-repo/submodule/audit/message-gen/pr；plan §6.3）──
+    async initRepository(signal) {
+      try {
+        return await (await namespace()).initRepository(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async submoduleStatus(signal) {
+      try {
+        return await (await namespace()).submoduleStatus(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async auditLog(options, signal) {
+      try {
+        return await (await namespace()).auditLog(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async generatePrDescription(signal) {
+      try {
+        return await (await namespace()).generatePrDescription(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async createPr(options, signal) {
+      try {
+        return await (await namespace()).createPr(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async prForBranch(branch, signal) {
+      try {
+        return await (await namespace()).prForBranch(branch, signal)
       } catch (cause) {
         return unavailableResult(cause)
       }

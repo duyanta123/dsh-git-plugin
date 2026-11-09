@@ -214,6 +214,33 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.repoDiagnostics must not be called by the source')
   }
 
+  // V2 批次四体验集成 6 方法（initRepository/submoduleStatus/auditLog/
+  // generatePrDescription/createPr/prForBranch）——状态源不消费；断言守卫桩
+  // （FakeRpc.status 同款）。
+  async initRepository(): Promise<never> {
+    throw new Error('FakeRpc.initRepository must not be called by the source')
+  }
+
+  async submoduleStatus(): Promise<never> {
+    throw new Error('FakeRpc.submoduleStatus must not be called by the source')
+  }
+
+  async auditLog(): Promise<never> {
+    throw new Error('FakeRpc.auditLog must not be called by the source')
+  }
+
+  async generatePrDescription(): Promise<never> {
+    throw new Error('FakeRpc.generatePrDescription must not be called by the source')
+  }
+
+  async createPr(): Promise<never> {
+    throw new Error('FakeRpc.createPr must not be called by the source')
+  }
+
+  async prForBranch(): Promise<never> {
+    throw new Error('FakeRpc.prForBranch must not be called by the source')
+  }
+
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
     this.gate = new Promise<void>((resolve) => { this.openGate = resolve })
@@ -419,6 +446,51 @@ describe('createGitStatusSource — 错误帧与投影', () => {
       expect(state.streaming).toBe(false)
     })
     expect(rpc.followCalls).toBe(1)
+    source.dispose()
+  })
+})
+
+describe('createGitStatusSource — P3-8 mount 失败投影（V2 批次四；plan §6.6）', () => {
+  it('projectUnavailable：mount reject 折叠为 gateway/service-unavailable 同形 + repo 不可用（不抛不弃）', async () => {
+    const rpc = new FakeRpc()
+    const source = createGitStatusSource(rpc)
+    source.start()
+    await settled()
+    // 先以一帧就绪态打底——mount 失败投影应推翻可用态。
+    rpc.latest().push(statusFrame(mkSnapshot()))
+    await vi.waitFor(() => expect(source.store.getSnapshot().repo.available).toBe(true))
+    source.projectUnavailable(new Error('$mount rejected: boot failed'))
+    const state = source.store.getSnapshot()
+    expect(state.statusError?.code).toBe(GATEWAY_UNAVAILABLE)
+    expect(state.statusError?.message).toContain('$mount rejected')
+    expect(state.repo).toEqual({ available: false, root: null, checking: false })
+    expect(state.streaming).toBe(false)
+    // 投影不清流：后续帧（mount 重试成功后）继续可进——流面恢复语义。
+    // 帧内容需变化（revision 丢帧按内容签名判重——同内容帧被去重丢弃）。
+    rpc.latest().push(statusFrame(mkSnapshot({
+      clean: false,
+      staged: [{ path: 'recovered.ts', origPath: null, kind: 'modified', x: 'M', y: '.', conflicted: false, binary: false, additions: 1, deletions: 0, submodule: false }],
+    })))
+    await vi.waitFor(() => expect(source.store.getSnapshot().repo.available).toBe(true))
+    source.dispose()
+  })
+
+  it('onOpenFailed 钩子：开流失败时通知装配半（mount 重试入口）', async () => {
+    const rpc = new FakeRpc()
+    rpc.failWith = new Error('namespace down')
+    let reported = 0
+    const source = createGitStatusSource(rpc, { onOpenFailed: () => { reported += 1 } })
+    source.start()
+    await vi.waitFor(() => expect(reported).toBe(1))
+    source.dispose()
+  })
+
+  it('不带 hooks 的旧签名照常工作（可选参数兼容）', async () => {
+    const rpc = new FakeRpc()
+    rpc.failWith = new Error('down')
+    const source = createGitStatusSource(rpc)
+    source.start()
+    await vi.waitFor(() => expect(source.store.getSnapshot().streaming).toBe(false))
     source.dispose()
   })
 })

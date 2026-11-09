@@ -18,6 +18,12 @@
  *
  * **不碰 `conversation.session.header.corner`**：那是 AppFrame header 的自留席位
  * （map §3.2），本插件只注册 `conversation.session.header.utilities`。
+ *
+ * **V2 批次四（plan §6.6）inject 扩面**：`sessions`（活跃会话解析——全局快捷键打开
+ * 会话域变更面板）、`shortcuts`（[51] 全局快捷键——spike 结论 (A)）、`commandUi`
+ * （[51] '/' 菜单贡献——spike 结论 (C)）。服务包名同步加进 package.json 的
+ * `dsh.client.inject`（ui-open-in-app 先例）；两个服务的类型面 = commands-face.ts
+ * 的结构化局部声明（零 devDependencies——plan §0.4-5 零新增 client 运行期依赖）。
  */
 
 // 唯一样式导入点（审查报告 §2.2 P2）：side-effect import 经 build-client.mjs 的
@@ -41,6 +47,9 @@ import { GIT_GRAPH_ADDRESS, gitChangesAddress, parseGitChangesAddress } from './
 import { createGitAdminFace } from './admin-face.js'
 import { createChangesOpsFace } from './changes-ops-face.js'
 import type { GitChangesOpsFace } from './changes-ops-face.js'
+// V2 批次四（[51]）：命令面板贡献 + 全局快捷键的装配与结构化服务面（spike 命中分支）。
+import { activeSessionId, gitCommandContributions, gitShortcutCommands } from './commands-face.js'
+import type { GitPaletteContext } from './commands-face.js'
 import type { GraphInjected } from './components/git-graph-tab.js'
 import { GitGraphTab } from './components/git-graph-tab.js'
 import { GitChangesTab } from './components/GitChangesTab.js'
@@ -48,7 +57,8 @@ import type { ChangesInjected } from './components/GitChangesTab.js'
 import { GitHeaderButton } from './components/GitHeaderButton.js'
 import { createCommitDialogFace } from './commit-dialog-face.js'
 import { gitEn, gitZh, NS } from './locales.js'
-import { createGitRpcClient, mountGitRemote } from './remote/mount.js'
+import { createGitPrFace } from './pr-face.js'
+import { createGitRpcClient, mountGitRemote, GATEWAY_UNAVAILABLE } from './remote/mount.js'
 import { createChangesTabStore } from './store/changes-tab-store.js'
 import { createGitBlameStore } from './store/git-blame-store.js'
 import { createGitChangesStore } from './store/git-changes-store.js'
@@ -61,9 +71,11 @@ import { createGitStatusSource } from './store/git-status-source.js'
 /**
  * inject 清单（spec §3.1 的 `['slots','locale','remote','remote.git','sidebarRightTabs',
  * 'sidebarRight']` 去掉 `remote.git`——命名空间由本插件 apply 内 $mount，先声明先死锁；
- * 余项逐一到齐）。规则："may use only the dependencies named by its inject"。
+ * 余项逐一到齐）。**V2 批次四** += `sessions`（活跃会话解析）/ `shortcuts`（全局快捷键）
+ * / `commandUi`（'/' 菜单贡献）——[51] spike 命中分支的三服务。规则：
+ * "may use only the dependencies named by its inject"。
  */
-export const inject = ['slots', 'locale', 'remote', 'sidebarRightTabs', 'sidebarRight'] as const
+export const inject = ['slots', 'locale', 'remote', 'sidebarRightTabs', 'sidebarRight', 'sessions', 'shortcuts', 'commandUi'] as const
 
 /** locale 命名空间（spec §4；词典与 LocaleNamespaceMap 合并在 locales.ts 单点）。 */
 export { NS } from './locales.js'
@@ -84,7 +96,9 @@ export function apply(ctx: ClientContext): void {
   let rpcReady: (() => void) | null = null
   const mounted = new Promise<void>((resolve) => { rpcReady = resolve })
   const rpc = createGitRpcClient(ctx, mounted)
-  const source = createGitStatusSource(rpc)
+  // P3-8（plan §6.6）：mount 失败不再裸 reject——onOpenFailed 钩子触发下方 retryMount
+  // 重走 $mount（状态源开流失败的载波路径与 mount 缺席路径共用一个恢复口）。
+  const source = createGitStatusSource(rpc, { onOpenFailed: () => { void retryMount() } })
   const changesStore = createGitChangesStore(rpc, source)
   // 提交图缓存（F7 模块）：log 窗口 + refs + 详情 + 过滤态；失效 = 状态订阅 branch.oid 变化。
   const graphStore = createGitGraphStore(rpc, source)
@@ -103,7 +117,11 @@ export function apply(ctx: ClientContext): void {
   const adminFace = createGitAdminFace(rpc)
   // 变更面板批次三动作面（plan §5.6）：stagePatch（hunk/行级勾选）/ stash 四动作 /
   // repoDiagnostics（CRLF 提示条）——changes tab inject 工厂消费（无状态直通闭包）。
+  // V2 批次四扩面：initRepository（[8] 空态引导）+ submoduleStatus（[61] 详情面板）。
   const changesOps: GitChangesOpsFace = createChangesOpsFace(rpc)
+  // PR 业务面（V2 批次四 [46][69]）：base refs / AI 描述 / createPr / prLink——
+  // header 与推送对话框两个消费方共享（commitDialogFace 同款单例纪律）。
+  const prFace = createGitPrFace(rpc)
   ctx.on('connection/reset', () => {
     source.reset()
     changesStore.reset()
@@ -119,11 +137,32 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-plugin-git: client data stores')
 
   // ── remote.git 命名空间（④-A 生成产物）挂载；完成后开首代状态流 ──
-  ctx.effect(async () => {
-    const dispose = await mountGitRemote(ctx)
-    rpcReady?.()
-    source.start()
-    return dispose
+  // **P3-8（plan §6.6 + §10）**：v1 的 mount effect 无 catch，$mount reject 直接打断
+  // fiber、UI 不落任何错误面。批次四改为：reject → source.projectUnavailable 投影
+  // （gateway/service-unavailable 同形）+ logger.warn（宿主日志面，非 UI 弹窗），
+  // fiber 存活；重试 = 状态错误条的重试动作（refresh）→ 开流失败 → onOpenFailed →
+  // retryMount 重走 $mount（幂等：已挂载即 no-op）。
+  let mountDispose: (() => Promise<void>) | null = null
+  const retryMount = (): void => {
+    if (mountDispose !== null) return
+    void (async () => {
+      try {
+        mountDispose = await mountGitRemote(ctx)
+        rpcReady?.()
+        source.start()
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        ctx.logger.warn('dsh-plugin-git: remote.git mount failed (%s) — %s', GATEWAY_UNAVAILABLE, message)
+        source.projectUnavailable(cause)
+      }
+    })()
+  }
+  ctx.effect(() => {
+    retryMount()
+    return () => {
+      void mountDispose?.()
+      mountDispose = null
+    }
   }, 'dsh-plugin-git: remote.git mount')
 
   // ── 右栏 tab 定义（两段注册第一段；kind 不同 ⇒ 无冲突——spec §3.1）──
@@ -211,6 +250,8 @@ export function apply(ctx: ClientContext): void {
         admin: adminFace,
         // [38] WIP 节点点击 → 变更面板（会话域地址）。
         openChanges: () => { ctx.sidebarRight.openResource(gitChangesAddress(sessionId)) },
+        // V2 批次四 [8]：图 tab 空态引导卡片的初始化动作（changesOps 单例闭包窄化注入）。
+        initRepository: () => changesOps.initRepository(),
         // [35] 顶栏搜索过滤 + [60] path 模式开合（store 半归一化 + 变化清窗重载）。
         setSearchFilter: (query, author) => { graphStore.setSearchFilter(query, author) },
         setHistoryPath: (path) => { graphStore.setHistoryPath(path) },
@@ -246,7 +287,63 @@ export function apply(ctx: ClientContext): void {
       // V2 批次一：管理面业务面 + R5 manual 刷新（fetch/branchSwitch 成功后的
       // ahead/behind 与图重载链路刷新——v1 的 syncNow 占位行已随批次一拆真移除）。
       admin: adminFace,
+      // V2 批次四：变更动作面（[8] 无仓库态的初始化行）+ PR 业务面（[46] 创建 PR
+      // 对话框 / [69] 分支关联徽标与推送对话框 anchor）——apply 顶层单例闭包。
+      ops: changesOps,
+      pr: prFace,
       refresh: () => { source.refresh() },
     }),
   }, GitHeaderButton))
+
+  // ── V2 批次四（[51]）命令面板命中分支：spike 结论 found=true —— client 半注册
+  // 纯 UI 动作（(C) ctx.commandUi.register——'/' 菜单贡献）+ 全局快捷键（(A)
+  // ctx.shortcuts.register）。真实宿主动作（提交/推送/拉取/获取/stash——spike 建议
+  // ①）归 host 半 ctx.commands.register，本插件 client 半不注册。服务以结构化
+  // 交集面访问（commands-face.ts GitPaletteContext——零 devDependencies 类型面）。
+  // **注册失败降级纪律（批次四评审修复）**：两个 register 在宿主侧都可能 throw
+  // （commandUi 撞名 fail loud——ui-commands service.ts 契约；shortcuts 的保留键/
+  // 浏览器白名单/重叠校验——registry.ts:88-97），throw 从 ctx.effect 同步穿出 =
+  // 插件 apply 失败、全部 UI 挂死。装配半已保证 defaults 逐 profile 过镜像校验
+  // （commands-face.shortcutDefaultIssue），此处再兜一层：单条注册失败 →
+  // logger.warn + 跳过该条（菜单/快捷键是便利入口，不值得赔上整个插件）。
+  const palette = ctx as ClientContext & GitPaletteContext
+  const registerPaletteEntry = (
+    effectName: string,
+    register: () => (() => void) | undefined,
+  ): (() => void) | undefined => {
+    try {
+      return register()
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      ctx.logger.warn('dsh-plugin-git: %s registration failed (degraded without it) — %s', effectName, message)
+      return undefined
+    }
+  }
+  ctx.effect(() => {
+    const disposers = gitCommandContributions({
+      labelOpenChanges: t('menu.openChanges'),
+      labelOpenGraph: t('menu.graph'),
+      openChanges: (sessionId) => { ctx.sidebarRight.openResource(gitChangesAddress(sessionId)) },
+      openGraph: () => { ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS) },
+    }).map((contribution) => registerPaletteEntry(`commandUi:${contribution.name}`, () => palette.commandUi.register(contribution)))
+      .filter((dispose) => dispose !== undefined)
+    // label() 是每次 candidate pass 重读的闭包（ui-commands 契约——locale 变化
+    // 下一开菜单即生效），无需重注册。
+    return () => { for (const dispose of disposers.reverse()) dispose() }
+  }, 'dsh-plugin-git: command palette contributions')
+
+  ctx.effect(() => {
+    const disposers = gitShortcutCommands({
+      labelOpenChanges: t('menu.openChanges'),
+      labelOpenGraph: t('menu.graph'),
+      blockedNoSession: t('shortcut.noSession'),
+      openChanges: (sessionId) => {
+        if (sessionId !== null) ctx.sidebarRight.openResource(gitChangesAddress(sessionId))
+      },
+      openGraph: () => { ctx.sidebarRight.openResource(GIT_GRAPH_ADDRESS) },
+      activeSessionId: () => activeSessionId(palette.sessions.list.getSnapshot().byId),
+    }).map((command) => registerPaletteEntry(`shortcuts:${command.id}`, () => palette.shortcuts.register(command)))
+      .filter((dispose) => dispose !== undefined)
+    return () => { for (const dispose of disposers.reverse()) dispose() }
+  }, 'dsh-plugin-git: global shortcuts')
 }

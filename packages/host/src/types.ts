@@ -791,6 +791,118 @@ export interface AbortOperationResult {
   aborted: 'cherry-pick' | 'revert' | null
 }
 
+// ---------- v2 批次四：体验集成与收尾（[清单 8/46/61/66/69]；docs/v2-implementation-plan.md §6.2） ----------
+
+/** `git.initRepository` 出参（[清单 8] 非 git 目录引导）：branch = init 后 HEAD 符号引用的短名（unborn 分支——`symbolic-ref` 回读，尊重 init.defaultBranch/用户全局配置）。 */
+export interface InitResult {
+  /** init 后回读的仓库根（`rev-parse --show-toplevel`，realpath 规范化）。 */
+  repoRoot: string
+  /** init 后的初始分支短名（unborn HEAD 也有符号引用，回读非 null）。 */
+  branch: string
+}
+
+/**
+ * `git.submoduleStatus` 的单个 submodule 条目（[清单 61] 只列不递归——`git submodule
+ * status` **不带 --recursive**，v1 不展开口径）。state 由 status 前缀映射：
+ * 空格=clean、`-`=uninitialized、`+`=mismatch（检出 commit ≠ index 记录）、
+ * `U`=dirty（submodule 内合并冲突——枚举无 conflict 档，落 dirty；submodule
+ * status 只比较 commit，不探内部工作区脏净）、未知前缀=unknown（前向兼容）。
+ */
+export interface SubmoduleEntry {
+  /** submodule 在 superproject 内的相对路径（git 输出原样）。 */
+  path: string
+  /** 当前检出 commit 的全 oid（默认形态输出=检出侧）；uninitialized ⇒ null（无检出）。 */
+  oid: string | null
+  /** superproject index 记录的 gitlink oid（`git submodule status --cached` 输出）；无 index 记录 ⇒ null。 */
+  recordedOid: string | null
+  /** 前缀映射的展示态（见接口注）。 */
+  state: 'clean' | 'dirty' | 'uninitialized' | 'mismatch' | 'unknown'
+}
+
+/** `git.submoduleStatus` 出参；无 submodule ⇒ 空数组（不抛错）。 */
+export interface SubmoduleStatusResult { submodules: SubmoduleEntry[] }
+
+/**
+ * `git.auditLog` 的单条审计记录（[清单 66] 写操作审计，环缓冲）。**summary 只含
+ * op 参数摘要**（白名单字段 `key=value` 串——不落 commit message 正文 / 文件内容 /
+ * 密钥；spec §1.0.6 纪律延伸，audit.spec 负断言兜底）。
+ */
+export interface AuditEntry {
+  /** 记录时刻（host ISO 时间戳）。 */
+  at: string
+  /** 写操作 op 名（与 @Remote 方法名同形，如 'stage' / 'branchCreate'）。 */
+  op: string
+  /** true = 成功出口（afterWrite 侧），false = 失败出口（catch 侧）。 */
+  ok: boolean
+  /** 失败时的域错误码（`git/<name>` 或 gateway 折叠码）；成功恒 null。 */
+  code: string | null
+  /** 方法入口到出口/抛错的耗时毫秒。 */
+  durationMs: number
+  /** op 参数摘要（白名单字段串，见接口注）。 */
+  summary: string
+}
+
+/** `git.auditLog` 入参（[清单 66]；limit/since 过滤——缺省 = 最近 100 条）。 */
+export interface AuditLogOptions {
+  /** 返回条数上限（钳 [1, auditMaxEntries]）；null/缺省 = 100。 */
+  limit?: number
+  /** 只返回 at ≥ since 的记录（ISO 时间戳；不可解析 ⇒ git/bad-request 'invalid-options'）；null/缺省 = 不过滤。 */
+  since?: string | null
+}
+
+/**
+ * `git.auditLog` 出参：**newest-first**（最近一条在前——环缓冲的天然查询序）。
+ * 只读方法不入环（audit.ts 只记录写操作双出口）。
+ */
+export interface AuditLogResult { entries: AuditEntry[] }
+
+/** `git.generatePrDescription` 出参（[清单 46]）：title/body 由 LLM 产出经规则表规范化；conventional = title 命中 CONVENTIONAL_COMMIT_RE（[清单 17] 同款标志，不阻断）。 */
+export interface PrDescription {
+  /** PR 标题（单行，剥壳 + trim + 256 字符截断）。 */
+  title: string
+  /** PR 描述正文（Markdown，trim + 4000 字符截断；可为空串）。 */
+  body: string
+  /** title 命中 Conventional subject 正则（不阻断，client 提示用）。 */
+  conventional: boolean
+}
+
+/**
+ * `git.createPr` 入参（[清单 46]；D1=A 载体 = gh CLI）：acknowledged danger 闸
+ * （创建 PR 是外部可见写动作——false ⇒ git/bad-request 'unacknowledged'，零命令）。
+ * base/head 缺省（null/空串）= 交由 gh 自行推断（默认分支 / 当前分支）。
+ */
+export interface PrCreateOptions {
+  /** PR 标题（非空；空白 ⇒ git/bad-request 'invalid-options'，零命令）。 */
+  title: string
+  /** PR 描述正文（经 stdin `--body-file -` 过线——不进 argv/进程清单）。 */
+  body: string
+  /** 目标 base 分支；null/缺省 = gh 推断（仓库默认分支）。 */
+  base?: string | null
+  /** head 分支；null/缺省 = 当前分支（gh 推断）。 */
+  head?: string | null
+  /** true = `--draft`。 */
+  draft?: boolean
+  /** C 级二次确认旗标（danger 闸 host 半）。 */
+  acknowledged: boolean
+}
+
+/** `git.createPr` 出参：url = gh 输出回显的 PR URL；number = URL 中 `/pull/<n>` 解析值（非 GitHub 形态 URL ⇒ null）。 */
+export interface PrResult {
+  url: string
+  number: number | null
+}
+
+/**
+ * [69] `git.prForBranch` 的命中出参；方法返回 `PrLinkResult | null`——null =
+ * 无关联 PR / 查询失败（gh 缺失仍抛 git/pr-tool-missing），UI 静默降级不占位。
+ * state = gh 的 PR state 字段原样（'OPEN'|'CLOSED'|'MERGED'|'DRAFT' 或宿主扩展值，
+ * wire 保持 string | null 前向兼容）。
+ */
+export interface PrLinkResult {
+  url: string
+  state: string | null
+}
+
 // ---------- followStatus 流帧（M9；spec §2 host 推送契约的 v1 落地面） ----------
 
 /**

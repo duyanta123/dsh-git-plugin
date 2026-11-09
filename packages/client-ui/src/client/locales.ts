@@ -50,11 +50,17 @@ export const gitZh = {
   'menu.tagCreate': '打标签…',
   'menu.worktree': 'Worktree…',
   'menu.branchDelete': '删除分支…',
+  // V2 批次四扩行（plan §6.6）：无仓库空态的初始化行（[8]）+ 创建 PR 入口（[46]）。
+  'menu.initRepo': '初始化 Git 仓库…',
+  'menu.prCreate': '创建 PR…',
   // ── problems：菜单头部的仓库摘要行（冲突计数 / 干净态） ──
   'problems.conflicted': '{count} 个冲突文件',
   'problems.clean': '工作区干净',
-  // ── shortcut：[清单 51] v1 只交付菜单/tab 入口的如实提示（菜单页脚） ──
-  'shortcut.hint': '快捷键将在后续版本提供',
+  // ── shortcut：[清单 51] V2 批次四命中命令面板机制（spike 结论 found=true）——
+  //    全局快捷键已注册（ctx.shortcuts），页脚改为真实键位与改键入口提示。
+  //    键位经 dsh ShortcutRegistry 校验规则选定（Ctrl/Cmd+C 为系统保留，评审修复）──
+  'shortcut.hint': '全局快捷键：Ctrl/Cmd+Shift+E 变更面板 · Ctrl/Cmd+Shift+G 提交图（可在设置的快捷键页修改）',
+  'shortcut.noSession': '没有打开的会话。',
   // ── tab：右栏两个 tab 定义的 chip 标题（spec §3.1；tab 体在后续模块落地） ──
   'tab.changes.title': 'Git 变更',
   'tab.graph.title': '提交图',
@@ -109,6 +115,19 @@ export const gitZh = {
   'changes.blameMode': '追溯',
   'changes.diffMode': '差异',
   'changes.fileHistory': '文件历史',
+  // ── changes.submodule：[61] 子模块徽标详情（plan §6.6：徽标 → 详情面板，
+  //    submoduleStatus 列表——path / 当前 oid vs 记录 oid 差异高亮 / state 徽标）──
+  'submodule.details': '子模块详情',
+  'submodule.loading': '子模块状态加载中…',
+  'submodule.empty': '没有子模块。',
+  'submodule.state.clean': '正常',
+  'submodule.state.dirty': '有未提交变更',
+  'submodule.state.uninitialized': '未初始化',
+  'submodule.state.mismatch': 'HEAD 漂移',
+  'submodule.state.unknown': '状态未知',
+  'submodule.recordedOid': '记录 oid：{oid}',
+  'submodule.currentOid': '当前 oid：{oid}',
+  'submodule.mismatchHint': '该子模块的当前 HEAD 与记录 oid 不一致。',
   // ── changes.hunk：diff 区 hunk/行级勾选（[10]；D7=B worktree 侧=暂存、staged 侧=
   //    反向还原；plan §5.6）──
   'changes.hunkCheckAria': '切换整个 hunk 的勾选（{header}）',
@@ -194,12 +213,39 @@ export const gitZh = {
   'worktree.add': '创建',
   'worktree.pathRequired': '路径不能为空。',
   'worktree.branchRequired': '分支名不能为空。',
+  // ── init：[8] 非 git 目录的空态引导卡片（plan §6.6：说明 + 初始化按钮 +
+  //    workspaceOverride 钉死态不显示——见 init-empty-state.ts 的判定口径）──
+  'init.card.title': '此目录还不是 Git 仓库',
+  'init.card.body': '初始化后即可使用变更审查与提交图。',
+  'init.card.action': '初始化 Git 仓库',
+  'init.card.running': '初始化中…',
   'push.title': '推送',
   'push.remoteLabel': '远端',
   'push.setUpstreamMissing': '当前分支尚未建立 upstream，将随推送建立跟踪。',
   'push.force': '强制推送（覆盖远端）',
   'push.forceMessage': '强制推送将用本地分支覆盖远端分支，远端独有的提交会丢失且无法恢复。',
   'push.forceConfirmTitle': '确认强制推送',
+  'push.done': '推送完成。',
+  // ── pr：[46] PR 对话框（AI 描述按钮 + base 选择 + draft + 创建 danger 确认 +
+  //    成功 URL 展示）与 [69] prForBranch 关联展示（plan §6.6）。[70] 合并策略约定段
+  //    在 host generatePrDescription 的 prompt 组装，client 无词典落点。──
+  'pr.title': '创建 PR',
+  'pr.titleLabel': '标题',
+  'pr.bodyLabel': '描述',
+  'pr.baseLabel': '目标分支（base）',
+  'pr.baseDefault': '远端默认分支',
+  'pr.generate': 'AI 生成描述',
+  'pr.generating': '生成中…',
+  'pr.draft': '草稿 PR（draft）',
+  'pr.create': '创建 PR',
+  'pr.creating': '创建中…',
+  'pr.createConfirmTitle': '确认创建 PR',
+  'pr.createConfirmMessage': '将在远端仓库创建 PR（对外可见）：{head} → {base}。',
+  'pr.aiOverwriteTitle': '覆盖当前标题与描述？',
+  'pr.aiOverwriteMessage': 'AI 生成的内容将替换标题与描述输入框中的当前内容。',
+  'pr.success': 'PR 已创建。',
+  'pr.linkLabel': '关联 PR',
+  'pr.link.badge': '↗ PR #{number}',
   // ── timeTravel：[37] cherry-pick / revert / reset（plan §4.6 行菜单 + reset 子菜单）──
   'menu.commitCherryPick': 'Cherry-pick 到当前分支',
   'menu.commitRevert': 'Revert 此提交',
@@ -303,6 +349,11 @@ export const gitZh = {
   'error.stage-patch-failed': '选中补丁应用失败（{path}）：可改用整文件的暂存/取消暂存。',
   'error.stash-not-found': '找不到第 {index} 条 stash（可能已被应用或删除）。',
   'error.commit-blocked': '提交被护栏拦截（{count} 项违规）。',
+  // V2 批次四体验集成新码（plan §6.4）：init-failed 双插值（path + host 判定的
+  // reason）；pr-create-failed 的 stderr 走错误条折叠区（error-map 主文案无插值）。
+  'error.init-failed': '在 {path} 初始化 Git 仓库失败：{reason}。',
+  'error.pr-tool-missing': 'PR 命令行工具（{tool}）不可用：请安装 GitHub CLI 并完成 gh auth login 后重试。',
+  'error.pr-create-failed': '创建 PR 失败，详见下方输出。',
   'error.gateway-service-unavailable': 'git 服务尚未就绪，请重试。',
   'error.gateway': '请求失败（{code}）。',
   'error.action.setUpstream': '设置 upstream 并推送',
@@ -340,11 +391,19 @@ export const gitEn = {
   'menu.tagCreate': 'Create tag…',
   'menu.worktree': 'Worktree…',
   'menu.branchDelete': 'Delete branch…',
+  // V2 batch-4 rows (plan §6.6): init entry for the no-repository empty state ([8])
+  // and the create-PR entry ([46]).
+  'menu.initRepo': 'Initialize Git repository…',
+  'menu.prCreate': 'Create PR…',
   // ── problems ──
   'problems.conflicted': '{count} conflicted file(s)',
   'problems.clean': 'Working tree clean',
-  // ── shortcut ──
-  'shortcut.hint': 'Keyboard shortcuts arrive in a later version',
+  // ── shortcut：[51] V2 batch-4 hit the command-palette mechanism (spike found=true) —
+  //    global shortcuts are registered (ctx.shortcuts); the footer shows real keys.
+  //    Keys chosen against the dsh ShortcutRegistry validation rules (Ctrl/Cmd+C is a
+  //    system-reserved binding — review fix) ──
+  'shortcut.hint': 'Global shortcuts: Ctrl/Cmd+Shift+E changes · Ctrl/Cmd+Shift+G graph (editable in Settings → Keyboard shortcuts)',
+  'shortcut.noSession': 'No open session.',
   // ── tab ──
   'tab.changes.title': 'Git changes',
   'tab.graph.title': 'Commit graph',
@@ -400,6 +459,19 @@ export const gitEn = {
   'changes.blameMode': 'Blame',
   'changes.diffMode': 'Diff',
   'changes.fileHistory': 'File history',
+  // ── changes.submodule：[61] submodule badge details (plan §6.6: badge → details
+  //    panel, submoduleStatus list — path / current vs recorded oid highlight / state) ──
+  'submodule.details': 'Submodule details',
+  'submodule.loading': 'Loading submodule status…',
+  'submodule.empty': 'No submodules.',
+  'submodule.state.clean': 'clean',
+  'submodule.state.dirty': 'dirty',
+  'submodule.state.uninitialized': 'uninitialized',
+  'submodule.state.mismatch': 'HEAD drifted',
+  'submodule.state.unknown': 'unknown',
+  'submodule.recordedOid': 'Recorded oid: {oid}',
+  'submodule.currentOid': 'Current oid: {oid}',
+  'submodule.mismatchHint': 'The submodule HEAD differs from the recorded oid.',
   // ── changes.hunk：hunk/line-level checkboxes in the diff area ([10]; D7=B both
   //    sides — worktree side = stage, staged side = reverse; plan §5.6) ──
   'changes.hunkCheckAria': 'Toggle the whole hunk ({header})',
@@ -485,12 +557,41 @@ export const gitEn = {
   'worktree.add': 'Create',
   'worktree.pathRequired': 'Path must not be empty.',
   'worktree.branchRequired': 'Branch name must not be empty.',
+  // ── init：[8] empty-state guidance card for non-git directories (plan §6.6:
+  //    copy + init button; hidden while workspaceOverride is pinned — see
+  //    init-empty-state.ts for the exact visibility rule) ──
+  'init.card.title': 'This directory is not a Git repository yet',
+  'init.card.body': 'Initialize it to use the changes review and the commit graph.',
+  'init.card.action': 'Initialize Git repository',
+  'init.card.running': 'Initializing…',
   'push.title': 'Push',
   'push.remoteLabel': 'Remote',
   'push.setUpstreamMissing': 'The branch has no upstream; tracking will be set up with this push.',
   'push.force': 'Force push (overwrites the remote)',
   'push.forceMessage': 'Force push overwrites the remote branch with the local one; commits unique to the remote are lost and cannot be recovered.',
   'push.forceConfirmTitle': 'Confirm force push',
+  'push.done': 'Push completed.',
+  // ── pr：[46] PR dialog (AI description button + base picker + draft + creation
+  //    danger gate + success URL) and [69] prForBranch link display (plan §6.6).
+  //    [70] (merge-policy convention paragraph) lives in the host prompt assembly —
+  //    no client dictionary keys. ──
+  'pr.title': 'Create PR',
+  'pr.titleLabel': 'Title',
+  'pr.bodyLabel': 'Description',
+  'pr.baseLabel': 'Base branch',
+  'pr.baseDefault': 'the remote default branch',
+  'pr.generate': 'Generate description with AI',
+  'pr.generating': 'Generating…',
+  'pr.draft': 'Draft PR',
+  'pr.create': 'Create PR',
+  'pr.creating': 'Creating…',
+  'pr.createConfirmTitle': 'Confirm PR creation',
+  'pr.createConfirmMessage': 'A PR will be created in the remote repository (publicly visible): {head} → {base}.',
+  'pr.aiOverwriteTitle': 'Overwrite the current title and description?',
+  'pr.aiOverwriteMessage': 'The generated text will replace the current title and description.',
+  'pr.success': 'The PR was created.',
+  'pr.linkLabel': 'Linked PR',
+  'pr.link.badge': '↗ PR #{number}',
   // ── timeTravel：[37] cherry-pick / revert / reset (row menu + reset submenu) ──
   'menu.commitCherryPick': 'Cherry-pick onto current branch',
   'menu.commitRevert': 'Revert this commit',
@@ -596,6 +697,12 @@ export const gitEn = {
   'error.stage-patch-failed': 'Applying the selected patch failed ({path}): fall back to staging/unstaging the whole file.',
   'error.stash-not-found': 'Stash entry {index} was not found (it may already be applied or dropped).',
   'error.commit-blocked': 'The commit is blocked by guardrails ({count} violation(s)).',
+  // V2 batch-4 integration codes (plan §6.4): init-failed interpolates path + the
+  // host-determined reason; pr-create-failed's stderr goes to the error-notice
+  // details fold (no interpolation in the main copy).
+  'error.init-failed': 'Initializing a Git repository at {path} failed: {reason}.',
+  'error.pr-tool-missing': 'The PR command-line tool ({tool}) is unavailable: install the GitHub CLI and run gh auth login first.',
+  'error.pr-create-failed': 'Creating the PR failed; see the output below.',
   'error.gateway-service-unavailable': 'The git service is not ready yet. Retry.',
   'error.gateway': 'The request failed ({code}).',
   'error.action.setUpstream': 'Set upstream and push',

@@ -94,6 +94,26 @@
  *         world diff-filter=U 一致、**stash 未丢**）→ stashDrop 无 acknowledged ⇒
  *         git/bad-request 'unacknowledged'（零命令）→ stashDrop（acknowledged；world
  *         重读 stash 清空）→ stashDrop 再删 ⇒ git/stash-not-found。
+ *      O. v2 批次四体验集成六方法各一条真宿主断言（docs/v2-implementation-plan.md
+ *         §6.7「verify-load 断言面扩展」硬前提——断言链 A–N 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖；**createPr/prForBranch 只断负路径**——评审定案 §6.7/§6.10：
+ *         真宿主进程无 face 注入通道，Config 是唯一可编程面，profile 补丁设
+ *         `ghCommand` 指向解析不到的固件名 ⇒ git/pr-tool-missing；真 gh 正路径会创建
+ *         真实 PR 且需网络凭证，不进任何自动门禁）：
+ *         initRepository 负路径（profile 钉死的 workspaceOverride 已是仓库 ⇒
+ *         git/init-failed reason='already-a-repository'——正路径由 admin-repo.spec.ts
+ *         真临时目录承载；单宿主单 Config 无法在本列给出非仓库工作区）→
+ *         submoduleStatus 正路径（world 侧 push main 到姊妹 bare + `git submodule add`
+ *         ——protocol.file.allow=always；RPC 列 1 条 clean，oid/recordedOid 与 world
+ *         `git -C sub rev-parse HEAD` / `git ls-files -s` 对照）→ auditLog 正路径
+ *         （A–N 链全部写操作的环内记录：newest-first 时序、含 stage/commit/stashDrop
+ *         等已知 op、失败出口 ok:false+code 在环（§6.5 双出口）、字段形状、**summary
+ *         不含 commit message 正文与文件内容的负断言**、since 过滤）→
+ *         generatePrDescription 负路径（无 LLM 路由 ⇒ git/llm-route-unresolved，同
+ *         generateCommitMessage 既有负往返形态）→ createPr 双负路径（无 acknowledged
+ *         ⇒ git/bad-request 'unacknowledged' 零命令；ghCommand 固件名 ⇒
+ *         git/pr-tool-missing details.tool=gh）→ prForBranch 负路径（ghCommand 固件名
+ *         ⇒ git/pr-tool-missing；成功/null 降级形状由 pr.spec transport 切片单测承载）。
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
@@ -299,15 +319,20 @@ async function main() {
     }
     step('profile dependencies recorded for both packages')
 
-    // ── 1.5 profile 层补丁：把 git 服务的 workspaceOverride 钉到夹具仓库
-    //        （map §1.4：profile 层按 id 覆盖行、config 整块替换，其余键回落 schema 默认）。
+    // ── 1.5 profile 层补丁：把 git 服务的 workspaceOverride 钉到夹具仓库 + ghCommand
+    //        钉到解析不到的固件名（map §1.4：profile 层按 id 覆盖行、config 整块替换，
+    //        其余键回落 schema 默认）。ghCommand 是批次四 createPr/prForBranch 负路径
+    //        断言的唯一注入点（方案 §6.7/§6.10 评审定案：真宿主无 face 注入通道，
+    //        Config 是唯一可编程面——解析不到 ⇒ git/pr-tool-missing）。
     //        Windows 路径写成正斜杠，避开 YAML 反斜杠转义。
     const profilePatchPath = join(profileDir, 'cordis.patch.yml')
+    const ghFixtureCommand = 'dshgit-fixture-no-such-gh'
     const overrideRow = [
-      '# verify-load.mjs: pin the git service workspace to the fixture repository',
+      '# verify-load.mjs: pin the git service workspace to the fixture repository; pin ghCommand to an unresolvable fixture name (batch-four negative paths)',
       '- id: dsh-plugin-git',
       '  config:',
       `    workspaceOverride: '${fixtureRepo.replaceAll('\\', '/')}'`,
+      `    ghCommand: '${ghFixtureCommand}'`,
       '',
     ].join('\n')
     const existingPatch = existsSync(profilePatchPath) ? readFileSync(profilePatchPath, 'utf8') : ''
@@ -396,6 +421,10 @@ async function main() {
       `boot graph has no entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
     assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('dsh-gitkit'),
       `client entry inject edges missing 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
+    // v2 批次四（[清单 51] 命令面板/快捷键 spike 落地）：client 半 inject 增两个服务边。
+    assert(clientEntry.inject.includes('@deepseek-ai/dsh-client-shortcuts')
+      && clientEntry.inject.includes('@deepseek-ai/dsh-client-ui-commands'),
+    `client entry inject edges missing the batch-four services (shortcuts/ui-commands): ${JSON.stringify(clientEntry.inject)}`)
     step(`boot graph: client entry present (rev ${clientEntry.rev}), inject edges: ${JSON.stringify(clientEntry.inject)}`)
     const bundleResponse = await fetch(new URL(clientEntry.url, base.origin), { headers: { cookie: browserCookie } })
     assert(bundleResponse.status === 200, `client bundle fetch ${clientEntry.url} → ${bundleResponse.status}`)
@@ -441,6 +470,22 @@ async function main() {
     assert(bundleBody.includes('"git/commit"'), 'client bundle lacks the generated git/commit method descriptor')
     assert(bundleBody.includes('"git/push"'), 'client bundle lacks the generated git/push method descriptor')
     assert(bundleBody.includes('"git/generateCommitMessage"'), 'client bundle lacks the generated git/generateCommitMessage method descriptor')
+    // v2 批次四体验集成模块断言（O 链的 client 半 bundle 面；docs/v2-implementation-plan.md
+    // §6.6/§6.7）：6 新方法生成描述符 + 批次四组件锚 + 词典 + 命令面板/快捷键注册 id。
+    assert(bundleBody.includes('"git/initRepository"') && bundleBody.includes('"git/submoduleStatus"')
+      && bundleBody.includes('"git/auditLog"') && bundleBody.includes('"git/generatePrDescription"')
+      && bundleBody.includes('"git/createPr"') && bundleBody.includes('"git/prForBranch"'),
+    'client bundle lacks the batch-four generated method descriptors (initRepository/submoduleStatus/auditLog/generatePrDescription/createPr/prForBranch)')
+    assert(bundleBody.includes('data-git-init-card'), 'client bundle lacks the init empty-state card anchor ([清单 8])')
+    assert(bundleBody.includes('data-git-pr-dialog') && bundleBody.includes('data-git-pr-confirm'),
+      'client bundle lacks the PR dialog + danger-confirm anchors ([清单 46])')
+    assert(bundleBody.includes('data-git-submodule-panel'), 'client bundle lacks the submodule panel anchor ([清单 61])')
+    assert(bundleBody.includes('data-git-push-create-pr') && bundleBody.includes('data-git-push-link'),
+      'client bundle lacks the push-done create-PR / PR-link anchors ([清单 69])')
+    assert(bundleBody.includes('git.changes.open') && bundleBody.includes('git.graph.open'),
+      'client bundle lacks the shortcut/command registration ids ([清单 51] commands-face)')
+    assert(bundleBody.includes('初始化 Git 仓库') && bundleBody.includes('子模块详情') && bundleBody.includes('关联 PR'),
+      'client bundle lacks the batch-four zh dictionary entries (menu.initRepo / submodule.details / pr.linkLabel)')
     step(`client bundle served (${bundleBody.length} bytes, closure factory + header registration + generated remote descriptors + locale verified)`)
 
     // ── 5. 断言 D：ping RPC 往返（runbook §2.3 token fence → API cookie）──
@@ -1048,6 +1093,110 @@ async function main() {
       && stashDropMissing.error?.details?.index === 0,
     `dropping a missing stash should be git/stash-not-found: ${JSON.stringify(stashDropMissing)}`)
     step('stashDrop missing OK: git/stash-not-found (typed pre-check on the real host)')
+
+    // ── 5.985 断言 O（v2 批次四 §6.7 verify-load 扩展）：体验集成六方法各一条真宿主
+    //        断言。createPr/prForBranch 只断负路径（评审定案：ghCommand 已在 profile
+    //        补丁钉到解析不到的固件名 dshgit-fixture-no-such-gh）。world 重读纪律同
+    //        K/L/M/N：每个状态断言用独立 git 进程重读，不信 RPC 自述。
+    // O-1 initRepository 负路径：钉死的 workspaceOverride 已是仓库 ⇒ git/init-failed
+    //     reason='already-a-repository'（零命令——world 重读 HEAD 不动）。正路径由
+    //     admin-repo.spec.ts 真临时目录承载（单宿主单 Config 无法在本列给出非仓库
+    //     工作区——§6.7 的现实约束，见文件头 O 段注记）。
+    const headBeforeInit = worldGit('rev-parse', 'HEAD')
+    const initFailed = await rpcCall(base.origin, apiCookie, 'git/initRepository', {})
+    assert(initFailed.ok === false && initFailed.error?.code === 'git/init-failed',
+      `initRepository on the pinned existing repository should be git/init-failed: ${JSON.stringify(initFailed)}`)
+    assert(initFailed.error?.details?.reason === 'already-a-repository'
+      && fixtureNorm(initFailed.error?.details?.path ?? '') === fixtureNorm(fixtureRepo),
+    `init-failed details should carry reason=already-a-repository + the pinned path: ${JSON.stringify(initFailed.error)}`)
+    assert(worldGit('rev-parse', 'HEAD') === headBeforeInit,
+      'rejected initRepository should execute zero commands (world HEAD unchanged)')
+    step('initRepository guard OK: git/init-failed already-a-repository on the pinned repo (zero commands)')
+
+    // O-2 submoduleStatus 正路径：world 侧 push main 到姊妹 bare → `git submodule add`
+    //     （protocol.file.allow=always——git ≥2.38.1 file 协议限制）→ RPC 列 1 条
+    //     clean；oid/recordedOid 与 world `git -C verify-sub rev-parse HEAD` /
+    //     `git ls-files -s` 对照。
+    worldGit('push', '-q', 'origin', 'main')
+    worldGit('-c', 'protocol.file.allow=always', 'submodule', 'add', fixtureBare, 'verify-sub')
+    const subStatus = await rpcCall(base.origin, apiCookie, 'git/submoduleStatus', {})
+    assert(subStatus.ok === true && Array.isArray(subStatus.value?.submodules) && subStatus.value.submodules.length === 1,
+      `git/submoduleStatus should list the freshly added submodule: ${JSON.stringify(subStatus)}`)
+    const subEntry = subStatus.value.submodules[0]
+    const worldSubHead = worldGit('-C', 'verify-sub', 'rev-parse', 'HEAD')
+    const worldGitlink = worldGit('ls-files', '-s', 'verify-sub').split(/\s+/)[1] ?? ''
+    assert(subEntry.path === 'verify-sub' && subEntry.state === 'clean'
+      && /^[0-9a-f]{40}$/.test(subEntry.oid ?? '')
+      && subEntry.oid === worldSubHead && subEntry.recordedOid === worldGitlink,
+    `submoduleStatus entry should match world re-read (git -C verify-sub rev-parse HEAD / ls-files -s): ${JSON.stringify(subEntry)}`)
+    step(`submoduleStatus RPC round-trip OK: verify-sub clean @ ${String(subEntry.oid).slice(0, 7)} (world re-read matches)`)
+
+    // O-3 auditLog 正路径：A–N 链全部写操作的环内记录——newest-first 时序、双出口
+    //     （成功 ok:true/code=null 与失败 ok:false+code 并存，§6.5）、字段形状、
+    //     **summary 不含 commit message 正文与文件内容的负断言**（§6.10）、since/limit。
+    const auditLog = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: {} })
+    assert(auditLog.ok === true && Array.isArray(auditLog.value?.entries) && auditLog.value.entries.length >= 10,
+      `git/auditLog should surface the accumulated write-op ring: ${JSON.stringify(auditLog)}`)
+    const auditEntries = auditLog.value.entries
+    for (let i = 1; i < auditEntries.length; i++) {
+      assert(Date.parse(auditEntries[i - 1].at) >= Date.parse(auditEntries[i].at),
+        `auditLog entries should be newest-first: ${JSON.stringify(auditEntries.slice(0, 3))}`)
+    }
+    for (const entry of auditEntries) {
+      assert(typeof entry.op === 'string' && entry.op !== '' && typeof entry.ok === 'boolean'
+        && (entry.code === null || typeof entry.code === 'string')
+        && Number.isFinite(entry.durationMs) && typeof entry.summary === 'string'
+        && !Number.isNaN(Date.parse(entry.at)),
+      `audit entry shape wrong: ${JSON.stringify(entry)}`)
+      assert(entry.ok === true ? entry.code === null : typeof entry.code === 'string',
+        `audit entry ok/code pairing wrong: ${JSON.stringify(entry)}`)
+    }
+    const auditOps = new Set(auditEntries.map((entry) => entry.op))
+    for (const known of ['stage', 'commit', 'stashPush', 'stashPop', 'stashDrop', 'branchCreate', 'tagCreate', 'cherryPick', 'revert', 'reset']) {
+      assert(auditOps.has(known), `audit ring should contain the '${known}' op from the earlier chains; ops seen: ${JSON.stringify([...auditOps])}`)
+    }
+    assert(auditEntries.some((entry) => entry.ok === false && entry.code === 'git/bad-request'),
+      'audit ring should contain failure-exit entries (ok:false + code) from the earlier guard rejections (§6.5 dual-exit hook)')
+    const auditDump = JSON.stringify(auditEntries)
+    assert(!auditDump.includes('feat: verify-load commit chain'), 'audit summaries must not carry commit message bodies')
+    assert(!auditDump.includes('dsh verify-load stash payload'), 'audit summaries must not carry file contents')
+    const auditFuture = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: { since: new Date(Date.now() + 60_000).toISOString() } })
+    assert(auditFuture.ok === true && auditFuture.value?.entries?.length === 0,
+      `auditLog with a future since should be empty: ${JSON.stringify(auditFuture)}`)
+    const auditLimited = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: { limit: 1 } })
+    assert(auditLimited.ok === true && auditLimited.value?.entries?.length === 1
+      && auditLimited.value.entries[0]?.at === auditEntries[0]?.at,
+    `auditLog limit=1 should return the newest entry: ${JSON.stringify(auditLimited)}`)
+    step(`auditLog RPC round-trip OK: ${String(auditEntries.length)} ring entries (newest-first, dual-exit ok:false in ring, no message/content leak, since/limit filters)`)
+
+    // O-4 generatePrDescription 负路径：无 LLM 路由 ⇒ git/llm-route-unresolved（同
+    //     generateCommitMessage 既有负往返形态——本环境无路由，确定性）。
+    const prDesc = await rpcCall(base.origin, apiCookie, 'git/generatePrDescription', {})
+    assert(prDesc.ok === false && prDesc.error?.code === 'git/llm-route-unresolved',
+      `generatePrDescription without an LLM route should be git/llm-route-unresolved: ${JSON.stringify(prDesc)}`)
+    step('generatePrDescription negative round-trip OK: git/llm-route-unresolved (endpoint served, domain error crosses the wire)')
+
+    // O-5 createPr 只断负路径（评审定案 §6.7/§6.10）：无 acknowledged ⇒ bad-request
+    //     'unacknowledged'（零命令，先于 gh 解析）；ghCommand 固件名 ⇒ git/pr-tool-missing。
+    const createUnack = await rpcCall(base.origin, apiCookie, 'git/createPr', { options: { title: 't', body: 'b', acknowledged: false } })
+    assert(createUnack.ok === false && createUnack.error?.code === 'git/bad-request'
+      && createUnack.error?.details?.reason === 'unacknowledged',
+    `createPr without acknowledgement should be git/bad-request unacknowledged: ${JSON.stringify(createUnack)}`)
+    const createMissing = await rpcCall(base.origin, apiCookie, 'git/createPr', {
+      options: { title: 'verify-load cannot create', body: 'blocked by fixture ghCommand', base: 'main', draft: false, acknowledged: true },
+    })
+    assert(createMissing.ok === false && createMissing.error?.code === 'git/pr-tool-missing'
+      && createMissing.error?.details?.tool === 'gh',
+    `createPr with the unresolvable fixture ghCommand should be git/pr-tool-missing tool=gh: ${JSON.stringify(createMissing)}`)
+    step('createPr negative paths OK: unacknowledged gate (zero commands) + pr-tool-missing via the pinned fixture ghCommand (success shape lives in pr.spec transport-slice unit tests)')
+
+    // O-6 prForBranch 负路径：ghCommand 固件名 ⇒ git/pr-tool-missing（成功/null 降级
+    //     形状由 pr.spec transport 切片单测承载）。
+    const prBranch = await rpcCall(base.origin, apiCookie, 'git/prForBranch', { branch: 'main' })
+    assert(prBranch.ok === false && prBranch.error?.code === 'git/pr-tool-missing'
+      && prBranch.error?.details?.tool === 'gh',
+    `prForBranch with the unresolvable fixture ghCommand should be git/pr-tool-missing: ${JSON.stringify(prBranch)}`)
+    step('prForBranch negative path OK: git/pr-tool-missing via the pinned fixture ghCommand')
 
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的

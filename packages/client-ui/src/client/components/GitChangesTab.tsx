@@ -37,6 +37,8 @@ import { assembleSelectedPatch, directionOfScope, hunkLineKeys } from '../diff/p
 import { parsePatch } from '../diff/patch-hunks.js'
 import type { PathNode } from '../group-paths.js'
 import { groupPaths } from '../group-paths.js'
+// V2 批次四（[8]）：非 git 目录空态引导卡片的纯视图模型（plan §6.6）。
+import { initEmptyStateView } from '../init-empty-state.js'
 import type { NS } from '../locales.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import {
@@ -54,6 +56,8 @@ import { GitBlameView } from './GitBlameView.js'
 import { GitCommitDialog } from './GitCommitDialog.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+// V2 批次四（[61]）：子模块状态详情面板（submoduleStatus 列表——plan §6.6）。
+import { GitSubmodulePanel } from './GitSubmodulePanel.js'
 
 /** 插件投给 tab body 的业务面（inject 工厂产物；hooks 由渲染器合成 use* 选择器）。 */
 export interface ChangesInjected {
@@ -124,9 +128,11 @@ function GroupSection(props: {
   onAction(row: ChangeRow, action: 'stage' | 'unstage' | 'discard'): void
   onRowKeyDown(row: ChangeRow, event: ReactKeyboardEvent): void
   onHistory(path: string): void
+  /** 子模块详情动作（V2 批次四 [61]；submodule 文件的行内入口——GitSubmodulePanel 拉起）。 */
+  onSubmoduleDetails(path: string): void
   t: GitChangesTabProps['t']
 }): ReactNode {
-  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, t } = props
+  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, t } = props
   const nodes = useMemo(() => groupPaths(group.rows.map((row) => row.path)), [group.rows])
   return (
     <section className='dsh-git-changes__group' data-git-changes-group={group.id}>
@@ -150,6 +156,7 @@ function GroupSection(props: {
           onAction={onAction}
           onRowKeyDown={onRowKeyDown}
           onHistory={onHistory}
+          onSubmoduleDetails={onSubmoduleDetails}
           t={t}
         />
       ))}
@@ -172,11 +179,13 @@ function NodeRows(props: {
   onAction(row: ChangeRow, action: 'stage' | 'unstage' | 'discard'): void
   onRowKeyDown(row: ChangeRow, event: ReactKeyboardEvent): void
   onHistory(path: string): void
+  /** 子模块详情动作（V2 批次四 [61]；透传到 submodule 行的 ChangeCard）。 */
+  onSubmoduleDetails(path: string): void
   t: GitChangesTabProps['t']
 }): ReactNode {
   const {
     node, depth, viewModel, groupId, expandedDirs, selectedPath,
-    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, t,
+    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, t,
   } = props
   if (node.kind === 'dir') {
     const key = `${groupId}:${node.path}`
@@ -208,6 +217,7 @@ function NodeRows(props: {
             onAction={onAction}
             onRowKeyDown={onRowKeyDown}
             onHistory={onHistory}
+            onSubmoduleDetails={onSubmoduleDetails}
             t={t}
           />
         ))}
@@ -230,6 +240,9 @@ function NodeRows(props: {
       onUnstage={() => { onAction(row, 'unstage') }}
       onDiscard={() => { onAction(row, 'discard') }}
       onHistory={() => { onHistory(row.path) }}
+      // [61] 仅 submodule 文件注入详情入口（exactOptionalPropertyTypes：缺席用
+      // 条件展开而非显式 undefined——ChangeCardProps 的可选属性面）。
+      {...(row.change.submodule ? { onSubmoduleDetails: (): void => { onSubmoduleDetails(row.path) } } : {})}
       onKeyDown={(event) => { onRowKeyDown(row, event) }}
     />
   )
@@ -282,6 +295,10 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const [stashBusy, setStashBusy] = useState(false)
   const [includeUntracked, setIncludeUntracked] = useState(STASH_INCLUDE_UNTRACKED_DEFAULT)
   const [pendingDrop, setPendingDrop] = useState<StashEntry | null>(null)
+  // ── V2 批次四：[8] 初始化引导（动作/进行态/失败面）+ [61] 子模块详情面板开合 ──
+  const [initRunning, setInitRunning] = useState(false)
+  const [initError, setInitError] = useState<GitErrorLike | null>(null)
+  const [submodulePanelPath, setSubmodulePanelPath] = useState<string | null>(null)
 
   // blame 模式开着且展开行槽位缺席 ⇒ 首载（全区一次；oversized 转 D3=B 分片模式）。
   useEffect(() => {
@@ -577,6 +594,29 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const untrackedHintView = untrackedHint(statusState.status)
   const popConflictVisible = popConflictHint(stashOpError)
   const pendingDropView = pendingDrop !== null ? stashDropConfirmView(pendingDrop) : null
+  // V2 批次四（[8]）：非 git 目录空态引导卡片（恰 git/no-repository 可见——
+  // workspace-unresolved/检查中/可用态不渲染；判定口径见 init-empty-state.ts）。
+  const initView = initEmptyStateView({
+    available: statusState.repo.available,
+    checking: statusState.repo.checking,
+    statusError: statusState.statusError,
+  })
+
+  /** [8] 初始化动作：成功 → refresh（workspace 从 unresolved → resolved，R5 manual
+      取首帧——plan §6.3）；失败 → 就地错误条（git/init-failed 文案带 path/reason）。 */
+  const runInit = (): void => {
+    if (initRunning) return
+    setInitRunning(true)
+    setInitError(null)
+    void changesOps.initRepository().then((result) => {
+      setInitRunning(false)
+      if (!result.ok) {
+        setInitError(result.error)
+        return
+      }
+      refresh()
+    })
+  }
 
   return (
     <div className='dsh-git-changes' data-git-changes='' data-git-changes-session={coordinates.sessionId}>
@@ -730,7 +770,26 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         </div>
       )}
       {!view.available ? (
-        <p className='dsh-git-changes__empty' data-git-changes-empty='no-repo'>{t('error.no-repository')}</p>
+        initView !== null ? (
+          // [8] 空态引导卡片（plan §6.6：说明 + 初始化按钮；init 失败就地错误条，
+          // 成功 → refresh 走 R5 manual 取 init 后首帧）。
+          <div className='dsh-git-init-card' data-git-init-card=''>
+            <p className='dsh-git-init-card__title' data-git-init-title=''>{t(initView.titleKey)}</p>
+            <p className='dsh-git-init-card__body' data-git-init-body=''>{t(initView.bodyKey)}</p>
+            {initError !== null && <GitErrorNotice error={initError} t={t} />}
+            <button
+              type='button'
+              className='dsh-git-init-card__action'
+              data-git-init-action=''
+              disabled={initRunning}
+              onClick={runInit}
+            >
+              {initRunning ? t(initView.runningKey) : t(initView.actionKey)}
+            </button>
+          </div>
+        ) : (
+          <p className='dsh-git-changes__empty' data-git-changes-empty='no-repo'>{t('error.no-repository')}</p>
+        )
       ) : view.groups.length === 0 ? (
         <p className='dsh-git-changes__empty' data-git-changes-empty={view.checking ? 'checking' : 'clean'}>
           {view.checking ? t('header.checking') : t('changes.empty')}
@@ -751,6 +810,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
               onAction={onAction}
               onRowKeyDown={onRowKeyDown}
               onHistory={openFileHistory}
+              onSubmoduleDetails={(path) => { setSubmodulePanelPath(path) }}
               t={t}
             />
           ))}
@@ -802,6 +862,14 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         checkboxLabel={t('confirm.dangerCheckbox')}
         onConfirm={runStashDrop}
         onCancel={() => { setPendingDrop(null) }}
+      />
+      {/* [61] 子模块状态详情面板（submodule 徽标行的「子模块详情」动作拉起；
+          submoduleStatus 列表——path / oid 对照高亮 / state 徽标，只列不递归）。 */}
+      <GitSubmodulePanel
+        open={submodulePanelPath !== null}
+        t={t}
+        ops={changesOps}
+        onClose={() => { setSubmodulePanelPath(null) }}
       />
     </div>
   )

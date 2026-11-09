@@ -90,20 +90,31 @@ export function headerViewModel(state: GitStatusSourceState): HeaderView {
  * 推送 / 拉取 / 获取 / 分支子菜单 / 新建分支… / 打标签… / Worktree… / 删除分支…；
  * V2 批次二再扩两行：与当前分支比较…（[36] 对比入口）/ 重置当前分支…（[37] reset
  * 子菜单））。v1 的 `sync` 占位行已拆为 push/pull/fetch 三真行（plan §3.6）。
+ * **V2 批次四扩行（plan §6.6）**：无仓库态整菜单收敛为单行「初始化 Git 仓库…」
+ * （[8] 空态引导——actionsEnabled=false 的例外，init 恰在无仓库时可用）；有仓库态
+ * 增「创建 PR…」（[46]，分支可用性同 push 行——headName 在装配半判）。
  */
 export type HeaderMenuId =
   | 'open-changes' | 'open-graph' | 'commit' | 'commit-push'
   | 'push' | 'pull' | 'fetch'
   | 'branches' | 'branch-compare' | 'branch-reset'
   | 'branch-create' | 'tag-create' | 'worktree' | 'branch-delete'
+  | 'init-repo' | 'pr-create'
 
 export interface HeaderMenuItem {
   id: HeaderMenuId
   labelKey: GitLocaleKey
 }
 
-/** 菜单模型（actionsEnabled=false 时全部禁用——无仓库无动作 [清单 54]）。 */
+/**
+ * 菜单模型。无仓库态（kind='no-repo'）⇒ 单行「初始化 Git 仓库…」（可点——[8] 的
+ * header 半入口；ui-model 外的判定细节见 init-empty-state.ts，检查中态仍无行）。
+ * 其余态 actionsEnabled=false 时全部禁用——无仓库无动作 [清单 54]。
+ */
 export function headerMenuItems(view: HeaderView): ReadonlyArray<HeaderMenuItem & { enabled: boolean }> {
+  if (view.kind === 'no-repo') {
+    return [{ id: 'init-repo', labelKey: 'menu.initRepo', enabled: true }]
+  }
   const items: HeaderMenuItem[] = [
     { id: 'open-changes', labelKey: 'menu.openChanges' },
     { id: 'open-graph', labelKey: 'menu.graph' },
@@ -127,6 +138,9 @@ export function headerMenuItems(view: HeaderView): ReadonlyArray<HeaderMenuItem 
     { id: 'branch-create', labelKey: 'menu.branchCreate' },
     { id: 'tag-create', labelKey: 'menu.tagCreate' },
     { id: 'worktree', labelKey: 'menu.worktree' },
+    // V2 批次四扩行（plan §6.6）：创建 PR 入口（[46]；分支不可用——detached/unborn/
+    // 快照未就绪——由装配半以 headName 判禁用，模型面恒给行）。
+    { id: 'pr-create', labelKey: 'menu.prCreate' },
     { id: 'branch-delete', labelKey: 'menu.branchDelete' },
   ]
   return items.map((item) => ({ ...item, enabled: view.actionsEnabled }))
@@ -144,18 +158,29 @@ export interface HeaderSubmenuEntry {
   disabled: boolean
   /** 当前分支行（原语 Menu 的子菜单行无 selected 面——组件渲染 '✓ ' 前缀表达打勾）。 */
   current: boolean
+  /**
+   * [69] 该分支的关联 PR 号（prForBranch 结果解析；null/缺席 = 无关联/查询失败——
+   * 静默降级不占位，plan §6.6）。组件在行尾追加 '↗ PR #{number}' 徽标词条
+   * （pr.link.badge）；原语 MenuItem 的行是 button（不可嵌 anchor——链接打开面在
+   * 推送对话框与 PR 对话框），此处为标记展示。
+   */
+  prNumber?: number | null
 }
 
 /**
  * 分支选择子菜单的渲染模型（plan §3.6「当前分支打勾、detached 显短 oid、点击切换」）：
  * detached 时前置一条禁用的信息行（复用 header.detached {oid=短 oid}——不可选，纯提示）；
  * 其后逐本地分支一行，当前分支标 current。unborn/空分支清单 ⇒ 空数组。
+ * V2 批次四（[69]）：`prNumbers` 给定时逐分支带关联 PR 号（无关联/失败分支缺省
+ * undefined——不占位）。
  */
 export function branchSubmenuEntries(params: {
   branches: readonly { shortName: string }[]
   headName: string | null
   detached: boolean
   abbrevOid: string | null
+  /** 分支短名 → 关联 PR 号（pr-view-model.prLinkView 的解析产物）。 */
+  prNumbers?: Readonly<Record<string, number | null>>
 }): HeaderSubmenuEntry[] {
   const entries: HeaderSubmenuEntry[] = []
   if (params.detached && params.abbrevOid !== null) {
@@ -169,11 +194,13 @@ export function branchSubmenuEntries(params: {
     })
   }
   for (const branch of params.branches) {
+    const prNumber = params.prNumbers?.[branch.shortName]
     entries.push({
       id: `branch-switch:${branch.shortName}`,
       label: branch.shortName,
       disabled: false,
       current: branch.shortName === params.headName,
+      ...(prNumber !== undefined && prNumber !== null ? { prNumber } : {}),
     })
   }
   return entries

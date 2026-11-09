@@ -5,7 +5,9 @@
 
 import { describe, expect, it } from 'vitest'
 import { redact, redactTail } from '../src/client/m13/redact.ts'
-import { classifyConflictLine, scanConflictLines } from '../src/client/m13/conflict-markers.ts'
+// P3-2（v2 plan §10，批次四）：死代码 scanConflictLines 已删除——只保留行级分类器
+// 的测试面；markConflictRows 走 classifyConflictLine（patch-hunks.ts:168）。
+import { classifyConflictLine } from '../src/client/m13/conflict-markers.ts'
 
 describe('redact — 显示面凭证脱敏', () => {
   it('URL userinfo 全遮（保留 scheme 与 host）', () => {
@@ -64,27 +66,10 @@ describe('classifyConflictLine — 冲突标记行分类', () => {
   })
 })
 
-describe('scanConflictLines — 文本扫描', () => {
-  it('按行号产出标记行清单（含 \r\n 容忍）', () => {
-    const text = [
-      'line 0',
-      '<<<<<<< HEAD',
-      'ours',
-      '=======',
-      'theirs',
-      '>>>>>>> feature',
-      'line 6',
-    ].join('\n')
-    expect(scanConflictLines(text)).toEqual([
-      { index: 1, kind: 'start', line: '<<<<<<< HEAD' },
-      { index: 3, kind: 'separator', line: '=======' },
-      { index: 5, kind: 'end', line: '>>>>>>> feature' },
-    ])
-  })
-
-  it('无标记文本 → 空清单；CRLF 行尾不破坏分类', () => {
-    expect(scanConflictLines('a\nb\nc')).toEqual([])
-    const crlf = '<<<<<<< HEAD\r\nours\r\n=======\r\n'
-    expect(scanConflictLines(crlf).map((row) => row.kind)).toEqual(['start', 'separator'])
+describe('P3-2 — 死代码删除（v2 plan §10）', () => {
+  it('scanConflictLines / ConflictMarkedLine 已随批次四删除（classifyConflictLine 保留）', async () => {
+    const module = await import('../src/client/m13/conflict-markers.ts')
+    expect('scanConflictLines' in module).toBe(false)
+    expect(typeof module.classifyConflictLine).toBe('function')
   })
 })

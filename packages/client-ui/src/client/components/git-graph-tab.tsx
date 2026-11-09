@@ -27,9 +27,12 @@ import { bucketArrivals, GRAPH_ROW_HEIGHT, GraphLaneSvg } from '../graph/graph-s
 import { detailViewModel, formatCommitDate, graphNoticeRetry, rowRefChips } from '../graph-view-model.js'
 import { searchEmptyResult, searchFilterChips } from '../graph-search.js'
 import { comparePanelView } from '../graph-compare.js'
+// V2 批次四（[8]）：非 git 目录空态引导卡片的纯视图模型（plan §6.6）。
+import { initEmptyStateView } from '../init-empty-state.js'
 import { wipNodeViewModel } from '../wip-node.js'
 import type { NS } from '../locales.js'
-import type { GitErrorLike } from '../remote/mount.js'
+import type { InitResult } from 'dsh-gitkit/types'
+import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
 import type { GitCompareState } from '../store/git-compare-store.js'
 import type { GitGraphState } from '../store/git-graph-store.js'
 import { GRAPH_LOAD_MORE_TAIL } from '../store/git-graph-store.js'
@@ -66,6 +69,12 @@ export interface GraphInjected {
   admin: GitAdminFace
   /** 打开变更面板（WIP 节点点击意图 [38]；会话域地址由 apply 半以 sessionId 铸造）。 */
   openChanges(): void
+  /**
+   * [8] 初始化动作（V2 批次四；apply 半以 changesOps.initRepository 闭包注入——
+   * 图 tab 的空态引导卡片消费）。成功后状态帧由 host afterWrite 通知驱动
+   * （workspace unresolved → resolved，流不断开——plan §6.3），无需手动刷新。
+   */
+  initRepository(): Promise<RemoteResult<InitResult>>
   /** 顶栏搜索过滤提交（[35]；store 半归一化 + 变化清窗重载）。 */
   setSearchFilter(query: string, author: string): void
   /** 单文件历史 path 模式开合（[60]；path=null 退出）。 */
@@ -93,7 +102,7 @@ export type GitGraphTabProps = PropsRuntime<'sidebar.right.pane.tab'>
 export function GitGraphTab(props: GitGraphTabProps): ReactNode {
   const {
     t, useStore, actions, useGitGraph, useGitStatus, useGitIntent, useGitCompare,
-    loadMore, reload, refreshRefs, showCommit, admin, openChanges,
+    loadMore, reload, refreshRefs, showCommit, admin, openChanges, initRepository,
     setSearchFilter, setHistoryPath, compareOpen, compareClose, compareRetry, consumeIntent,
   } = props
   const graph = useGitGraph((state) => state)
@@ -108,6 +117,9 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
   const [deleteTagAsk, setDeleteTagAsk] = useState<string | null>(null)
   const [tagBusy, setTagBusy] = useState(false)
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
+  // ── V2 批次四 [8]：初始化引导卡片的动作态（空态卡片渲染决策 = initEmptyStateView）──
+  const [initRunning, setInitRunning] = useState(false)
+  const [initError, setInitError] = useState<GitErrorLike | null>(null)
   // ── V2 批次二：顶栏搜索草稿（[35]）+ 时间旅行确认意图（[37]）──
   const [queryDraft, setQueryDraft] = useState('')
   const [authorDraft, setAuthorDraft] = useState('')
@@ -220,6 +232,25 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
     checking: status.repo.checking,
     status: status.status,
   })
+  // [8] 空态引导卡片（恰 git/no-repository 可见——workspace-unresolved/检查中/可用
+  // 态不渲染；判定口径见 init-empty-state.ts）。
+  const initView = initEmptyStateView({
+    available: status.repo.available,
+    checking: status.repo.checking,
+    statusError: status.statusError,
+  })
+
+  /** [8] 初始化动作：成功后状态帧由 host afterWrite 通知驱动（workspace
+      unresolved → resolved，流不断开——plan §6.3）；失败 → 就地错误条。 */
+  const runInit = (): void => {
+    if (initRunning) return
+    setInitRunning(true)
+    setInitError(null)
+    void initRepository().then((result) => {
+      setInitRunning(false)
+      if (!result.ok) setInitError(result.error)
+    })
+  }
   const selectedState = selectedOid !== null ? graph.details[selectedOid] : undefined
   // 时间旅行的乐观并发基线（discard 三重守卫同款）：当前 HEAD oid。
   const headOid = status.status?.branch.oid ?? null
@@ -265,6 +296,24 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
               else reload()
             }}
           />
+        </div>
+      )}
+      {/* [8] 空态引导卡片（plan §6.6：说明 + 初始化按钮——图 tab 的空态半；
+          init 失败就地错误条，成功后状态帧驱动图 reload）。 */}
+      {unavailable && initView !== null && (
+        <div className='dsh-git-init-card' data-git-init-card=''>
+          <p className='dsh-git-init-card__title' data-git-init-title=''>{t(initView.titleKey)}</p>
+          <p className='dsh-git-init-card__body' data-git-init-body=''>{t(initView.bodyKey)}</p>
+          {initError !== null && <GitErrorNotice error={initError} t={t} />}
+          <button
+            type='button'
+            className='dsh-git-init-card__action'
+            data-git-init-action=''
+            disabled={initRunning}
+            onClick={runInit}
+          >
+            {initRunning ? t(initView.runningKey) : t(initView.actionKey)}
+          </button>
         </div>
       )}
       {adminError !== null && (

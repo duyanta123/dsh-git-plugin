@@ -201,6 +201,26 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
       count: listCount((details as { violations?: unknown }).violations),
     }),
   },
+  // V2 批次四体验集成新码（host admin-repo/pr；plan §6.4）。Record 穷尽约束随
+  // GitCode 键域扩张——host 侧声明这批码后本表即编译期闭合。
+  'git/init-failed': {
+    // path 为主文案插值；reason 是 host 判定的失败原因（已仓库/非空目录等），一并
+    // 插值（无 stderr 字段——details 只有 path/reason，plan §6.4）。
+    key: 'error.init-failed',
+    params: (details) => ({
+      path: text((details as { path?: unknown }).path),
+      reason: text((details as { reason?: unknown }).reason),
+    }),
+  },
+  'git/pr-tool-missing': {
+    key: 'error.pr-tool-missing',
+    params: (details) => ({ tool: text((details as { tool?: unknown }).tool) }),
+  },
+  'git/pr-create-failed': {
+    // stderr 不进主文案——errorNoticeView 的 details.stderr 折叠区路径已承担
+    // （过 redact 后展示），主文案只给通用失败说明（plan §6.4）。
+    key: 'error.pr-create-failed',
+  },
 }
 
 /** 查一个错误码的展示条目；陌生 code → null（透传 error.message 的回落路径）。 */

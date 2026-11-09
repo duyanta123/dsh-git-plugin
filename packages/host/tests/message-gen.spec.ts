@@ -20,12 +20,13 @@
  *   - 调用方取消原样穿透（不折叠为域错误）。
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import type { GenerateOptions, LlmCallConfig, StreamChunk, TextBlock } from '@deepseek-ai/dsh-llm'
-import { afterAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { GitService } from '../src/index.ts'
 import {
   CONVENTIONAL_COMMIT_RE,
@@ -37,15 +38,19 @@ import {
   MAX_DIFF_FILES,
   MAX_PROMPT_FILES,
   MessageGenEngine,
+  PR_BODY_MAX_CHARS,
+  PR_TITLE_MAX_CHARS,
   buildCommitMessagePrompt,
   buildDiffSummary,
+  buildPrDescriptionPrompt,
   validateCommitMessage,
+  validatePrDescription,
 } from '../src/message-gen.ts'
 import type { GitLlmFace, MessageGenEngineOptions } from '../src/message-gen.ts'
 import { DiffEngine } from '../src/diff.ts'
 import { createGitRunners } from '../src/git-runner.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
+import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
 
 // 并行负载下的资源裕量（真实 git 子进程；M6 集成 spec 同款先例）。
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
@@ -680,5 +685,165 @@ describe('MessageGenEngine — 超时/取消/llm 缺席（engine 级直构，200
 
   afterAll(async () => {
     while (cleanups.length > 0) await cleanups.pop()!()
+  })
+})
+
+// ============================================================
+// v2 批次四 — generatePrDescription（[清单 46] + [清单 70] 合并策略约定段）
+// ============================================================
+
+describe('generatePrDescription — 输出 shape / [70] 约定段 / 守卫（stub LLM）', () => {
+  const cleanups: Array<() => Promise<unknown>> = []
+  let realGlobalConfig: string | undefined
+  let realNosystem: string | undefined
+
+  beforeAll(async () => {
+    // [70] 探针读 `git config --get-regexp ^(merge|pull)\.`——本机全局/系统配置的
+    // merge.*|pull.* 键会污染「三探全缺」负用例（sync.spec GIT_CONFIG_GLOBAL 隔离
+    // 同款先例）。指向空文件 + NOSYSTEM=1 → 探针只见仓库本地配置。
+    realGlobalConfig = process.env.GIT_CONFIG_GLOBAL
+    realNosystem = process.env.GIT_CONFIG_NOSYSTEM
+    const dir = await scratchDir('dshgit-msg-pr-gitconfig-', cleanups)
+    process.env.GIT_CONFIG_GLOBAL = join(dir, 'gitconfig-empty')
+    process.env.GIT_CONFIG_NOSYSTEM = '1'
+  })
+
+  afterAll(async () => {
+    if (realGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL
+    else process.env.GIT_CONFIG_GLOBAL = realGlobalConfig
+    if (realNosystem === undefined) delete process.env.GIT_CONFIG_NOSYSTEM
+    else process.env.GIT_CONFIG_NOSYSTEM = realNosystem
+    while (cleanups.length > 0) await cleanups.pop()!()
+  })
+
+  function writeRepoFile(repo: string, rel: string, body: string): void {
+    const target = join(repo, rel)
+    mkdirSync(dirname(target), { recursive: true })
+    writeFileSync(target, body, 'utf8')
+  }
+
+  it('validatePrDescription 规则表：首行 title + body、Title:/Body: 前缀剥壳、截断与 conventional 标志', () => {
+    const plain = validatePrDescription('feat: add login flow\n\n## What\n\nAdds login.')
+    expect(plain).toEqual({ title: 'feat: add login flow', body: '## What\n\nAdds login.', empty: false, conventional: true })
+    const prefixed = validatePrDescription('Title: fix(api): handle null\nBody: The parser used to throw.')
+    expect(prefixed.title).toBe('fix(api): handle null')
+    expect(prefixed.body).toBe('The parser used to throw.')
+    expect(prefixed.conventional).toBe(true)
+    const unconvention = validatePrDescription('Update the thing\n\nSome body.')
+    expect(unconvention.conventional).toBe(false)
+    expect(unconvention.empty).toBe(false)
+    const noBody = validatePrDescription('chore: tidy')
+    expect(noBody.body).toBe('')
+    const empty = validatePrDescription('   \n\n  ')
+    expect(empty.title).toBe('')
+    expect(empty.empty).toBe(true)
+    // 截断上限（256/4000）。
+    const longTitle = validatePrDescription(`${'t'.repeat(300)}\n\nbody`)
+    expect(longTitle.title.length).toBe(256)
+    const longBody = validatePrDescription(`feat: x\n\n${'b'.repeat(5000)}`)
+    expect(longBody.body.length).toBe(4000)
+    expect(PR_TITLE_MAX_CHARS).toBe(256)
+    expect(PR_BODY_MAX_CHARS).toBe(4000)
+    // CRLF 规范化。
+    const crlf = validatePrDescription('feat: x\r\n\r\nBody line.')
+    expect(crlf.body).toBe('Body line.')
+  })
+
+  it('buildPrDescriptionPrompt：约定段缺失整段省略；给定时入 prompt；提交/文件计数面', () => {
+    const commits = Array.from({ length: 12 }, (_, index) => ({ shortOid: `abcd${String(index).padStart(3, '0')}`, subject: `s${String(index)}` }))
+    const files = [{ status: 'modified', path: 'a.txt', additions: 1, deletions: 2, patch: null }]
+    const without = buildPrDescriptionPrompt('main', commits, files, null)
+    expect(without.conventionsIncluded).toBe(false)
+    expect(without.input.includes('Repository conventions')).toBe(false)
+    expect(without.commitsConsidered).toBe(10)
+    expect(without.filesConsidered).toBe(1)
+    expect(without.system.includes('pull request titles')).toBe(true)
+    const withConventions = buildPrDescriptionPrompt('main', commits.slice(0, 2), files, 'Repository conventions for merges and pull requests (detected; follow them):\n- git config: merge.ff=only')
+    expect(withConventions.conventionsIncluded).toBe(true)
+    expect(withConventions.input.includes('merge.ff=only')).toBe(true)
+    expect(withConventions.commitsConsidered).toBe(2)
+  })
+
+  it('服务级成功路径：stub LLM 产出 title+body → PrDescription（system 为 PR prompt、purpose 省略、[70] 约定段进 prompt）', async () => {
+    const repo = await bornRepo('dshgit-msg-pr-ok-', cleanups)
+    await stageFiles(repo, 2, (index) => `content ${String(index)}`)
+    writeRepoFile(repo, '.github/PULL_REQUEST_TEMPLATE.md', '## Summary\n## Checklist')
+    git(repo, 'config', 'merge.ff', 'only')
+    const records: RecordedRequest[] = []
+    const { service } = makeService(repo, { llm: stubLlmFace('text', 'feat: add pair of files\n\n## What\n\nTwo files.', records), llmProvider: 'prov-a', llmModel: 'model-a' })
+    const description = await service.generatePrDescription()
+    expect(description).toEqual({ title: 'feat: add pair of files', body: '## What\n\nTwo files.', conventional: true })
+    // 请求组装面（验证 stub 实际收到，而非引擎自述）：system 是 PR prompt；purpose
+    // 字段省略（封闭联合口径）；[70] 约定段进了 user input。
+    const request = records[0]!
+    expect(request.options.system?.includes('pull request titles')).toBe(true)
+    expect('purpose' in request.options).toBe(false)
+    const userText = (request.options.messages?.[0] as { content?: Array<{ type?: string; text?: string }> } | undefined)?.content?.find((c) => c.type === 'text')?.text ?? ''
+    expect(userText.includes('Recent commits:')).toBe(true)
+    expect(userText.includes('Repository conventions for merges and pull requests')).toBe(true)
+    expect(userText.includes('PR template (.github/PULL_REQUEST_TEMPLATE.md)')).toBe(true)
+    expect(userText.includes('merge.ff=only')).toBe(true)
+  })
+
+  it('[70] 三探全缺 ⇒ 约定段整段省略（缺失即省略）', async () => {
+    const repo = await bornRepo('dshgit-msg-pr-noconv-', cleanups)
+    await stageFiles(repo, 1, () => 'content')
+    const records: RecordedRequest[] = []
+    const { service } = makeService(repo, { llm: stubLlmFace('text', 'feat: single file\n\nBody.', records), llmProvider: 'prov-a', llmModel: 'model-a' })
+    const description = await service.generatePrDescription()
+    expect(description.title).toBe('feat: single file')
+    const request = records[0]!
+    const userText = (request.options.messages?.[0] as { content?: Array<{ type?: string; text?: string }> } | undefined)?.content?.find((c) => c.type === 'text')?.text ?? ''
+    expect(userText.includes('Repository conventions')).toBe(false)
+  })
+
+  it('unborn 且无 diff ⇒ git/nothing-staged；clean born 仓库合法（提交面兜底）', async () => {
+    const unborn = await scratchRepo('dshgit-msg-pr-unborn-', cleanups, { name: 't', email: 't@example.com' })
+    const unbornRecords: RecordedRequest[] = []
+    const unbornService = makeService(unborn, { llm: stubLlmFace('text', 'feat: x', unbornRecords), llmProvider: 'p', llmModel: 'm' }).service
+    const unbornRejection = asRemote(await unbornService.generatePrDescription().then(
+      (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
+      (cause: unknown) => cause,
+    ))
+    expect(unbornRejection?.code).toBe('git/nothing-staged')
+    expect(unbornRecords).toHaveLength(0)
+    // clean born：无 staged/unstaged，但最近提交提供材料 → 正常到 LLM。
+    const clean = await bornRepo('dshgit-msg-pr-clean-', cleanups)
+    const cleanRecords: RecordedRequest[] = []
+    const cleanService = makeService(clean, { llm: stubLlmFace('text', 'feat: from commits\n\nFrom the seed commit.', cleanRecords), llmProvider: 'p', llmModel: 'm' }).service
+    const description = await cleanService.generatePrDescription()
+    expect(description.title).toBe('feat: from commits')
+    const request = cleanRecords[0]!
+    const userText = (request.options.messages?.[0] as { content?: Array<{ type?: string; text?: string }> } | undefined)?.content?.find((c) => c.type === 'text')?.text ?? ''
+    expect(userText.includes('(no file summary available)')).toBe(true)
+    expect(userText.includes('chore: init')).toBe(true)
+  })
+
+  it('无 LLM 路由 ⇒ git/llm-route-unresolved；路由已解析但 llm 缺席 ⇒ llm-failed call；空产出 ⇒ llm-failed parse', async () => {
+    const repo = await bornRepo('dshgit-msg-pr-neg-', cleanups)
+    await stageFiles(repo, 1, () => 'content')
+    // 无路由（llmProvider/llmModel 空 + 无捕获）。
+    const noRoute = makeService(repo, { llm: stubLlmFace('text', 'feat: x', []) })
+    const routeRejection = asRemote(await noRoute.service.generatePrDescription().then(
+      (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
+      (cause: unknown) => cause,
+    ))
+    expect(routeRejection?.code).toBe('git/llm-route-unresolved')
+    // 路由已解析但 llm 服务缺席。
+    const noLlm = makeEngine(repo, undefined, { llmProvider: 'p', llmModel: 'm' })
+    const noLlmRejection = asRemote(await noLlm.generatePrDescription().then(
+      (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
+      (cause: unknown) => cause,
+    ))
+    expect(noLlmRejection?.code).toBe('git/llm-failed')
+    expect(noLlmRejection?.details.stage).toBe('call')
+    // 空产出 ⇒ parse。
+    const parse = makeEngine(repo, stubLlmFace('no-text', '', []), { llmProvider: 'p', llmModel: 'm' })
+    const parseRejection = asRemote(await parse.generatePrDescription().then(
+      (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
+      (cause: unknown) => cause,
+    ))
+    expect(parseRejection?.code).toBe('git/llm-failed')
+    expect(parseRejection?.details.stage).toBe('parse')
   })
 })

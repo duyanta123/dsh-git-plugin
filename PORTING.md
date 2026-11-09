@@ -16,6 +16,16 @@
 
 ## 2. 登记表（随施工推进；新条目追加在「历史条目」之后）
 
+### v2 批次四 体验集成模块（2026-11-10）
+
+| 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |
+|---|---|---|---|---|---|
+| C | `packages/host/src/admin-repo.ts`（非 git 目录 git init 引导引擎：[清单 8] initRepository） | 无第三方代码来源——`git init`（无 `-b` 旗标，初始分支尊重 init.defaultBranch 用户配置）/init 后 `rev-parse --show-toplevel` + `symbolic-ref --quiet --short HEAD` 回读语义按 git 官方文档 + 本机实测；编排骨架对照仓库内已登记 refs-admin.ts 纪律（先预检再变更后回读） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §6.3/§6.5；文件头自述「解析器自研（零来源代码搬运——对照仅 refs-admin.ts 的编排骨架纪律）」之登记即本行——C 级登记以 git 文档语义对照为据，防将来「顺手抄 init 引导库代码」无据可查）。已是仓库/位于仓库内前置拒绝（init-failed reason='already-a-repository' 零命令）、stderr 脱敏进 message 面、失效链由服务面承担均为任务口径 |
+| C | `packages/host/src/submodule.ts`（submodule 状态引擎：[清单 61] submoduleStatus，只列不递归） | 无第三方代码来源——`git submodule status` 行形 `<prefix><oid> <path>[ (<desc>)]` 与前缀语义（空格=clean / `-`=uninitialized / `+`=mismatch / `U`=冲突）按 git 官方文档 + 本机 git 2.55.0.windows.2 实测；默认形态 + `--cached` 双读按 path 归并；行解析器自研（缺前缀/oid/路径契约破坏要响） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §6.3/§6.5；文件头自述「对照仅 `git submodule status` 文档行形与本机实测」之登记即本行）。`U` 前缀映射 'dirty'（wire 枚举无 conflict 档——方案枚举缺口的最贴近映射）、未知前缀 unknown 前向容忍、无 submodule 空数组不抛错均为任务口径 |
+| C | `packages/host/src/pr.ts`（PR 引擎：[清单 46] generatePrDescription + createPr、[清单 69] prForBranch；D1=A 载体 = gh CLI） | 无第三方代码来源——`gh auth status` / `gh pr create --title <t> --body-file - [--base][--head][--draft]`（body 走 stdin 不进 argv）/ `gh pr view <branch> --json url,state` 命令形态按 gh CLI 官方文档语义；`rev-parse --abbrev-ref <branch>@{upstream}` head 推断按 git 官方文档；gh 非交互旗标行为未实测（方案 §6.10 如实登记为施工期验证点——真 gh 正路径不进自动门禁，pr.spec 假 transport 承载成功形状） | gh CLI 官方文档语义对照（正路径未实测） | —（无第三方材料入仓） | 自研实现，零代码搬运（docs/v2-implementation-plan.md §6.3/§6.5/§6.10）。守卫链（acknowledged danger 闸 → title 非空 → 分支参数首字符 `-` 拒绝——positioned arg 旗标注入防线，均零命令）、pr-tool-missing（未装/未登录同码）/pr-create-failed（stderr 过 sanitizeStderr）域码、prForBranch 查询失败/无关联/JSON 不可解析返回 null 静默降级、GhTransport 结构切片仅单测可达均为任务口径 |
+
+（v2 批次四对既有已登记文件的续写改动——`message-gen.ts` 的 generatePrDescription 六步管线复用（M7 登记面内续写；[70] 合并策略约定段为任务口径）、`index.ts`/`types.ts`/`error-codes.ts` 的服务面/类型面/域码扩展、client 面空态引导与 PR/submodule/命令面板接线（`init-empty-state.ts`/`pr-face.ts`/`pr-view-model.ts`/`submodule-view-model.ts`/`commands-face.ts`/`GitPrDialog.tsx`/`GitSubmodulePanel.tsx`——均按方案 §6.6 与 dsh 基线积木自研，无第三方对照来源）与 `audit.ts` 写审计环缓冲（纯本仓自研，无对照来源）——均无登记义务。）
+
 ### v2 批次三 提交链路与护栏模块（2026-11-08）
 
 | 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |

@@ -126,13 +126,14 @@ describe('headerViewModel — C1 渲染决策', () => {
 })
 
 describe('headerMenuItems — V2 批次一菜单模型（同步占位转真 + 管理面扩行）', () => {
-  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行 + 批次二两新行全部可点', () => {
+  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行 + 批次二两新行 + 批次四创建 PR 行全部可点', () => {
     const view = headerViewModel(mkState({ status: mkSnapshot() }))
     const items = headerMenuItems(view)
     expect(items.map((item) => item.id)).toEqual([
       'open-changes', 'open-graph', 'commit', 'commit-push',
       'push', 'pull', 'fetch',
-      'branches', 'branch-compare', 'branch-reset', 'branch-create', 'tag-create', 'worktree', 'branch-delete',
+      'branches', 'branch-compare', 'branch-reset', 'branch-create', 'tag-create', 'worktree',
+      'pr-create', 'branch-delete',
     ])
     expect(items.every((item) => item.enabled)).toBe(true)
     expect(items.map((item) => item.id as string)).not.toContain('sync')
@@ -141,14 +142,25 @@ describe('headerMenuItems — V2 批次一菜单模型（同步占位转真 + �
     expect(items.find((item) => item.id === 'push')?.labelKey).toBe('menu.push')
     expect(items.find((item) => item.id === 'fetch')?.labelKey).toBe('menu.fetch')
     expect(items.find((item) => item.id === 'worktree')?.labelKey).toBe('menu.worktree')
+    expect(items.find((item) => item.id === 'pr-create')?.labelKey).toBe('menu.prCreate')
   })
 
-  it('无仓库时全部禁用', () => {
+  it('无仓库态：整菜单收敛为单行「初始化 Git 仓库…」（[8] 空态引导 header 半——可点）', () => {
     const view = headerViewModel(mkState({
       statusError: { code: 'git/no-repository', message: 'x' },
       repo: { available: false, root: null, checking: false },
     }))
-    expect(headerMenuItems(view).every((item) => !item.enabled)).toBe(true)
+    const items = headerMenuItems(view)
+    expect(items.map((item) => item.id)).toEqual(['init-repo'])
+    expect(items[0]?.labelKey).toBe('menu.initRepo')
+    expect(items.every((item) => item.enabled)).toBe(true)
+  })
+
+  it('检查中态：保持完整菜单且全部禁用（v1 [清单 54] 行为不回归）', () => {
+    const view = headerViewModel(mkState())
+    const items = headerMenuItems(view)
+    expect(items.map((item) => item.id)).not.toContain('init-repo')
+    expect(items.every((item) => !item.enabled)).toBe(true)
   })
 })
 
@@ -204,6 +216,30 @@ describe('branchSubmenuEntries — 分支子菜单渲染模型（plan §3.6）',
       abbrevOid: null,
     })
     expect(entries).toEqual([])
+  })
+
+  it('V2 批次四（[69]）：prNumbers 在场时关联分支行带 prNumber（无关联分支缺省——不占位）', () => {
+    const entries = branchSubmenuEntries({
+      branches: [{ shortName: 'main' }, { shortName: 'feature/a' }, { shortName: 'dev' }],
+      headName: 'main',
+      detached: false,
+      abbrevOid: null,
+      prNumbers: { main: 12, dev: null },
+    })
+    expect(entries.find((entry) => entry.id === 'branch-switch:main')?.prNumber).toBe(12)
+    // feature/a 不在 prNumbers、dev 的查询结果为 null——两行都不带 prNumber 字段。
+    expect(entries.find((entry) => entry.id === 'branch-switch:feature/a')?.prNumber).toBeUndefined()
+    expect(entries.find((entry) => entry.id === 'branch-switch:dev')?.prNumber).toBeUndefined()
+  })
+
+  it('prNumbers 缺席（旧装配/pr 面缺席）⇒ 全部行无 prNumber 字段', () => {
+    const entries = branchSubmenuEntries({
+      branches: [{ shortName: 'main' }],
+      headName: 'main',
+      detached: false,
+      abbrevOid: null,
+    })
+    expect(entries[0]?.prNumber).toBeUndefined()
   })
 })
 

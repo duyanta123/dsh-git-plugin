@@ -47,6 +47,12 @@
  * `git/bad-request` reason 联合 `+= 'malformed-trailer'`（方案 §5.2：CommitOptions
  * trailers 条目不合法）。
  *
+ * v2 批次四（2026-11-08，docs/v2-implementation-plan.md §6.4）续增三码：
+ * `git/init-failed`（initRepository 前置复核失败——已是仓库 / `git init` 自身失败，
+ * details.path + reason）、`git/pr-tool-missing`（gh CLI 不可用——ghCommand 解析失败
+ * 或 `gh auth status` 未过，details.tool='gh'）、`git/pr-create-failed`（gh pr
+ * create/pr view 的 API 侧失败，details.stderr 过 sanitizeStderr）。
+ *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
  * `declare module '@deepseek-ai/dsh-typert-protocol'` + `interface RemoteErrorDetailsMap`，
@@ -138,6 +144,17 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
      * 不可豁免**（overridable:false——host commit 守卫强制，零命令）。
      */
     'git/commit-blocked': { violations: CommitViolation[]; overridable: boolean }
+    // —— v2 批次四三码（admin-repo/pr 消费；docs/v2-implementation-plan.md §6.4）——
+    /**
+     * initRepository 前置复核失败（[清单 8]）：目录已是仓库（`rev-parse` 复核非仓库态
+     * 失败——方案 §6.5「前置 git rev-parse 复核非仓库态」）或 `git init` 自身失败；
+     * reason 为英文诊断词（'already-a-repository' / 'git-init-failed'）。
+     */
+    'git/init-failed': { path: string; reason: string }
+    /** gh CLI 不可用（[清单 46/69]；D1=A）：可执行解析失败（ghCommand 指向解析不到的名字）或 `gh auth status` 预检未通过（未安装/未登录——方案 §6.10「未装/未登录 ⇒ pr-tool-missing」）。 */
+    'git/pr-tool-missing': { tool: 'gh' }
+    /** gh pr create / pr view 的 API 侧失败（stderr 过 sanitizeStderr 后进 details）。 */
+    'git/pr-create-failed': { stderr: string }
   }
 }
 

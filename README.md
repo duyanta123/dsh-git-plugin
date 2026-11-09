@@ -12,7 +12,7 @@ dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
 
-## 1. 功能清单（v1 + V2 批次一～三）
+## 1. 功能清单（v1 + V2 批次一～四）
 
 **看清（变更感知）**
 - 工作区快照：staged / unstaged / untracked / conflicted 四类变更 + ahead/behind + 分支/HEAD 字段（含 detached、unborn 首提交前、rename、二进制、中文路径）；
@@ -55,6 +55,13 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 - stash 面板：push（**默认含 untracked**，可关；D4=B）/ list / pop（冲突 ⇒ `git/merge-conflict` op 'stash-pop' 且 stash 不丢）/ drop（danger 确认双闸；`git/stash-not-found` 序号预检）；
 - 提交护栏（提交前自动 `scanStaged`，违规列表 + 按类豁免）：secret 类**硬阻断不可豁免**（`git/commit-blocked` overridable:false——密钥格式/PEM 头/.env 键值，命中展示文本掩码脱敏不落明文）；.env 文件 / 大文件 / 构建产物 / CRLF 混行类可勾选豁免；
 - 提交对话框扩展：作者署名 trailer 编辑区（Co-authored-by / Generated-by 等，非法行即时警示 `malformed-trailer`）、hook 输出折叠区（`git commit` 进程整体 stdout/stderr 尾保留显示）、CRLF 提示条（`repoDiagnostics`：autocrlf 生效值 + 混行文件清单，可折叠不阻断）。
+
+**体验集成与收尾（V2 批次四）**
+- 非 git 目录引导（清单 8）：变更/提交图 tab 空态引导卡片 + header 菜单「初始化 Git 仓库…」（恰 `git/no-repository` 可见）；`initRepository` 前置非仓库复核（失败 ⇒ `git/init-failed` 带 path/reason 可读提示，零命令），成功后状态流重探（workspace 从未解析 → 就绪）；
+- 创建 PR（清单 46/69/70）：创建 PR 对话框——AI 生成描述按钮（`generatePrDescription`，prompt 附带**合并策略约定段**：只读检测 PR 模板 / CONTRIBUTING / `git config` merge·pull 相关项，缺失即省略）+ 标题/描述编辑 + base 分支选择（refs 数据：本地 + 远端分支，当前分支排除）+ draft 勾选 + **创建 danger 勾选确认**（对外可见动作的二次确认）+ 成功展示 PR URL（锚点打开）；载体 = gh CLI，未安装/未登录 ⇒ `git/pr-tool-missing` 可读降级文案；推送成功态引导「创建 PR…」；**分支关联展示**（清单 69）：分支选择器行 `↗ PR #N` 徽标与推送对话框「关联 PR」锚点展示 `prForBranch` 查询结果，无关联/查询失败静默不占位；
+- 命令面板与全局快捷键（清单 51，客户端半）：'/' 菜单贡献「打开变更面板」「提交图」（纯 UI 动作）+ 全局快捷键 `Ctrl/Cmd+Shift+E`（变更面板）/ `Ctrl/Cmd+Shift+G`（提交图），可在 dsh 设置 → 快捷键改键，命令自动进快捷键参考页可搜索（机制 = dsh `commandUi`/`shortcuts` 注入服务，spike 结论见 `docs/v2-implementation-plan.md` §6.6）；
+- 子模块展示（清单 61）：变更卡片 submodule 徽标 →「子模块详情」面板（`submoduleStatus` **只列不递归**：path / 当前 oid vs 记录 oid 差异高亮 / state 徽标 clean·dirty·uninitialized·mismatch）；
+- 写操作审计日志（清单 66）：写方法**双出口**入环（成功 `ok:true`、失败 `ok:false`+域码），summary 只含 op 参数摘要白名单（不落提交正文 / 文件内容 / 密钥）；`auditLog` RPC 查询（newest-first + limit/since 过滤；按方案无专属 UI）。
 
 ## 2. 安装（用户形态）
 
@@ -209,7 +216,7 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
 `packages/typert-protocol`（dsh MIT npm 包未改动副本，仅构建期/类型面）、根级 `tests/`（骨架 + licenses 合规守卫）、
 `NOTICE.md` / `PORTING.md`（署名与移植登记 A/B/C 级）、`THIRD_PARTY_NOTICES.md`（全文许可）。
 
-## 5. 已知限制（v1 如实登记）
+## 5. 已知限制（v1 + V2 如实登记）
 
 - **嵌套目录变更的角标刷新最迟 60 秒**：宿主 `ctx.fs.watch` 对仓库根是 depth:0（硬限制，
   spec §2.2）——子目录内文件的改动不产生 fs 事件，状态刷新回落到兜底轮询
@@ -219,12 +226,21 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
   （`packages/host/src/git-runner.ts:48`）——不会在终端挂起等输入。桌面环境首次
   push/pull/fetch 私有远端时，Git Credential Manager 可能弹出认证窗口，**在弹窗里完成认证即可**；
   无 GCM 的环境直接得到 `git/auth-failed` 域错误（stderr 已脱敏，`packages/host/src/error-codes.ts:86`）。
+  PR 功能（创建 PR / 分支关联查询）依赖 **GitHub CLI（gh）**：未安装或未完成
+  `gh auth login` 时返回 `git/pr-tool-missing` 可读降级文案；gh 触发的认证提示面
+  与 GCM 同类——按提示完成认证即可。
 - **AI 提交信息需配置 LLM 路由**：未配置 `llmProvider`/`llmModel`（且会话无模型捕获）时，
   `git/generateCommitMessage` 返回 `git/llm-route-unresolved`——端点已服务，属确定性域错误。
+  AI 生成 PR 描述（`generatePrDescription`，批次四）走同一路由，限制相同。
 - **事件传输 = 轮询 + 写后失效**：dsh 对出树插件无事件广播（spec §②），变更高峰期角标
   与 tab 数据的更新粒度受轮询间隔影响。
 - **v1 单 session 单仓库**：一个会话一个工作区（多 session 天然多仓库）；子模块仓库不展开。
-- **命令面板/全局快捷键**未做（清单 51：宿主机制待开放，spec §0.4-7）。
+- **命令面板/全局快捷键**（清单 51）：**已交付客户端半**——'/' 菜单贡献「打开变更面板」「提交图」
+  （纯 UI 动作，`ctx.commandUi.register`）+ 全局快捷键 `Ctrl/Cmd+Shift+E` / `Ctrl/Cmd+Shift+G`
+  （`ctx.shortcuts.register`；可在 dsh 设置 → 快捷键改键，命令自动进快捷键参考页）。仍存的限制：
+  提交/推送/拉取/获取/切换分支/stash 等**写动作未进 '/' 命令面板**（宿主命令注册面未落地，
+  入口仍为 header 菜单与各 tab）；dsh 无 VS Code 式「全局命令面板」产品面，最接近的可搜索面是
+  快捷键参考页（只查/改键，不执行）；桌面原生菜单为固定模板，不挂第三方命令。
 - **push 真实凭证/网络失败未自动化**：sync 测试用本地 bare 远端 + stderr 分类器夹具覆盖
   （无凭证管理器，可离线确定）；真实网络路径靠 verify:load 的人工走查。
 

@@ -2273,3 +2273,243 @@
   font-family: var(--dsw-font-mono-family, var(--dsw-font-family));
   font-size: var(--dsw-font-xxs-12-font-size);
 }
+
+/* ══ V2 批次四体验集成（[8] 初始化空态引导 / [46] PR 对话框 / [69] 关联展示 /
+   [61] 子模块详情面板；plan §6.6）——颜色仍只引宿主 token（P3-6 守卫纪律）。══ */
+
+/* ── [8] 非 git 目录空态引导卡片（changes/graph 两个 tab 的空态半共用）── */
+.dsh-git-init-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 16px;
+  margin: 12px 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-init-card__title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-m-16-font-size);
+}
+
+.dsh-git-init-card__body {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+.dsh-git-init-card__action {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.dsh-git-init-card__action:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+/* ── [46] GitPrDialog 正文（壳/标题/遮罩/焦点由原语 Modal 承担）── */
+.dsh-git-pr-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-pr-dialog__title-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dsh-git-pr-dialog__generate {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-pr-dialog__generate:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-pr-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-pr-dialog__field-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-pr-dialog__title-input,
+.dsh-git-pr-dialog__body-input {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 6px 10px;
+  resize: vertical;
+}
+
+.dsh-git-pr-dialog__picker {
+  justify-content: flex-start;
+  text-align: left;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-pr-dialog__picker:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-pr-dialog__draft {
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+.dsh-git-pr-dialog__success {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dsh-git-pr-dialog__success-line {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+.dsh-git-pr-dialog__success-link {
+  color: var(--dsw-alias-link);
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+/* ── [69] GitPushDialog 的关联 PR 行 + 推送成功态 ── */
+.dsh-git-push-dialog__done {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+.dsh-git-push-dialog__link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-push-dialog__link-label {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-push-dialog__link-anchor {
+  color: var(--dsw-alias-link);
+}
+
+.dsh-git-push-dialog__link-state {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  padding: 1px 6px;
+}
+
+/* ── [61] GitSubmodulePanel 正文（壳/标题/遮罩/焦点由原语 Modal 承担）── */
+.dsh-git-submodule-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-submodule-panel__status {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-submodule-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-git-submodule-panel__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px;
+}
+
+/* 当前 oid vs 记录 oid 差异高亮（[61] 交付口径）：error 语义左边线 + 文字。 */
+.dsh-git-submodule-panel__item[data-git-submodule-mismatch] {
+  border-left: 2px solid var(--dsw-alias-state-error-primary);
+}
+
+.dsh-git-submodule-panel__path {
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  word-break: break-all;
+}
+
+.dsh-git-submodule-panel__state {
+  justify-self: start;
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 1px 6px;
+}
+
+.dsh-git-submodule-panel__oids {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dsh-git-submodule-panel__oid {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-submodule-panel__hint {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}

@@ -56,6 +56,12 @@ export interface GitStatusSource {
   reset(): void
   /** 终结：递增代际 + dispose 句柄（ctx.effect 清理半）。 */
   dispose(): void
+  /**
+   * P3-8：mount 失败的错误投影（apply 半在 mountGitRemote reject 时调用——
+   * 状态面落 `gateway/service-unavailable` 同形 + repo 不可用投影；不抛不弃，
+   * UI 由重试动作走 refresh 重试（apply 半的 onOpenFailed 会一并重试 mount）。
+   */
+  projectUnavailable(cause: unknown): void
 }
 
 const INITIAL_STATE: GitStatusSourceState = {
@@ -87,8 +93,13 @@ export function snapshotSignature(snapshot: GitStatusSnapshot): string {
   })
 }
 
-/** 创建状态源（工厂——模块级句柄禁止，map §3.4）。 */
-export function createGitStatusSource(rpc: GitRpcFace): GitStatusSource {
+/** 创建状态源（工厂——模块级句柄禁止，map §3.4）。
+ *  `hooks.onOpenFailed`：流打开失败（载波/命名空间缺席）后的回调（V2 批次四 P3-8：
+ *  apply 半用它触发 mount 重试——mount 失败不再裸 reject 打断 fiber，plan §6.6）。 */
+export function createGitStatusSource(
+  rpc: GitRpcFace,
+  hooks?: { onOpenFailed?(cause: unknown): void },
+): GitStatusSource {
   const store = createSnapshotStore<GitStatusSourceState>({ ...INITIAL_STATE, repo: { ...INITIAL_STATE.repo } })
   let generation = 0
   let handle: GitStreamHandle<GitStatusFrame, GitFollowCommand> | null = null
@@ -139,6 +150,8 @@ export function createGitStatusSource(rpc: GitRpcFace): GitStatusSource {
           s.streaming = false
           s.statusError = { code: causeCode(cause), message: causeMessage(cause) }
         })
+        // P3-8：开流失败通知装配半（mount 重试钩子；缺省 no-op 保持旧签名兼容）。
+        hooks?.onOpenFailed?.(cause)
         return
       }
       if (gen !== generation) {
@@ -200,6 +213,16 @@ export function createGitStatusSource(rpc: GitRpcFace): GitStatusSource {
       handle = null
       stale?.dispose()
       set((s) => { s.streaming = false })
+    },
+    projectUnavailable(cause) {
+      // P3-8（plan §6.6）：mount reject 的状态面投影——`gateway/service-unavailable`
+      // 同形（远程载波层异常的统一折叠码，spec §1.0.1：UI 显示重试），repo 投影置
+      // 不可用。不抛不弃：mount 已失败的 fiber 继续活着，错误条由 statusError 驱动。
+      set((s) => {
+        s.streaming = false
+        s.statusError = { code: causeCode(cause), message: causeMessage(cause) }
+        s.repo = { available: false, root: null, checking: false }
+      })
     },
   }
 }

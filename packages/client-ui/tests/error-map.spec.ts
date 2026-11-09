@@ -49,6 +49,10 @@ const ALL_GIT_CODES: readonly GitCode[] = [
   'git/stage-patch-failed',
   'git/stash-not-found',
   'git/commit-blocked',
+  // V2 批次四体验集成新码（host admin-repo/pr；plan §6.4）。
+  'git/init-failed',
+  'git/pr-tool-missing',
+  'git/pr-create-failed',
 ]
 
 describe('ERROR_MAP — Record 穷尽约束（运行期镜像）', () => {
@@ -225,5 +229,31 @@ describe('errorNoticeView — 视图模型', () => {
     })
     expect(blocked.key).toBe('error.commit-blocked')
     expect(blocked.params).toEqual({ count: 2 })
+  })
+
+  it('V2 批次四新码：init-failed path+reason 双插值；pr-tool-missing tool；pr-create-failed stderr 折叠区（脱敏）', () => {
+    const init = errorNoticeView({
+      code: 'git/init-failed', message: 'init failed',
+      details: { path: 'D:/proj', reason: 'directory is not empty' },
+    })
+    expect(init.key).toBe('error.init-failed')
+    expect(init.params).toEqual({ path: 'D:/proj', reason: 'directory is not empty' })
+    const missing = errorNoticeView({
+      code: 'git/pr-tool-missing', message: 'gh missing',
+      details: { tool: 'gh' },
+    })
+    expect(missing.key).toBe('error.pr-tool-missing')
+    expect(missing.params).toEqual({ tool: 'gh' })
+    const failed = errorNoticeView({
+      code: 'git/pr-create-failed', message: 'create failed',
+      details: { stderr: 'GraphQL: Bad credentials (github.com), token=abc leaked' },
+    })
+    expect(failed.key).toBe('error.pr-create-failed')
+    expect(failed.params).toEqual({})
+    expect(failed.detailsText).toContain('token=***')
+    expect(failed.detailsText).not.toContain('token=abc')
+    // details 形状漂移（path/reason/tool 缺席）⇒ 空串插值不炸。
+    const drifted = errorNoticeView({ code: 'git/init-failed', message: 'init failed', details: undefined })
+    expect(drifted.params).toEqual({ path: '', reason: '' })
   })
 })

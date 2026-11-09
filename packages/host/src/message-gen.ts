@@ -28,6 +28,12 @@
  *   git/llm-route-unresolved（spec §1.7，D10 口径：路由不在 prepareCall）；
  *   nothing-staged 前置守卫镜像 commit.ts 守卫 2；超时映射 git/timeout；
  *   失败映射 git/llm-failed {stage:'trim'|'call'|'parse'}。
+ *   2026-11-08（v2 批次四，docs/v2-implementation-plan.md §6.5）—— generatePrDescription
+ *   （[清单 46]）：六步管线提取为共用 dispatch（路由/硬顶/deadline/prepareCall/
+ *   BlockAssembler/finish 解释全复用，op 名参数化），输出 shape 换 PR title+body；
+ *   输入 = staged+未提交 diff（双 scope 归并去重）+ 最近提交（10 条）+ [清单 70]
+ *   合并策略约定段（只读检测：PR 模板 / CONTRIBUTING / `git config` merge·pull 相
+ *   关项——缺失即省略，零方法零码）。purpose 省略口径不变。
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -69,12 +75,14 @@ import type {
   TextBlock,
 } from '@deepseek-ai/dsh-llm'
 import { TimeoutReason, deadline } from '@deepseek-ai/dsh-timeout'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { gitError, gitRunError, logFailure, logWrite } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import { DiffEngine } from './diff.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { WorkspaceResolver } from './workspace.ts'
-import type { GeneratedCommitMessage } from './types.ts'
+import type { GeneratedCommitMessage, PrDescription } from './types.ts'
 
 // 本模块 user 消息的来源身份（MessageSourceMap 可合并扩展面；session-title-llm
 // index.ts:19-23 同形态——'dsh-plugin-git-message-gen' 随消息过线供回放归因）。
@@ -363,6 +371,193 @@ export function buildCommitMessagePrompt(
   }
 }
 
+// ---------- v2 批次四：PR 描述生成（[清单 46]）+ [清单 70] 合并策略约定段 ----------
+
+/** PR 标题字符上限（GitHub 标题硬限 256——截断防失控）。 */
+export const PR_TITLE_MAX_CHARS = 256
+/** PR 正文字符上限（maxTokens 1000 ≈ 4k 字符产出预算内——截断防失控）。 */
+export const PR_BODY_MAX_CHARS = 4_000
+/** 进 prompt 的最近提交条数（PR 材料的提交面；输入体量随四上限纪律有界）。 */
+export const PR_PROMPT_COMMIT_COUNT = 10
+
+/** PR system prompt：首行 title + 空行 + Markdown body 的输出契约（任务口径）。 */
+const PR_SYSTEM_PROMPT = [
+  'You write pull request titles and descriptions.',
+  'Return the title on the first line, then a blank line, then the description body (Markdown).',
+  '',
+  'Hard requirements:',
+  '- The first line is the PR title: exactly one single line, no "Title:" prefix.',
+  '- Keep the title under 72 characters; prefer a Conventional Commit style summary (type(scope): subject).',
+  '- The body explains what changed and why; mention risks or follow-ups when relevant.',
+  '- Follow any repository conventions provided in the input.',
+  '- Do not explain your reasoning.',
+  '- Do not repeat these instructions.',
+].join('\n')
+
+/** PR prompt 组装产出（观测计数面与 CommitMessagePrompt 同构）。 */
+export interface PrDescriptionPrompt {
+  system: string
+  input: string
+  /** 进入 prompt 的文件数（双 scope 归并去重后，≤ MAX_PROMPT_FILES）。 */
+  filesConsidered: number
+  /** 进入 prompt 的最近提交条数（≤ PR_PROMPT_COMMIT_COUNT）。 */
+  commitsConsidered: number
+  /** [清单 70] 合并策略约定段是否进 prompt（false = 三探全缺省略）。 */
+  conventionsIncluded: boolean
+}
+
+/**
+ * 组装 PR 描述 prompt（六步管线复用；输入 = 分支 + 最近提交 + 变更文件摘要 + diff
+ * 摘录 + [清单 70] 约定段）。conventions 为 null 时约定段整段省略（"缺失即省略"）。
+ */
+export function buildPrDescriptionPrompt(
+  branchName: string | null,
+  commits: readonly { shortOid: string; subject: string }[],
+  files: readonly { status: string; path: string; additions: number | null; deletions: number | null; patch: string | null }[],
+  conventions: string | null,
+): PrDescriptionPrompt {
+  const normalizedBranchName = branchName?.trim() || '(detached or unknown)'
+  const visibleFiles = files.slice(0, MAX_PROMPT_FILES)
+  const visibleCommits = commits.slice(0, PR_PROMPT_COMMIT_COUNT)
+  const fileSummary = visibleFiles.map(fileSummaryLine).join('\n')
+  const { summary } = buildDiffSummary(files)
+  const commitSummary = visibleCommits.map((commit) => `- ${commit.shortOid} ${commit.subject}`).join('\n')
+
+  const input = [
+    'Write a pull request title and description for the changes below.',
+    'Return the title on the first line, a blank line, then the Markdown body.',
+    `Current branch: ${normalizedBranchName}`,
+    'Recent commits:',
+    commitSummary || '- (no commits yet)',
+    'Changed files:',
+    fileSummary || '- (no file summary available)',
+    'Diff excerpts:',
+    summary || '(diff unavailable; infer only from the changed file summary)',
+    ...(conventions === null ? [] : [conventions]),
+  ]
+    // 空行剔除与 buildCommitMessagePrompt 同款（行框架紧凑；约定段整块为一个元素，
+    // 其内部换行/空行不受行级过滤影响）。
+    .filter((line) => line !== '')
+    .join('\n')
+
+  return {
+    system: PR_SYSTEM_PROMPT,
+    input,
+    filesConsidered: visibleFiles.length,
+    commitsConsidered: visibleCommits.length,
+    conventionsIncluded: conventions !== null,
+  }
+}
+
+/**
+ * PR 描述规则表（六步管线校验段的 PR 形——validateCommitMessage 同纪律）：剥壳 →
+ * 首行 = title（剥 "Title:" 前缀 + 256 截断）→ 余下 = body（剥 "Body:"/"Description:"
+ * 前缀 + 4000 截断）；empty = title 为空（engine 侧唯一致命项，llm-failed parse）；
+ * conventional = title 命中 CONVENTIONAL_COMMIT_RE（不阻断，[清单 17] 同款标志）。
+ */
+export interface PrDescriptionValidation {
+  title: string
+  body: string
+  empty: boolean
+  conventional: boolean
+}
+
+export function validatePrDescription(raw: string): PrDescriptionValidation {
+  const text = stripGeneratedCommitMessageDecorations(raw).replace(/\r\n/g, '\n').trim()
+  const [firstLine = '', ...restLines] = text.split('\n')
+  const title = (firstLine as string).replace(/^title:\s*/i, '').trim().slice(0, PR_TITLE_MAX_CHARS).trim()
+  const rest = restLines.join('\n').replace(/^\s*\n/, '')
+  const body = rest.replace(/^(?:body|description):\s*/i, '').trim().slice(0, PR_BODY_MAX_CHARS).trim()
+  return {
+    title,
+    body,
+    empty: title === '',
+    conventional: CONVENTIONAL_COMMIT_RE.test(title),
+  }
+}
+
+/**
+ * [清单 70] 合并策略约定段的探针常量（只读检测；文件名清单固定——不枚举 .github
+ * 目录，Windows 大小写不敏感 FS 下规范名即可命中，Linux 下模板作者按规范名提交）。
+ */
+const PR_TEMPLATE_CANDIDATES = [
+  '.github/PULL_REQUEST_TEMPLATE.md',
+  '.github/pull_request_template.md',
+  'PULL_REQUEST_TEMPLATE.md',
+  'docs/PULL_REQUEST_TEMPLATE.md',
+] as const
+const CONTRIBUTING_CANDIDATES = [
+  'CONTRIBUTING.md',
+  '.github/CONTRIBUTING.md',
+  'docs/CONTRIBUTING.md',
+] as const
+/** 约定段文件摘录的字符上限（模板/贡献指南都可能很长——clip 进 prompt 有界）。 */
+const CONVENTIONS_EXCERPT_CHARS = 2_000
+/** `git config --get-regexp` 的键前缀白名单（merge/pull 相关项——凭证类键零进入）。 */
+const MERGE_CONFIG_REGEXP = '^(merge|pull)\\.'
+
+/**
+ * [清单 70] 合并策略约定段检测（只读）：PR 模板 / CONTRIBUTING / `git config
+ * merge·pull 相关项`；三探全缺 ⇒ null（prompt 整段省略——"缺失即省略"）。
+ * 文件读失败按缺省处理（存在性检测非硬依赖）；config 查询走只读 runner。
+ */
+export async function detectMergeConventions(
+  root: string,
+  gitRead: GitRunner,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const template = await readFirstExisting(root, PR_TEMPLATE_CANDIDATES)
+  const contributing = await readFirstExisting(root, CONTRIBUTING_CANDIDATES)
+  const config = await readMergeConfig(root, gitRead, signal)
+  if (template === null && contributing === null && config === null) return null
+  const lines = ['Repository conventions for merges and pull requests (detected; follow them):']
+  if (template !== null) {
+    lines.push(`- PR template (${template.path}):`, clipText(template.body, CONVENTIONS_EXCERPT_CHARS, '...template truncated...'))
+  }
+  if (contributing !== null) {
+    lines.push(`- Contributing guide (${contributing.path}):`, clipText(contributing.body, CONVENTIONS_EXCERPT_CHARS, '...guide truncated...'))
+  }
+  if (config !== null) {
+    lines.push(`- git config: ${config}`)
+  }
+  return lines.join('\n')
+}
+
+/** 依序探测候选相对路径，返回首个可读文件（内容 trim；全缺/全读失败 ⇒ null）。 */
+async function readFirstExisting(
+  root: string,
+  candidates: readonly string[],
+): Promise<{ path: string; body: string } | null> {
+  for (const candidate of candidates) {
+    try {
+      const body = (await readFile(join(root, candidate), 'utf8')).trim()
+      if (body !== '') return { path: candidate, body }
+    } catch {
+      // 不存在/不可读 = 探下一个候选（存在性检测非硬依赖）。
+    }
+  }
+  return null
+}
+
+/** `git config --get-regexp ^(merge|pull)\.` 的值串（exit 1 = 无配置 ⇒ null；值各截 100 字符）。 */
+async function readMergeConfig(root: string, gitRead: GitRunner, signal?: AbortSignal): Promise<string | null> {
+  const result = await gitRead.run(['config', '--get-regexp', MERGE_CONFIG_REGEXP], {
+    cwd: root, op: 'generatePrDescription(git config --get-regexp)', signal: signal ?? neverAborted(),
+  })
+  if (result.exitCode === 1) return null
+  if (result.exitCode !== 0) return null
+  const pairs = result.stdout.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => {
+      const space = line.indexOf(' ')
+      const key = space === -1 ? line : line.slice(0, space)
+      const value = space === -1 ? '' : line.slice(space + 1)
+      return `${key}=${value.slice(0, 100)}`
+    })
+  return pairs.length === 0 ? null : pairs.join(', ')
+}
+
 // ---------- 引擎 ----------
 
 /** MessageGenEngine 构造项（Config 值在服务面解析后传入）。 */
@@ -464,79 +659,7 @@ export class MessageGenEngine {
     const branch = await this.currentBranch(root, active)
     const diff = await this.diffEngine.diff('staged', null, active)
     const prompt = buildCommitMessagePrompt(branch, diff.files)
-    const route = this.resolveRoute()
-
-    // 六步范式第 1 步：输入字节上限调用方自检（超限 ⇒ git/llm-failed trim，不静默二次裁剪）。
-    const inputBytes = Buffer.byteLength(prompt.input, 'utf8')
-    if (inputBytes > this.llmMaxInputBytes) {
-      logFailure(this.logger ?? nullLogger, 'generateCommitMessage', 'git/llm-failed', { stage: 'trim' })
-      throw gitError(
-        'git/llm-failed',
-        `git generateCommitMessage: assembled input is ${inputBytes} bytes, exceeding llmMaxInputBytes ${this.llmMaxInputBytes}`,
-        { stage: 'trim', reason: `input ${inputBytes} bytes > llmMaxInputBytes ${this.llmMaxInputBytes}` },
-      )
-    }
-    if (this.llm === undefined) {
-      logFailure(this.logger ?? nullLogger, 'generateCommitMessage', 'git/llm-failed', { stage: 'call' })
-      throw gitError('git/llm-failed', 'git generateCommitMessage: llm service is not available on this host context', {
-        stage: 'call',
-        reason: 'llm-service-unavailable',
-      })
-    }
-
-    // 六步范式第 2 步：using deadline(signal, llmTimeoutMs, code)（spec §1.7 双保险
-    // 之外 LLM 侧的主超时面——spec §1.9 行超时列 llmTimeoutMs 即此）。
-    using callDeadline = deadline(active, this.llmTimeoutMs, GIT_COMMIT_MESSAGE_TIMEOUT_CODE)
-
-    // 六步范式第 3 步：prepareCall（路由显式给定；无 reasoning 选择 ⇒ 不传 configure）。
-    let call: GitPreparedLlmCall
-    try {
-      call = await this.llm.prepareCall(
-        { provider: route.provider, model: route.model, maxTokens: LLM_MAX_OUTPUT_TOKENS },
-        callDeadline.signal,
-      )
-    } catch (cause) {
-      throw llmCallFailure(cause, callDeadline.signal, active, this.llmTimeoutMs)
-    }
-
-    // 六步范式第 4 步：GenerateOptions 组装——purpose 省略（封闭联合，插件不能
-    // 发明新 purpose；一次性辅助调用），sessionId 省略（v1 无会话面）。
-    const options: GenerateOptions = {
-      ...call.config,
-      messages: [
-        createUserMessage({
-          content: [{ type: 'text', text: prompt.input }],
-          source: { kind: 'dsh-plugin-git-message-gen' },
-        }),
-      ],
-      system: prompt.system,
-      signal: callDeadline.signal,
-    }
-
-    // 六步范式第 5 步：派发前可观测记录（route/计数/字节——不含 prompt 与 diff
-    // 正文，spec §1.0.6）。
-    this.logger?.info(
-      `git generateCommitMessage dispatch route=${route.provider}/${route.model}`
-        + ` files=${prompt.filesConsidered} omittedFiles=${prompt.omittedFileCount}`
-        + ` diffs=${prompt.diffsIncluded} inputBytes=${inputBytes} maxTokens=${LLM_MAX_OUTPUT_TOKENS}`,
-    )
-
-    // 六步范式第 6 步：BlockAssembler 流式组装 + finish 解释。
-    const assembler = new BlockAssembler()
-    try {
-      for await (const chunk of call.stream(options)) {
-        callDeadline.signal.throwIfAborted()
-        assembler.push(chunk)
-      }
-    } catch (cause) {
-      throw llmCallFailure(cause, callDeadline.signal, active, this.llmTimeoutMs)
-    }
-    this.interpretFinish(assembler.finish, callDeadline.signal, active)
-
-    const raw = assembler.blocks()
-      .filter((block): block is TextBlock => block.type === 'text')
-      .map((block) => block.text)
-      .join('')
+    const raw = await this.dispatch(prompt.system, prompt.input, 'generateCommitMessage', active)
     const validation = validateCommitMessage(raw)
     if (validation.empty) {
       logFailure(this.logger ?? nullLogger, 'generateCommitMessage', 'git/llm-failed', { stage: 'parse' })
@@ -560,18 +683,181 @@ export class MessageGenEngine {
   }
 
   /**
+   * 生成 PR 描述（v2 批次四 [清单 46]；docs/v2-implementation-plan.md §6.3/§6.5）：
+   * 输入 = staged+未提交 diff（双 scope 归并去重——staged 优先，worktree 侧仅补
+   * staged 未含的 path；untracked 无 diff 面不进）+ 最近提交（10 条，unborn ⇒ 空）
+   * + [清单 70] 合并策略约定段（只读检测，三探全缺省略）。六步管线经 {@link dispatch}
+   * 全复用；输出 shape 换 title+body。clean born 仓库（提交完待建 PR 的常态）合法
+   * ——提交面兜底；unborn 且无任何 diff ⇒ git/nothing-staged（无材料可描述）。
+   * @throws git/nothing-staged（unborn+无 diff）、git/no-repository、
+   *   git/session-workspace-unresolved、git/llm-route-unresolved、
+   *   git/llm-failed {stage:'trim'|'call'|'parse'}、git/timeout、git/git-error。
+   */
+  async generatePrDescription(signal?: AbortSignal): Promise<PrDescription> {
+    const active = signal ?? neverAborted()
+    const startedAt = Date.now()
+    const { root } = await this.workspace.resolve()
+
+    const branch = await this.currentBranch(root, active)
+    const recent = await this.recentCommits(root, active)
+    const stagedDiff = await this.diffEngine.diff('staged', null, active)
+    const unstagedDiff = await this.diffEngine.diff('worktree', null, active)
+    // 双 scope 归并去重：staged 优先（同 path 的 staged patch 更贴近"将进 PR"的面），
+    // worktree 侧只补 staged 未含的 path。
+    const stagedPaths = new Set(stagedDiff.files.map((file) => file.path))
+    const files = [...stagedDiff.files, ...unstagedDiff.files.filter((file) => !stagedPaths.has(file.path))]
+
+    // 前置守卫：无任何材料 ⇒ git/nothing-staged（unborn+clean：无 diff 无提交）。
+    const unborn = recent.length === 0
+    if (unborn && stagedDiff.files.length === 0 && unstagedDiff.files.length === 0) {
+      logFailure(this.logger ?? nullLogger, 'generatePrDescription', 'git/nothing-staged')
+      throw gitError('git/nothing-staged', 'git generatePrDescription: no commits and no working tree changes to describe', { branch })
+    }
+
+    const conventions = await detectMergeConventions(root, this.gitRead, active)
+    const prompt = buildPrDescriptionPrompt(branch, recent, files, conventions)
+    const raw = await this.dispatch(prompt.system, prompt.input, 'generatePrDescription', active)
+    const validation = validatePrDescription(raw)
+    if (validation.empty) {
+      logFailure(this.logger ?? nullLogger, 'generatePrDescription', 'git/llm-failed', { stage: 'parse' })
+      throw gitError('git/llm-failed', 'git generatePrDescription: model returned no usable title', {
+        stage: 'parse',
+        reason: 'empty-output',
+      })
+    }
+    logWrite(this.logger ?? nullLogger, 'generatePrDescription', {
+      durationMs: Date.now() - startedAt,
+      conventional: validation.conventional,
+      filesConsidered: prompt.filesConsidered,
+      commitsConsidered: prompt.commitsConsidered,
+      conventionsIncluded: prompt.conventionsIncluded,
+      titleChars: validation.title.length,
+    })
+    return {
+      title: validation.title,
+      body: validation.body,
+      conventional: validation.conventional,
+    }
+  }
+
+  /**
+   * 六步管线共用派发段（v2 批次四提取——generate/generatePrDescription 全复用）：
+   * 路由解析 → 输入字节硬顶自检 → llm 面缺席判定 → deadline → prepareCall →
+   * GenerateOptions 组装（purpose 省略口径不变）→ 派发前可观测记录 →
+   * BlockAssembler 流式组装 + finish 解释 → 返回原始文本（校验归调用方规则表）。
+   */
+  private async dispatch(system: string, input: string, op: string, signal: AbortSignal): Promise<string> {
+    const route = this.resolveRoute(op)
+
+    // 六步范式第 1 步：输入字节上限调用方自检（超限 ⇒ git/llm-failed trim，不静默二次裁剪）。
+    const inputBytes = Buffer.byteLength(input, 'utf8')
+    if (inputBytes > this.llmMaxInputBytes) {
+      logFailure(this.logger ?? nullLogger, op, 'git/llm-failed', { stage: 'trim' })
+      throw gitError(
+        'git/llm-failed',
+        `git ${op}: assembled input is ${inputBytes} bytes, exceeding llmMaxInputBytes ${this.llmMaxInputBytes}`,
+        { stage: 'trim', reason: `input ${inputBytes} bytes > llmMaxInputBytes ${this.llmMaxInputBytes}` },
+      )
+    }
+    if (this.llm === undefined) {
+      logFailure(this.logger ?? nullLogger, op, 'git/llm-failed', { stage: 'call' })
+      throw gitError('git/llm-failed', `git ${op}: llm service is not available on this host context`, {
+        stage: 'call',
+        reason: 'llm-service-unavailable',
+      })
+    }
+
+    // 六步范式第 2 步：using deadline(signal, llmTimeoutMs, code)（spec §1.7 双保险
+    // 之外 LLM 侧的主超时面——spec §1.9 行超时列 llmTimeoutMs 即此）。
+    using callDeadline = deadline(signal, this.llmTimeoutMs, GIT_COMMIT_MESSAGE_TIMEOUT_CODE)
+
+    // 六步范式第 3 步：prepareCall（路由显式给定；无 reasoning 选择 ⇒ 不传 configure）。
+    let call: GitPreparedLlmCall
+    try {
+      call = await this.llm.prepareCall(
+        { provider: route.provider, model: route.model, maxTokens: LLM_MAX_OUTPUT_TOKENS },
+        callDeadline.signal,
+      )
+    } catch (cause) {
+      throw llmCallFailure(cause, callDeadline.signal, signal, this.llmTimeoutMs, op)
+    }
+
+    // 六步范式第 4 步：GenerateOptions 组装——purpose 省略（封闭联合，插件不能
+    // 发明新 purpose；一次性辅助调用），sessionId 省略（v1 无会话面）。
+    const options: GenerateOptions = {
+      ...call.config,
+      messages: [
+        createUserMessage({
+          content: [{ type: 'text', text: input }],
+          source: { kind: 'dsh-plugin-git-message-gen' },
+        }),
+      ],
+      system,
+      signal: callDeadline.signal,
+    }
+
+    // 六步范式第 5 步：派发前可观测记录（route/字节——不含 prompt 与 diff 正文，
+    // spec §1.0.6）。
+    this.logger?.info(
+      `git ${op} dispatch route=${route.provider}/${route.model}`
+        + ` inputBytes=${inputBytes} maxTokens=${LLM_MAX_OUTPUT_TOKENS}`,
+    )
+
+    // 六步范式第 6 步：BlockAssembler 流式组装 + finish 解释。
+    const assembler = new BlockAssembler()
+    try {
+      for await (const chunk of call.stream(options)) {
+        callDeadline.signal.throwIfAborted()
+        assembler.push(chunk)
+      }
+    } catch (cause) {
+      throw llmCallFailure(cause, callDeadline.signal, signal, this.llmTimeoutMs, op)
+    }
+    this.interpretFinish(assembler.finish, callDeadline.signal, signal, op)
+    return assembler.blocks()
+      .filter((block): block is TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+  }
+
+  /** 最近提交清单（PR 材料的提交面）：`git log -n <N> --pretty=format:%h%x1f%s%x1e`；unborn（exit 128 无提交）⇒ 空清单。 */
+  private async recentCommits(root: string, signal: AbortSignal): Promise<Array<{ shortOid: string; subject: string }>> {
+    const result = await this.gitRead.run(
+      ['log', `-n`, String(PR_PROMPT_COMMIT_COUNT), `--pretty=format:%h%x1f%s%x1e`],
+      { cwd: root, op: 'generatePrDescription(git log)', signal },
+    )
+    if (result.exitCode === 128 && /does not have any commits yet|bad revision/i.test(result.stderr)) return []
+    if (result.exitCode !== 0) {
+      throw gitRunError('generatePrDescription(git log)', result.exitCode, result.stderr, result.truncated)
+    }
+    const stdout = result.stdout
+    if (stdout === '') return []
+    const chunks = stdout.split('\x1e')
+    if (chunks.at(-1) !== '') throw new Error('recent commits output is not record-terminated')
+    chunks.pop()
+    return chunks.map((chunk, index) => {
+      const record = index === 0 ? chunk : chunk.replace(/^\n/, '')
+      const fields = record.split('\x1f')
+      if (fields.length !== 2 || fields[0] === '' || fields[1] === undefined || fields[1] === '') {
+        throw new Error(`malformed recent-commit record: ${JSON.stringify(record.slice(0, 40))}`)
+      }
+      return { shortOid: fields[0] as string, subject: fields[1] as string }
+    })
+  }
+
+  /**
    * 路由解析（spec §1.7）：Config.llmProvider/llmModel 显式优先（两者都非空才
    * 成对生效）；否则最近捕获路由；都没有 ⇒ git/llm-route-unresolved。
    */
-  private resolveRoute(): LlmRoute {
+  private resolveRoute(op: string): LlmRoute {
     if (this.llmProvider !== '' && this.llmModel !== '') {
       return { provider: this.llmProvider, model: this.llmModel }
     }
     if (this.capturedRoute !== null) return this.capturedRoute
-    logFailure(this.logger ?? nullLogger, 'generateCommitMessage', 'git/llm-route-unresolved')
+    logFailure(this.logger ?? nullLogger, op, 'git/llm-route-unresolved')
     throw gitError(
       'git/llm-route-unresolved',
-      'git generateCommitMessage: no llm route (configure llmProvider/llmModel, or run a model request to capture the request/header route)',
+      `git ${op}: no llm route (configure llmProvider/llmModel, or run a model request to capture the request/header route)`,
       {},
     )
   }
@@ -582,7 +868,7 @@ export class MessageGenEngine {
    * aborted/error 走 llmCallFailure 映射；未知 finish 种类（FinishReason 可合并
    * 扩展）按非致命放行——文本产出交给规则表判定。
    */
-  private interpretFinish(finish: FinishReason, deadlineSignal: AbortSignal, callerSignal: AbortSignal): void {
+  private interpretFinish(finish: FinishReason, deadlineSignal: AbortSignal, callerSignal: AbortSignal, op: string): void {
     switch (finish.kind) {
       case 'stop':
       case 'tool-calls':
@@ -595,6 +881,7 @@ export class MessageGenEngine {
           deadlineSignal,
           callerSignal,
           this.llmTimeoutMs,
+          op,
         )
       default:
         return
@@ -620,17 +907,17 @@ export class MessageGenEngine {
  *     相符 ⇒ 本模块的 deadline 到期）⇒ git/timeout { op, timeoutMs }；
  *   - 其余 ⇒ git/llm-failed { stage:'call', reason }。
  */
-function llmCallFailure(cause: unknown, deadlineSignal: AbortSignal, callerSignal: AbortSignal, timeoutMs: number): unknown {
+function llmCallFailure(cause: unknown, deadlineSignal: AbortSignal, callerSignal: AbortSignal, timeoutMs: number, op: string): unknown {
   if (callerSignal.aborted) return cause
   const reason = deadlineSignal.reason
   if (reason instanceof TimeoutReason && reason.code === GIT_COMMIT_MESSAGE_TIMEOUT_CODE) {
     return gitError(
       'git/timeout',
-      `git generateCommitMessage: llm call exceeded llmTimeoutMs (${String(timeoutMs)}ms)`,
-      { op: 'generateCommitMessage', timeoutMs },
+      `git ${op}: llm call exceeded llmTimeoutMs (${String(timeoutMs)}ms)`,
+      { op, timeoutMs },
     )
   }
-  return gitError('git/llm-failed', 'git generateCommitMessage: llm call failed', {
+  return gitError('git/llm-failed', `git ${op}: llm call failed`, {
     stage: 'call',
     reason: cause instanceof Error ? cause.message : String(cause),
   })

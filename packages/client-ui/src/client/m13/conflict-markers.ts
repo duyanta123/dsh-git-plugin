@@ -16,19 +16,14 @@
  * 也接受裸 7 字符行（标签可空）。
  *
  * 纯函数：无 IO、无全局态；同输入同输出（tests/m13.spec.ts）。
+ *
+ * **P3-2（v2 plan §10，批次四）**：死代码 `scanConflictLines` / `ConflictMarkedLine`
+ * 已删除——唯一消费是本模块旧测试行（`markConflictRows` 走 `classifyConflictLine`，
+ * patch-hunks.ts:168，src 零运行期调用）；v3 冲突 UI（[13]）若需可从 git 历史找回。
  */
 
 /** 一行的冲突标记类别；非标记行 null。 */
 export type ConflictLineKind = 'start' | 'base' | 'separator' | 'end'
-
-/** 一条被识别的冲突标记行（scanConflictLines 的产物）。 */
-export interface ConflictMarkedLine {
-  /** 0 起行号。 */
-  index: number
-  kind: ConflictLineKind
-  /** 原文行（含行尾空白——分类只看前缀形状）。 */
-  line: string
-}
 
 /**
  * 分类一行文本：git 冲突标记行 → 类别；其余 → null。
@@ -41,20 +36,4 @@ export function classifyConflictLine(line: string): ConflictLineKind | null {
   if (/^>{7}(?: .+)?\s*$/.test(line)) return 'end'
   if (/^={7}\s*$/.test(line)) return 'separator'
   return null
-}
-
-/**
- * 扫描一段 diff/文件文本，返回按出现顺序的标记行清单（行号 0 起；按 `\n` 切分，
- * 容忍 `\r\n`——行尾 `\r` 不影响前缀判定）。start/base/separator/end 的配对完整性
- * 由消费方（FileDiffView 的高亮区间计算）处理——本函数只做行级事实分类。
- */
-export function scanConflictLines(text: string): ConflictMarkedLine[] {
-  const lines = text.split('\n')
-  const marked: ConflictMarkedLine[] = []
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index] as string
-    const kind = classifyConflictLine(line)
-    if (kind !== null) marked.push({ index, kind, line })
-  }
-  return marked
 }

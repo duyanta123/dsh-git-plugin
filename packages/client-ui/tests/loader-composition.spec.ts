@@ -112,7 +112,19 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
     expect(graph).toContain("aria-keyshortcuts='Enter'")
   })
 
-  it('菜单行已加载：仓库可用时 v1 四动作可点、sync 占位已拆为推送/拉取/获取三真行 + 管理面扩行（V2 批次一）', () => {
+  it('命令面板/快捷键注册失败降级锚（批次四评审修复）：apply 内 register 包 try/catch + logger.warn，不穿出 effect', async () => {
+    const assembly = await readText(clientSrc('index.ts'))
+    // 宿主侧 register 可能 throw（commandUi 撞名 fail loud；shortcuts 保留键/白名单/
+    // 重叠校验 registry.ts:88-97）——throw 穿出 ctx.effect = 插件 apply 失败。
+    // 装配面必须经 registerPaletteEntry 降级（warn + 跳过该条，其余 UI 照常）。
+    expect(assembly).toContain('registerPaletteEntry')
+    const guardBody = assembly.slice(assembly.indexOf('registerPaletteEntry'), assembly.indexOf('command palette contributions'))
+    expect(guardBody).toContain('try')
+    expect(guardBody).toContain('catch')
+    expect(guardBody).toContain('ctx.logger.warn')
+  })
+
+  it('菜单行已加载：仓库可用时 v1 四动作可点、sync 占位已拆为推送/拉取/获取三真行 + 管理面扩行（V2 批次一）+ 创建 PR 行（批次四）', () => {
     const state: GitStatusSourceState = {
       repo: { available: true, root: 'D:/repo', checking: false },
       status: {
@@ -142,7 +154,22 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
         'branch-create': { enabled: true },
         'tag-create': { enabled: true },
         'worktree': { enabled: true },
+        // V2 批次四：创建 PR（[46]）。
+        'pr-create': { enabled: true },
         'branch-delete': { enabled: true },
       })
+  })
+
+  it('菜单行已加载（V2 批次四 [8]）：无仓库态整菜单收敛为单行「初始化 Git 仓库…」（可点）', () => {
+    const state: GitStatusSourceState = {
+      repo: { available: false, root: null, checking: false },
+      status: null,
+      statusError: { code: 'git/no-repository', message: 'not a repo' },
+      revision: 1,
+      streaming: true,
+    }
+    const items = headerMenuItems(headerViewModel(state))
+    expect(items.map((item) => item.id)).toEqual(['init-repo'])
+    expect(items.every((item) => item.enabled)).toBe(true)
   })
 })
