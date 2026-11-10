@@ -45,6 +45,10 @@ async function makeWorld(name: string): Promise<{ repo: string; service: Instanc
   // 本机全局 autocrlf=true 会把 reset/checkout 的检出文件 smudge 成 CRLF——fixture
   // 钉死 false 让 world 重读的文件内容断言确定（LF 原样）。
   git(repo, 'config', 'core.autocrlf', 'false')
+  // 引擎侧 cherry-pick/revert 以仓库身份创建提交——钉死 repo 本地 identity，
+  // 免依赖开发机的全局配置（CI runner 无全局 identity ⇒ "Committer identity unknown"）。
+  git(repo, 'config', 'user.name', 't')
+  git(repo, 'config', 'user.email', 't@example.com')
   return { repo, service: makeService(repo) }
 }
 
