@@ -77,10 +77,13 @@ function runNpm(npmCli, args, { cwd, timeoutMs }) {
   })
 }
 
-/** `tar -xzf <tgz> -C <dest>`：tar 为系统 .exe，数组传参直接 spawn（无 shell，路径含空格安全）。 */
+/** `tar -xzf <tgz> -C <dest>`：tar 为系统可执行，数组传参直接 spawn（无 shell，路径含空格安全）。
+ *  Windows 盘符陷阱：GNU/bsdtar 都会把含盘符的 -f 参数（C:\...）按「主机:文件」远端语法
+ *  解析（"Cannot connect to C: resolve failed"）——tgz 一律以 **裸文件名** 传给 -f、
+ *  cwd 设为其所在目录绕开该解析；-C 目标目录走 chdir 语义，不受影响。 */
 function extractTar(tgzPath, destDir) {
   return new Promise((resolveRun, rejectRun) => {
-    const child = spawn('tar', ['-xzf', tgzPath, '-C', destDir], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn('tar', ['-xzf', tgzPath.split(/[\\/]/).pop(), '-C', destDir], { cwd: dirname(tgzPath), stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     const collect = (chunk) => { out += chunk.toString('utf8') }
     child.stdout.on('data', collect)
@@ -193,11 +196,20 @@ async function main() {
       step(`verifying ${name}@${version} …`)
 
       // ① registry tarball：npm pack <name>@<version>（凭据走 env，与 Publish 步同上下文）。
+      //    publish 后 registry CDN 有秒级复制延迟——ETARGET（notarget No matching
+      //    version）按复制竞态重试（上限 6 次 × 60s），其它失败原样 fail。
       const registryPackDest = join(workdir, `${name}-registry`)
       mkdirSync(registryPackDest, { recursive: true })
-      const registryPack = await runNpm(npmCli, ['pack', `${name}@${version}`, '--pack-destination', registryPackDest], {
-        cwd: workdir, timeoutMs: PACK_TIMEOUT_MS,
-      })
+      let registryPack = null
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        registryPack = await runNpm(npmCli, ['pack', `${name}@${version}`, '--pack-destination', registryPackDest], {
+          cwd: workdir, timeoutMs: PACK_TIMEOUT_MS,
+        })
+        if (registryPack.code === 0) break
+        if (!/ETARGET|notarget No matching version/.test(registryPack.out)) break
+        step(`${name}@${version} 尚未在 registry 边缘可见（第 ${attempt} 次，CDN 复制延迟）——60s 后重试`)
+        await new Promise((resolveWait) => setTimeout(resolveWait, 60_000))
+      }
       assert(registryPack.code === 0, `npm pack ${name}@${version} failed (exit ${registryPack.code}):\n${registryPack.out.slice(-2000)}`)
       const registryTgz = resolvePackedTarball(registryPack.out, registryPackDest)
 

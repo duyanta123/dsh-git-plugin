@@ -20,6 +20,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
+      # EOL 确定性：runner 镜像的全局 core.autocrlf=true 会在 checkout 时把 LF 文本转成
+      # CRLF，进 tarball 的 LICENSE/NOTICE/locale 等随 runner 环境漂移（v0.2.0 实证）——
+      # checkout 前钉死 false，发布产物与提交 blob 行尾一致，侦探比对跨环境稳定。
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           # P4 第一层：dispatch 锚定步要解析 tag → commit（git rev-parse v<version>^{commit}），
