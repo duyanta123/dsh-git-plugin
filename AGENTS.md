@@ -25,7 +25,7 @@ Run from the repository root. The README's `pnpm --dir dsh-git-plugin …` form 
 pnpm install                 # workspace install
 pnpm run typecheck           # build:host (typert generation) then tsc for root/host/client
 pnpm run build               # host bundle + typert artifacts + client bundle + git-bundle checks
-pnpm test                    # vitest run (57 spec files; case count: unknown, not captured from a run)
+pnpm test                    # vitest run (57 spec files; 820 cases, backfilled from the v0.2.0 release final-check run)
 pnpm exec vitest run packages/host/tests/status.spec.ts   # one file
 pnpm exec vitest run -t "substring of test name"          # one test by name
 pnpm run check:locale        # zh/en key+placeholder parity and no bare JSX strings
@@ -102,7 +102,7 @@ The client bundle is not built by tsdown. `scripts/build-client.mjs` uses rolldo
 
 ## Tests and verification
 
-- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 57 files total (26 host, 29 client, 2 root compliance guards); the case count is unknown — not captured from a run (earlier docs recorded two disagreeing figures — assert neither). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
+- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 57 files total (26 host, 29 client, 2 root compliance guards); the case count is **820** — backfilled from the v0.2.0 release final-check run (earlier figures superseded). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
 - Host tests create real temporary git repositories and assert the world by re-reading it (`packages/host/tests/support.ts` provides `scratchRepo`, `git`, a real-spawn `SubprocessFace`, and a chokidar-backed fs face). Client tests use fake RPC faces and view-model assertions.
 - `verify:load` covers the deep path (both packages installed, real host, RPC round-trips for status/commit/graph/AI negative path). `verify:install` is the release gate and runs **two phases**: `working-copy` (fresh `DSH_HOME`/profile → single `file:` git-bundle install → dump-config two id lines → web boot → `git/status` ready → served HTML contains both packages) and `clean-clone` (`git clone` of this repo at committed HEAD → `pnpm install --frozen-lockfile` + `pnpm run build` inside the clone → the same assertion chain; `DSH_VERIFY_INSTALL_SKIP_CLONE=1` skips it, which CI sets explicitly — the clean-clone phase stays a local release-gate concern). Both scripts take their column from `scripts/verify-target.mjs`: default = dev-tree column (CLI source entry from `DSH_TREE`, strict assertions), `DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm column (npm view probe + temp-prefix install, relaxed assertions with WARN), `DSH_BIN=<pkgRoot>/lib/bin.js` = prebuilt-binary column (setting both → exit 1); exit codes 0=pass / 1=fail / 2=skip (npm column: missing npm-cli.js or failed view/install without `DSH_VERIFY_ALLOW_SKIP=1`; with ALLOW the run exits 0 but the RESULT line reads `outcome=SKIPPED-ALLOWED` — a skip is never recorded as a pass). Both create a temporary `DSH_HOME`, kill host process trees, and clean up.
 
