@@ -66,7 +66,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -306,6 +306,14 @@ async function installFlow(repoRoot, phaseLabel) {
     // status() 夹具：临时真仓库（真 git init + 一笔种子提交 ⇒ ready 快照分支字段可断言；
     // world 事实由本脚本的 git 命令铸造，RPC 只做只读消费）。
     fixtureRepo = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dshgit-install-ws-'))
+    // GH Windows runner 的 TEMP 是 8.3 短名（C:\Users\RUNNER~1\...），而 git 引擎返回
+    // 的 repoRoot 是规范长名——夹具路径统一 realpath 展开后再进断言，避免两侧长短名
+    // 不一致误红（native realpath 才展开短名；结果带 \\?\ 前缀时剥除）。
+    try {
+      fixtureRepo = realpathSync.native(fixtureRepo).replace(/^\\\\\?\\/, '')
+    } catch {
+      // native realpath 不可用时保留 8.3 形态（断言仍有大小写/反斜杠归一兜底）。
+    }
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fixtureRepo, stdio: 'ignore' })
     execFileSync('git', ['config', 'user.name', 'install-user'], { cwd: fixtureRepo, stdio: 'ignore' })
     execFileSync('git', ['config', 'user.email', 'install@example.com'], { cwd: fixtureRepo, stdio: 'ignore' })
