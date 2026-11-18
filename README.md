@@ -167,7 +167,13 @@ dsh --profile <你的profile> --dump-config | tail -5
 必须存在且解析到本次 checkout 的 commit，否则拒发（Publish 不执行）。历史注记（如实）：npm 上的 0.1.1
 是锚定恢复前的唯一例外——它自 main HEAD 提交 266d1cf 经手动通道发布，与 tag `v0.1.1` 内容不一致
 （tag 版 host `files` 缺 `lib/*.d.ts`、client-ui devDependencies 为本机绝对路径）；0.1.2 起
-恢复『已发布 == 已打 tag』。npm 安装形态（适合想自行组装 profile 的用户）：
+恢复『已发布 == 已打 tag』。**NPM_TOKEN 口径（v0.3.0 三轮实证，2026-11-18）**：secret 必须是
+**可直发、免 OTP、非 staging-only** 的 token（Classic `Automation` 类型或等价 granular）——
+失效/过期 token 的 publish PUT 被 npm 伪装成 `404 Not Found`（v0.2.0 时期有效的 token 八天后
+即此形态）；staging-only token 报 `403 E_STAGE_REQUIRED`；带 2FA 强制的 token 报
+`ERR_PNPM_OTP_NON_INTERACTIVE`。发布后侦探步（tarball 逐字节比对）对 client 包内置
+CSS 源路径与 `workspace:*` 版本替换有归一豁免（`scripts/verify-release-tarball.mjs` 头注）；
+本地补跑侦探前必须先 `pnpm run build`（两包无 prepack——陈旧 lib 会产出假阳性）。npm 安装形态（适合想自行组装 profile 的用户）：
 
 ```bash
 pnpm add dsh-gitkit dsh-gitkit-ui   # 在 profile 目录内

@@ -8,7 +8,9 @@
  * 流程：
  *   ① `npm pack <name>@<version>` 从 registry 拉已发布 tarball（stdout 尾行解析 tgz 路径）；
  *   ② 包目录 `npm pack --ignore-scripts` 重打包（用 Build 步已产出的 lib/，跳过 prepack
- *      重复构建）；
+ *      重复构建）。**本地运行必须先 `pnpm run build`**——两包均无 prepack/build 生命周期
+ *      脚本，pack 打的是磁盘上现有 lib/（v0.3.0 教训：陈旧 lib 重打包产出旧注释产物，
+ *      侦探假阳性）；
  *   ③ `tar -xzf` 解包两份；
  *   ④ 比对 = 文件路径集合严格相等 + 除 package/package.json 外逐文件 byte 相等 +
  *      package.json 经 JSON.parse 语义比较（deepStrictEqual）；
@@ -144,12 +146,47 @@ function resolvePackedTarball(packOut, destDir) {
 }
 
 /**
- * ④ 比对规则：文件路径集合严格相等 + 除 package/package.json 外逐文件 byte 相等 +
- * package.json 经 JSON.parse 语义比较。返回差异清单（空数组 = 一致）。
+ * ④ 比对规则：文件路径集合严格相等 + 除 package/package.json 外逐文件 byte 相等
+ *    （构建产物先过 normalizeBuildArtifact 归一）+ package.json 经 JSON.parse 语义比较
+ *    （本地侧 manifest 先过 normalizeManifestForPublishCompare 施加 pnpm publish 的
+ *    workspace: 替换）。返回差异清单（空数组 = 一致）。
  * 键为解包布局相对路径（npm tgz 顶层唯一 'package/' 目录，listFiles 保留该段）——
  * 语义比较豁免与 manifest 读取都按 'package/package.json' 寻址（R1：此前写
  * 'package.json' 永不命中，语义比较不可达、manifest 错误落入逐字节比较）。
+ *
+ * v0.3.0 实证的两个假阳性来源（2026-11-18，首跑此步——v0.2.0 三次 tag 运行均死于
+ * 更早的 CDN 复制延迟，本步从未真正执行过）：
+ *   ① client bundle 内嵌 CSS 源文件绝对路径（lightningcss region 标签
+ *      `//#region \0dsh-git-css:D:\...`）——runner 路径与本地路径逐字节必不同；
+ *   ② pnpm publish 把 workspace: 协议依赖替换为实际版本（devDependencies.dsh-gitkit
+ *      workspace:* → 0.3.0），而 npm pack 不替换——语义比较直接失配。
  */
+function normalizeBuildArtifact(buffer) {
+  const text = buffer.toString('utf8')
+  if (!text.includes('dsh-git-css:')) return buffer
+  // region 路径截断到两侧共同锚点 `packages/client-ui/`——其后为同一 checkout 的同
+  // 相对路径，归一后逐字节可比。
+  const normalized = text.replace(
+    /dsh-git-css:[^\r\n]*?packages[\\/]client-ui[\\/]/g,
+    'dsh-git-css:<repo>/packages/client-ui/',
+  )
+  return Buffer.from(normalized, 'utf8')
+}
+
+function normalizeManifestForPublishCompare(manifest) {
+  const normalized = JSON.parse(JSON.stringify(manifest))
+  for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const deps = normalized[section]
+    if (deps === null || typeof deps !== 'object') continue
+    for (const [name, range] of Object.entries(deps)) {
+      if (typeof range !== 'string' || !range.startsWith('workspace:')) continue
+      const rest = range.slice('workspace:'.length)
+      deps[name] = rest === '*' ? manifest.version : `${rest}${manifest.version}`
+    }
+  }
+  return normalized
+}
+
 function compareTrees(registryDir, localDir) {
   const diffs = []
   const registryFiles = listFiles(registryDir)
@@ -165,8 +202,8 @@ function compareTrees(registryDir, localDir) {
   for (const file of registryFiles) {
     if (!localSet.has(file)) continue
     if (file === 'package/package.json') continue // 语义比较单独做（键序无关；npm tgz 布局键，R1）
-    const published = readFileSync(join(registryDir, file))
-    const repacked = readFileSync(join(localDir, file))
+    const published = normalizeBuildArtifact(readFileSync(join(registryDir, file)))
+    const repacked = normalizeBuildArtifact(readFileSync(join(localDir, file)))
     if (!published.equals(repacked)) {
       diffs.push(`byte mismatch: ${file} (published ${published.length}B vs repacked ${repacked.length}B)`)
     }
@@ -174,8 +211,8 @@ function compareTrees(registryDir, localDir) {
   if (registrySet.has('package/package.json') && localSet.has('package/package.json')) {
     try {
       deepStrictEqual(
-        JSON.parse(readFileSync(join(registryDir, 'package', 'package.json'), 'utf8')),
-        JSON.parse(readFileSync(join(localDir, 'package', 'package.json'), 'utf8')),
+        normalizeManifestForPublishCompare(JSON.parse(readFileSync(join(registryDir, 'package', 'package.json'), 'utf8'))),
+        normalizeManifestForPublishCompare(JSON.parse(readFileSync(join(localDir, 'package', 'package.json'), 'utf8'))),
       )
     } catch (error) {
       diffs.push(`package.json semantic mismatch: ${String(error?.message ?? error).split('\n')[0]}`)
