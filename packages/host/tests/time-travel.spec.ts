@@ -217,6 +217,22 @@ describe('cherryPick / revert — 冲突与成功路径（[清单 37]）', () =>
     expect(worldHead(repo)).toBe(mainOid) // HEAD 未被冲突推进
   })
 
+  it('cherry-pick 冲突 conflicted 回读 -z 口径：非 ASCII 路径原样字节不 C-引号化（评审收口）', async () => {
+    const { repo, service } = await makeWorld('cp-conflict-cjk')
+    await commitFile(repo, '文档.txt', 'base line\n', 'base')
+    git(repo, 'checkout', '-qb', 'side')
+    const sideOid = await commitFile(repo, '文档.txt', 'side line\n', 'side edit')
+    git(repo, 'checkout', '-q', 'main')
+    const mainOid = await commitFile(repo, '文档.txt', 'main line\n', 'main edit')
+    const rejection = await rejectionOf(() => service.cherryPick({ oid: sideOid, acknowledged: true, baseRevision: mainOid }))
+    expect(rejection.code).toBe('git/merge-conflict')
+    // -z 口径（与 merge-rebase.ts conflictedPaths / conflicts.ts scanUnmerged 统一）：
+    // NUL 分隔、路径原样——行分割口径（旧实现）会 C-引号化非 ASCII 路径。
+    expect(rejection.details.conflicted).toEqual(['文档.txt'])
+    const worldZ = execFileSync('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    expect(worldZ.split('\0').filter((entry) => entry !== '')).toEqual(['文档.txt'])
+  })
+
   it('CHERRY_PICK_HEAD 在场 ⇒ operation-in-progress（cherryPick 与 reset 叠加皆拒）', async () => {
     const { repo, service, sideOid, mainOid } = await makeConflictWorld('cp-overlap')
     const conflict = await rejectionOf(() => service.cherryPick({ oid: sideOid, acknowledged: true, baseRevision: mainOid }))

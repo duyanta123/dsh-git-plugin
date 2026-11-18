@@ -53,6 +53,16 @@
  * 或 `gh auth status` 未过，details.tool='gh'）、`git/pr-create-failed`（gh pr
  * create/pr view 的 API 侧失败，details.stderr 过 sanitizeStderr）。
  *
+ * v3 批次一（2026-11-12，docs/v3-implementation-plan.md §3.2/§3.5）零新码 + 两处联合
+ * 扩展：`git/operation-in-progress` details.op 联合 `+= 'merge' | 'rebase'`（探测面
+ * 扩 MERGE_HEAD 与 .git/rebase-merge|rebase-apply——conflicts.ts detectOperation 提
+ * 共享）、`git/bad-request` reason 联合 `+= 'path-not-conflicted' | 'conflicts-remaining'`
+ * （conflictResolve/conflictMarkResolved 与 operationContinue 的守卫面）。
+ *
+ * v3 批次四（2026-11-14，docs/v3-implementation-plan.md §6.2/§6.5）续增一码：
+ * `git/checkpoint-unavailable`（checkpointDiff/checkpointRestore 对无记录 seq 的显式
+ * 拒绝——listing 侧不抛错只置 null，操作侧硬失败防误恢复，details.seq）。
+ *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
  * `declare module '@deepseek-ai/dsh-typert-protocol'` + `interface RemoteErrorDetailsMap`，
@@ -85,7 +95,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/auth-failed': { stderr: string }
     'git/pull-diverged': { branch: string; upstream: string; ahead: number; behind: number }
     'git/timeout': { op: string; timeoutMs: number }
-    'git/git-error': { op: string; exitCode: number | null; stderr: string; truncated: boolean }
+    // resolved（可选）：conflictResolve/conflictMarkResolved 多文件中途失败的已成功
+    // 清单（conflicts.ts rethrowWithResolvedPartial——§3.10「结果如实分列」；仅确有
+    // 部分成功时附着，纯失败/守卫失败不带空清单）。
+    'git/git-error': { op: string; exitCode: number | null; stderr: string; truncated: boolean; resolved?: string[] }
     'git/llm-route-unresolved': Record<string, never>
     'git/llm-failed': { stage: 'trim' | 'call' | 'parse'; reason: string }
     'git/session-workspace-unresolved': Record<string, never>
@@ -98,9 +111,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
        * wire 契约——worktreeAdd 的 branch/newBranch 互斥与至少其一；amend --no-edit 与
        * trailers 同给）+
        * v2 批次二 'follow-without-path'（log 的 follow=true 而无单 path——§4.2）+
-       * v2 批次三 'malformed-trailer'（CommitOptions.trailers 条目不合法——§5.2）。
+       * v2 批次三 'malformed-trailer'（CommitOptions.trailers 条目不合法——§5.2）+
+       * v3 批次一 'path-not-conflicted'（conflictResolve/conflictMarkResolved 的路径不
+       * 在当前 unmerged 集——零写命令守卫）与 'conflicts-remaining'（operationContinue
+       * 前置：仍有 unmerged 路径——零命令守卫；docs/v3-implementation-plan.md §3.2）。
        */
-      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options' | 'follow-without-path' | 'malformed-trailer'
+      reason: 'unacknowledged' | 'stale-base-revision' | 'not-discardable' | 'force-unacknowledged' | 'invalid-options' | 'follow-without-path' | 'malformed-trailer' | 'path-not-conflicted' | 'conflicts-remaining'
       /** not-discardable 时 = 被拒的路径清单；其余守卫为 []。 */
       paths: string[]
       /** stale-base-revision 时 = 请求基线（baseRevision），其余 null。 */
@@ -131,8 +147,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/merge-conflict': { op: string; conflicted: string[]; abortable: boolean }
     /** compareBranches / log(ref) / 时间旅行的修订解析失败（rev-parse --verify 预检）。 */
     'git/unknown-revision': { op: string; revision: string }
-    /** 时间旅行写前探测到中间态（CHERRY_PICK_HEAD/REVERT_HEAD 在场），拒绝叠操作。 */
-    'git/operation-in-progress': { op: 'cherry-pick' | 'revert' }
+    /** 时间旅行/冲突引擎写前探测到中间态（CHERRY_PICK_HEAD/REVERT_HEAD/MERGE_HEAD 或 rebase-merge|apply 目录在场），拒绝叠操作；v3 批次一联合 += 'merge'|'rebase'（docs/v3-implementation-plan.md §3.2/§3.5）。 */
+    'git/operation-in-progress': { op: 'cherry-pick' | 'revert' | 'merge' | 'rebase' }
     // —— v2 批次三三码（staging-patch/stash/commit 消费；docs/v2-implementation-plan.md §5.4）——
     /** stagePatch 的 `apply --cached` 失败（patch 与 index 冲突）与二进制/模式变更 hunk 前置拒绝；stderr 过 sanitizeStderr。 */
     'git/stage-patch-failed': { path: string; stderr: string }
@@ -155,6 +171,14 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'git/pr-tool-missing': { tool: 'gh' }
     /** gh pr create / pr view 的 API 侧失败（stderr 过 sanitizeStderr 后进 details）。 */
     'git/pr-create-failed': { stderr: string }
+    // —— v3 批次四一码（session-watch/checkpoints 消费；docs/v3-implementation-plan.md §6.5）——
+    /**
+     * checkpointDiff / checkpointRestore 对无记录 seq 的显式拒绝（plan §6.2：listing
+     * 侧不抛错只置 summary null，**操作侧必须硬失败防误恢复**）。触发面 = seq 不在
+     * session-watch 环 / workspaceChanges 服务未挂载 / 该 seq 无 summary 记录 / seq
+     * 跨会话歧义。details.seq = 请求的事件序列号。
+     */
+    'git/checkpoint-unavailable': { seq: number }
   }
 }
 

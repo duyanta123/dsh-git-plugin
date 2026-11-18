@@ -53,6 +53,8 @@ const ALL_GIT_CODES: readonly GitCode[] = [
   'git/init-failed',
   'git/pr-tool-missing',
   'git/pr-create-failed',
+  // V3 批次四检查点新码（host session-watch/checkpoints；plan §6.5）。
+  'git/checkpoint-unavailable',
 ]
 
 describe('ERROR_MAP — Record 穷尽约束（运行期镜像）', () => {
@@ -187,17 +189,38 @@ describe('errorNoticeView — 视图模型', () => {
     expect(inProgress.params).toEqual({ op: 'cherry-pick' })
   })
 
-  it('merge-conflict：op + conflicted 计数进插值；动作 = abort（放弃操作按钮——plan §4.10）', () => {
+  it('merge-conflict：op + conflicted 计数进插值；动作 = abort + resolve（V3 批次一「解决冲突…」入口——plan §4.10/§3.7）', () => {
     const conflict = errorNoticeView({
       code: 'git/merge-conflict', message: 'conflict',
       details: { op: 'cherry-pick', conflicted: ['a.ts', 'b.ts'], abortable: true },
     })
     expect(conflict.key).toBe('error.merge-conflict')
     expect(conflict.params).toEqual({ op: 'cherry-pick', count: 2 })
-    expect(conflict.actions).toEqual(['abort'])
+    expect(conflict.actions).toEqual(['abort', 'resolve'])
+    // resolve 的词典键在 zh/en 都有词条（GitErrorNotice ACTION_KEYS 消费面）。
+    expect(gitZh['error.action.resolve']).toBeTruthy()
+    expect(gitEn['error.action.resolve']).toBeTruthy()
     // details 形状漂移（conflicted 缺席）⇒ 计数安全降级 0。
     const drifted = errorNoticeView({ code: 'git/merge-conflict', message: 'conflict', details: undefined })
     expect(drifted.params).toEqual({ op: '', count: 0 })
+  })
+
+  it('V3 批次一：bad-request 新 reason（path-not-conflicted / conflicts-remaining）走既有 {reason} 插值——不加 ERROR_MAP 行', () => {
+    // host conflicts 守卫的两种 reason（host error-codes.ts:108-112）——无新码，无新键：
+    // 词典路径 = error.bad-request 的 {reason} 原样插值（与 force-unacknowledged /
+    // follow-without-path / malformed-trailer 同纪律）。
+    for (const reason of ['path-not-conflicted', 'conflicts-remaining']) {
+      const view = errorNoticeView({
+        code: 'git/bad-request', message: `rejected: ${reason}`,
+        details: { reason, paths: ['a.ts'], expected: null, actual: null },
+      })
+      expect(view.key).toBe('error.bad-request')
+      expect(view.params).toEqual({ reason })
+      expect(view.actions).toEqual([])
+      // 词典插值位在位（zh/en 双语词条非空——文案由 t() 渲染时消费）。
+      expect(gitZh['error.bad-request']).toContain('{reason}')
+      expect(gitEn['error.bad-request']).toContain('{reason}')
+    }
   })
 
   it('V2 批次三新码：stage-patch-failed path 插值 + stderr 折叠区（脱敏）；stash-not-found index；commit-blocked 计数', () => {
@@ -255,5 +278,20 @@ describe('errorNoticeView — 视图模型', () => {
     // details 形状漂移（path/reason/tool 缺席）⇒ 空串插值不炸。
     const drifted = errorNoticeView({ code: 'git/init-failed', message: 'init failed', details: undefined })
     expect(drifted.params).toEqual({ path: '', reason: '' })
+  })
+
+  it('V3 批次四新码：checkpoint-unavailable seq 插值（无动作——诚实降级说明）', () => {
+    const unavailable = errorNoticeView({
+      code: 'git/checkpoint-unavailable', message: 'no record', details: { seq: 7 },
+    })
+    expect(unavailable.key).toBe('error.checkpoint-unavailable')
+    expect(unavailable.params).toEqual({ seq: 7 })
+    expect(unavailable.actions).toEqual([])
+    // details 形状漂移（seq 缺席）⇒ 0 插值不炸。
+    const seqDrifted = errorNoticeView({ code: 'git/checkpoint-unavailable', message: 'no record', details: undefined })
+    expect(seqDrifted.params).toEqual({ seq: 0 })
+    // 词典插值位在位（zh/en 双语词条非空）。
+    expect(gitZh['error.checkpoint-unavailable']).toContain('{seq}')
+    expect(gitEn['error.checkpoint-unavailable']).toContain('{seq}')
   })
 })

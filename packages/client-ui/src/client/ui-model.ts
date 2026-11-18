@@ -93,11 +93,15 @@ export function headerViewModel(state: GitStatusSourceState): HeaderView {
  * **V2 批次四扩行（plan §6.6）**：无仓库态整菜单收敛为单行「初始化 Git 仓库…」
  * （[8] 空态引导——actionsEnabled=false 的例外，init 恰在无仓库时可用）；有仓库态
  * 增「创建 PR…」（[46]，分支可用性同 push 行——headName 在装配半判）。
+ * **V3 批次二扩行（v3-implementation-plan §4.6）**：branch-merge / branch-rebase
+ * 两行拉起对话框（branch/upstream picker 在对话框内——branchPickerEntries 供
+ * 装配半判「无可选分支整行禁用」）。
  */
 export type HeaderMenuId =
   | 'open-changes' | 'open-graph' | 'commit' | 'commit-push'
   | 'push' | 'pull' | 'fetch'
   | 'branches' | 'branch-compare' | 'branch-reset'
+  | 'branch-merge' | 'branch-rebase'
   | 'branch-create' | 'tag-create' | 'worktree' | 'branch-delete'
   | 'init-repo' | 'pr-create'
 
@@ -135,6 +139,10 @@ export function headerMenuItems(view: HeaderView): ReadonlyArray<HeaderMenuItem 
     // 选中目标后的对话框内选择——hard 走 danger 勾选闸）。
     { id: 'branch-compare', labelKey: 'menu.branchCompare' },
     { id: 'branch-reset', labelKey: 'menu.branchReset' },
+    // V3 批次二扩行（v3-implementation-plan §4.6）：merge/rebase 两行拉起对话框
+    // （branch picker 在对话框内——branch-create/tag-create/worktree 的直拉形）。
+    { id: 'branch-merge', labelKey: 'menu.branchMerge' },
+    { id: 'branch-rebase', labelKey: 'menu.branchRebase' },
     { id: 'branch-create', labelKey: 'menu.branchCreate' },
     { id: 'tag-create', labelKey: 'menu.tagCreate' },
     { id: 'worktree', labelKey: 'menu.worktree' },
@@ -247,6 +255,23 @@ export function branchResetEntries(params: {
   return params.branches
     .filter((branch) => branch.shortName !== params.headName)
     .map((branch) => ({ id: `branch-reset:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+}
+
+/**
+ * merge/rebase 对话框内 branch picker 的选项模型（V3 批次二 [28][29]；
+ * v3-implementation-plan §4.6）：当前分支不进清单（合并/变基自身 = up-to-date
+ * 空转，UI 前置排除——branchCompare/branchReset 同口径）；无当前分支（detached/
+ * unborn）⇒ 空清单。与四条子菜单 entries 函数同形（id 前缀区别调用方；对话框
+ * picker 只消费 label，id 供 Menu 行键）。
+ */
+export function branchPickerEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+}): HeaderSubmenuEntry[] {
+  if (params.headName === null) return []
+  return params.branches
+    .filter((branch) => branch.shortName !== params.headName)
+    .map((branch) => ({ id: `branch-picker:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
 }
 
 /**

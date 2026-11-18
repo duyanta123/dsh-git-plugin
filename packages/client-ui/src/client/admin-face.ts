@@ -10,12 +10,13 @@
  */
 
 import type {
-  AbortOperationResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
-  BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult,
+  AbortOperationResult, AgentToolsStatusResult, AutomationStatusResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions,
+  BranchCreateResult, BranchDeleteOptions, BranchDeleteResult, BranchMergeOptions,
+  BranchMergeResult, BranchSwitchResult,
   CherryPickOptions, CompareOptions, FetchOptions, FetchResult, PullResult, PushOptions,
-  PushResult, RefInfo, RemoteListResult, ResetOptions, RevertOptions, TagCreateOptions,
-  TagCreateResult, TagDeleteResult, TimeTravelResult, WorktreeAddOptions, WorktreeAddResult,
-  WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
+  PushResult, RebaseOptions, RebaseResult, RefInfo, RemoteListResult, ResetOptions, RevertOptions,
+  TagCreateOptions, TagCreateResult, TagDeleteResult, TimeTravelResult, WorktreeAddOptions,
+  WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
 } from 'dsh-gitkit/types'
 import type { RemoteResult } from './remote/mount.js'
 import type { GitRpcFace } from './remote/mount.js'
@@ -46,6 +47,32 @@ export interface GitAdminFace {
   reset(options: ResetOptions): Promise<RemoteResult<TimeTravelResult>>
   /** 放弃中间态操作（幂等安全：无中间态 ⇒ 空成功——plan §4.3 abortOperation 行）。 */
   abortOperation(): Promise<RemoteResult<AbortOperationResult>>
+  /**
+   * V3 批次二（[28]；v3-implementation-plan §4.6）：合并分支到当前分支（ff 三态 +
+   * 可选合并消息——danger 确认闸在对话框半，acknowledged 由闸产出）。
+   */
+  branchMerge(options: BranchMergeOptions): Promise<RemoteResult<BranchMergeResult>>
+  /**
+   * V3 批次二（[29]；plan §4.6）：变基当前分支（upstream 必填 + onto 可选——重写
+   * 历史语义，danger 确认闸在对话框半；冲突走 git/merge-conflict，continue 由变更
+   * tab 冲突面板驱动）。
+   */
+  rebase(options: RebaseOptions): Promise<RemoteResult<RebaseResult>>
+  /**
+   * V3 批次三（[45]；v3-implementation-plan §5.7）：Agent 工具观测状态——header 菜单
+   * 「Agent 工具」状态行的数据源。只读展示，无操作面（工具的启停在 profile 配置层）；
+   * 失败由渲染半静默降级（状态行缺席——观测行不进错误卡语义，见
+   * admin-view-model.agentToolsStatusLine）。
+   */
+  agentToolsStatus(): Promise<RemoteResult<AgentToolsStatusResult>>
+  /**
+   * V3 批次五（[42][43]；v3-implementation-plan §7.5）：自动化观测状态——header 菜单
+   * 「自动化」状态行的数据源（两模式开关态 + lastActions 最近动作摘要）。只读观测面，
+   * 无操作面（启停在 profile 配置层）；自动化动作失败不抛 RemoteError（plan §7.4
+   * 零新域码——结果经 lastActions 环 + auditLog 双可查）；拉取失败由渲染半静默降级
+   * （整行缺席——观测行不进错误卡语义，见 admin-view-model.automationStatusLines）。
+   */
+  automationStatus(): Promise<RemoteResult<AutomationStatusResult>>
 }
 
 /** 铸管理面业务面（工厂——模块级句柄禁止，map §3.4）。 */
@@ -75,6 +102,15 @@ export function createGitAdminFace(rpc: GitRpcFace): GitAdminFace {
     revert: (options) => rpc.revert(options),
     reset: (options) => rpc.reset(options),
     abortOperation: () => rpc.abortOperation(),
+    // V3 批次二 merge / rebase（plan §4.6）：直通 rpc（守卫在 host；UI 半 = ff 三态
+    // / onto 组装纯函数 + danger 确认闸——acknowledged 由闸产出后过线）。
+    branchMerge: (options) => rpc.branchMerge(options),
+    rebase: (options) => rpc.rebase(options),
+    // V3 批次三（[45]；plan §5.7）：观测方法直通 rpc（只读不入审计环——host 半 §5.5）。
+    agentToolsStatus: () => rpc.agentToolsStatus(),
+    // V3 批次五（[42][43]；plan §7.5）：观测方法直通 rpc（只读不入审计环——自动化
+    // 的写动作自身在 host 引擎内双出口入环，plan §7.3）。
+    automationStatus: () => rpc.automationStatus(),
   }
 }
 

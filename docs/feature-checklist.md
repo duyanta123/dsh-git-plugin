@@ -92,7 +92,7 @@
 
 ## D8 拍板新增（68–70，2026-11-08）
 
-> 来源：`research/notes/superagent-prototype-crosscheck.md` §D 末行登记的三项 v2 候选（原始出处 `docs/003-execution.md` 已不可考，2026-11-07 检索结论）；2026-11-08 用户拍板（`docs/v2-implementation-plan.md` §8 D8）纳入 v2。
+> 来源：`research/notes/superagent-prototype-crosscheck.md` §D 末行登记的三项 v2 候选（原始出处 `docs/003-execution.md` 已考得——远端 main `8c32a9d`，2026-11-11 实读；v2 交付的管理面最小解释与原义对照见 `docs/v3-implementation-plan.md` §0.2-⑤）；2026-11-08 用户拍板（`docs/v2-implementation-plan.md` §8 D8）纳入 v2。
 
 68. **per-ticket git worktree**：按任务创建独立 worktree（创建/移除/列表——62 的写扩展；批次一）
 69. **PR↔分支名关联**：分支选择器与推送对话框展示分支关联的 PR 链接（gh CLI 查询，无关联/失败静默降级；批次四）

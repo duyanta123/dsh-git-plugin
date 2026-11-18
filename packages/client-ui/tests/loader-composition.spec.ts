@@ -151,6 +151,9 @@ describe('M10 提交链路 UI 桩接线（无未加载桩行，ask ①/②）', 
         // V2 批次二：与当前分支比较（[36]）/ 重置当前分支（[37]）两新行。
         'branch-compare': { enabled: true },
         'branch-reset': { enabled: true },
+        // V3 批次二：合并到当前分支（[28]）/ 变基到（[29]）两新行（v3-implementation-plan §4.6）。
+        'branch-merge': { enabled: true },
+        'branch-rebase': { enabled: true },
         'branch-create': { enabled: true },
         'tag-create': { enabled: true },
         'worktree': { enabled: true },

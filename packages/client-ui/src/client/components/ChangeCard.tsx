@@ -12,11 +12,19 @@
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ChangeRow } from '../changes-view-model.js'
+import type { AttributionBadgeView } from '../checkpoint-view.js'
 import type { NS } from '../locales.js'
 
 export interface ChangeCardProps {
   /** 行渲染模型（组 + 动作可见性已折算）。 */
   row: ChangeRow
+  /**
+   * 归因徽标（V3 批次四 [40]；plan §6.6「文件卡片归因徽标」）。agent（回合号
+   * tooltip）/ user / mixed / unknown 四态——unknown 的 tooltip 明示「宿主重启前的
+   * 回合没有变更记录」（DE=A 诚实文案）。数据未就绪/路径不在快照 → 不传（徽标
+   * 不渲染——不把「尚未加载」冒充成任何态）。
+   */
+  attribution?: AttributionBadgeView
   /** 勾选态（staged 组 true；其余组 false——勾选 ⇄ stage/unstage [清单 9]）。 */
   checked: boolean
   /** 是否展开 diff 区（单展开位由 tab store 的 selectedPath 决定）。 */
@@ -64,7 +72,7 @@ function Counts({ row }: { row: ChangeRow }): ReactNode {
  * @param props - 行模型与回调。
  */
 export function ChangeCard(props: ChangeCardProps): ReactNode {
-  const { row, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onHistory, onSubmoduleDetails, onKeyDown } = props
+  const { row, attribution, checked, expanded, diffArea, t, onToggleCheck, onToggleExpand, onStage, onUnstage, onDiscard, onHistory, onSubmoduleDetails, onKeyDown } = props
   const { change } = row
   const renamed = change.origPath !== null
   return (
@@ -106,6 +114,17 @@ export function ChangeCard(props: ChangeCardProps): ReactNode {
           </span>
           {change.binary && <span className='dsh-git-change-card__flag' data-git-change-binary=''>{t('changes.binary')}</span>}
           {change.submodule && <span className='dsh-git-change-card__flag' data-git-change-submodule=''>{t('changes.submodule')}</span>}
+          {/* 归因徽标（V3 批次四 [40]）：四态文本 + 诚实 tooltip（agent = 回合号清单、
+              unknown = 宿主重启前无记录；title 走 t() 表达式——check-locale 裸串纪律）。 */}
+          {attribution !== undefined && (
+            <span
+              className='dsh-git-change-card__flag dsh-git-change-card__attribution'
+              data-git-change-attribution={attribution.state}
+              title={t(attribution.tipKey, attribution.tipParams)}
+            >
+              {t(attribution.labelKey)}
+            </span>
+          )}
           <Counts row={row} />
         </button>
         <span className='dsh-git-change-card__actions' data-git-change-actions=''>

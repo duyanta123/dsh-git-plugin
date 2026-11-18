@@ -323,12 +323,17 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
             t={t}
             // abort 动作（V2 批次二）：git/merge-conflict / git/operation-in-progress
             // 错误面板的「放弃操作」= abortOperation（幂等安全，plan §4.10）。
+            // resolve 动作（V3 批次一）：merge-conflict 面板的「解决冲突…」→ 跨槽
+            // 路由到变更 tab（冲突条常驻其顶部，plan §3.7——面板就地展开半在变更 tab
+            // 内部状态，跨槽意图通道只到 tab 级）。
             onAction={(action) => {
               if (action === 'abort') {
                 void admin.abortOperation().then((result) => {
                   if (!result.ok) setAdminError(result.error)
                   else refreshRefs()
                 })
+              } else if (action === 'resolve') {
+                openChanges()
               }
             }}
           />

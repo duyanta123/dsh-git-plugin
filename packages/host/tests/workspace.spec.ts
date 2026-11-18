@@ -52,8 +52,8 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
   it('非 turn/start 事件不记忆（observe 时机 = workspace-changes index.ts:84-87）', async () => {
     const dir = await scratchDir('dshgit-ws-', cleanups)
     const resolver = new WorkspaceResolver('')
-    resolver.observe({ header: header(dir, 'user') }, { type: 'turn/end' })
-    resolver.observe({ header: header(dir, 'user') }, { type: 'tool/result' })
+    resolver.observe({ id: 'session-1', header: header(dir, 'user') }, { type: 'turn/end' })
+    resolver.observe({ id: 'session-1', header: header(dir, 'user') }, { type: 'tool/result' })
     expect(resolver.observedSessionCwd).toBeUndefined()
     await expect(resolver.resolve()).rejects.toMatchObject({ code: 'git/session-workspace-unresolved' })
   })
@@ -61,8 +61,8 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
   it('turn/start 记忆最近一个顶层会话 cwd，realpath 规范化（recorder.ts:136 语义）', async () => {
     const dir = await scratchDir('dshgit-ws-', cleanups)
     const resolver = new WorkspaceResolver('')
-    resolver.observe({ header: header('D:/does-not-exist', 'user') }, { type: 'turn/start' })
-    resolver.observe({ header: header(dir, 'user') }, { type: 'turn/start' })
+    resolver.observe({ id: 'session-1', header: header('D:/does-not-exist', 'user') }, { type: 'turn/start' })
+    resolver.observe({ id: 'session-1', header: header(dir, 'user') }, { type: 'turn/start' })
     expect(resolver.observedSessionCwd).toBe(dir)
     const resolution = await resolver.resolve()
     expect(resolution.source).toBe('session')
@@ -73,7 +73,7 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
     const overrideDir = await scratchDir('dshgit-ws-ov-', cleanups)
     const sessionDir = await scratchDir('dshgit-ws-se-', cleanups)
     const resolver = new WorkspaceResolver(overrideDir)
-    resolver.observe({ header: header(sessionDir, 'user') }, { type: 'turn/start' })
+    resolver.observe({ id: 'session-1', header: header(sessionDir, 'user') }, { type: 'turn/start' })
     const resolution = await resolver.resolve()
     expect(resolution.source).toBe('workspace-override')
     expect(resolution.root).toBe(await realpath(overrideDir))
@@ -82,7 +82,7 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
   it('workspaceOverride 指向不存在目录：解析失败且不回落会话（显式配置坏了要响）', async () => {
     const sessionDir = await scratchDir('dshgit-ws-se-', cleanups)
     const resolver = new WorkspaceResolver('D:/definitely/not/a/dir/dshgit')
-    resolver.observe({ header: header(sessionDir, 'user') }, { type: 'turn/start' })
+    resolver.observe({ id: 'session-1', header: header(sessionDir, 'user') }, { type: 'turn/start' })
     const error = await resolver.resolve().then(
       () => { throw new Error('expected rejection') },
       (cause: unknown) => cause,
@@ -94,16 +94,16 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
   it('会话目录消失：git/session-workspace-unresolved', async () => {
     const dir = await scratchDir('dshgit-ws-gone-', cleanups)
     const resolver = new WorkspaceResolver('')
-    resolver.observe({ header: header(dir, 'user') }, { type: 'turn/start' })
+    resolver.observe({ id: 'session-1', header: header(dir, 'user') }, { type: 'turn/start' })
     await rmDir(dir)
     await expect(resolver.resolve()).rejects.toMatchObject({ code: 'git/session-workspace-unresolved' })
   })
 
   it('经宿主事件面自挂 session/event（构造期注册形态）', async () => {
     const dir = await scratchDir('dshgit-ws-ct-', cleanups)
-    const listeners: Array<(session: { header: Record<string, unknown> }, event: { type: string }) => void> = []
+    const listeners: Array<(session: { id: string; header: Record<string, unknown> }, event: { type: string }) => void> = []
     const host = {
-      on(event: string, listener: (session: { header: Record<string, unknown> }, event: { type: string }) => void) {
+      on(event: string, listener: (session: { id: string; header: Record<string, unknown> }, event: { type: string }) => void) {
         expect(event).toBe('session/event')
         listeners.push(listener)
         return listener
@@ -111,7 +111,7 @@ describe('WorkspaceResolver（session → cwd + workspaceOverride）', () => {
     }
     const resolver = new WorkspaceResolver('', host)
     expect(listeners).toHaveLength(1)
-    listeners[0]!({ header: header(dir, 'user') }, { type: 'turn/start' })
+    listeners[0]!({ id: 'session-1', header: header(dir, 'user') }, { type: 'turn/start' })
     const resolution = await resolver.resolve()
     expect(resolution.source).toBe('session')
     expect(resolution.root).toBe(await realpath(dir))

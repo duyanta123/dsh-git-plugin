@@ -26,9 +26,12 @@ export type GitCode = Extract<RemoteErrorCode, `git/${string}`>
 /**
  * GitErrorNotice 按码提供的动作（spec §3.4 动作清单；V2 批次二 + 'abort'——
  * git/merge-conflict 错误面板的「放弃操作」按钮 = abortOperation RPC（plan §4.10
- * 「必须把放弃操作按钮放进 merge-conflict 错误面板」）。
+ * 「必须把放弃操作按钮放进 merge-conflict 错误面板」）。V3 批次一 + 'resolve'——
+ * git/merge-conflict 错误面板追加「解决冲突…」入口 = 打开变更 tab 冲突面板
+ * （v3-implementation-plan §3.7；执行半在消费方：变更 tab 就地开面板 / 图 tab
+ * 跨槽 openChanges 路由）。
  */
-export type ErrorAction = 'retry' | 'set-upstream' | 'fetch' | 'pull' | 'abort'
+export type ErrorAction = 'retry' | 'set-upstream' | 'fetch' | 'pull' | 'abort' | 'resolve'
 
 /** 一个码的展示条目：词典键 + details→插值参数 + 动作。 */
 export interface ErrorMapEntry {
@@ -100,6 +103,11 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
   // host ⑤ mutations/commit 模块（2026-10-31）新增三码（workflow 任务口径）。
   'git/no-paths': { key: 'error.no-paths' },
   'git/bad-request': {
+    // reason 联合扩值不换键（V2 批次一 'force-unacknowledged' / 批次二
+    // 'follow-without-path' / 批次三 'malformed-trailer' 同纪律）；V3 批次一
+    // 'path-not-conflicted' / 'conflicts-remaining'（conflictResolve/conflictMarkResolved/
+    // operationContinue 守卫——host error-codes.ts:108-112）同走 {reason} 原样插值，
+    // 不加 ERROR_MAP 行（无新码）。
     key: 'error.bad-request',
     params: (details) => ({ reason: text((details as { reason?: unknown }).reason) }),
   },
@@ -158,13 +166,14 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
   'git/merge-conflict': {
     // op 是 string（批次三 stash-pop 复用此码不再改类型，plan §4.4）；conflicted
     // 数组只插值计数，文件清单在 details 折叠区过 redact 展示。abort 动作 =
-    // abortOperation（幂等安全；无中间态时空成功）。
+    // abortOperation（幂等安全；无中间态时空成功）；resolve 动作（V3 批次一）=
+    // 打开变更 tab 冲突面板（v3-implementation-plan §3.7，执行半在消费方）。
     key: 'error.merge-conflict',
     params: (details) => ({
       op: text((details as { op?: unknown }).op),
       count: listCount((details as { conflicted?: unknown }).conflicted),
     }),
-    actions: ['abort'],
+    actions: ['abort', 'resolve'],
   },
   'git/unknown-revision': {
     key: 'error.unknown-revision',
@@ -220,6 +229,12 @@ export const ERROR_MAP: Record<GitCode, ErrorMapEntry> = {
     // stderr 不进主文案——errorNoticeView 的 details.stderr 折叠区路径已承担
     // （过 redact 后展示），主文案只给通用失败说明（plan §6.4）。
     key: 'error.pr-create-failed',
+  },
+  // V3 批次四检查点（host session-watch/checkpoints；plan §6.5）：操作侧对无记录
+  // seq 的显式拒绝（Host 重启/会话处置后的诚实降级——文案如实说明，无动作可给）。
+  'git/checkpoint-unavailable': {
+    key: 'error.checkpoint-unavailable',
+    params: (details) => ({ seq: num((details as { seq?: unknown }).seq) }),
   },
 }
 

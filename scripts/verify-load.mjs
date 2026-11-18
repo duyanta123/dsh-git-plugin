@@ -114,6 +114,62 @@
  *         ⇒ git/bad-request 'unacknowledged' 零命令；ghCommand 固件名 ⇒
  *         git/pr-tool-missing details.tool=gh）→ prForBranch 负路径（ghCommand 固件名
  *         ⇒ git/pr-tool-missing；成功/null 降级形状由 pr.spec transport 切片单测承载）。
+ *      P. v3 批次一冲突解决面三方法各一条真宿主断言（docs/v3-implementation-plan.md
+ *         §3.8「verify-load 断言面扩展」硬前提——断言链 A–O 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖；§3.9 门禁 = 四件套 + 本脚本，本链先扩再跑）：
+ *         cherry-pick 冲突中间态（world 夹具 cf.txt 双改 + RPC cherryPick ⇒
+ *         git/merge-conflict，同 M-4 形态）→ operationContinue 负路径（unmerged 未解
+ *         ⇒ git/bad-request 'conflicts-remaining'，零命令）→ conflictList 真宿主形状
+ *         （conflicts[0] = {path,code:'UU',kind:'modified',oursExists,theirsExists} +
+ *         operation='cherry-pick' + abortable，路径集 == world diff-filter=U）→
+ *         conflictResolve（theirs；world 重读 unmerged 清空 + index 落对方侧内容）+
+ *         git/status.conflicted 空 → operationContinue 正路径（done:true；world 重读
+ *         HEAD 前进为被摘提交、CHERRY_PICK_HEAD 清空、工作区干净——GIT_EDITOR=true
+ *         防编辑器挂起的真宿主面）。
+ *      Q. v3 批次二 merge/rebase 两方法各一条真宿主断言 + 两负路径（docs/v3-implementation-plan.md
+ *         §4.7「verify-load 断言面扩展」硬前提——断言链 A–P 不自动覆盖新方法，漏扩 =
+ *         本批端到端零覆盖；§4.8 门禁 = 批次一同款四件套 + 本脚本，本链先扩再跑）：
+ *         branchMerge 正路径（ff-only 可 ff 合并 verify-ff 分支——fastForward=true、
+ *         newOid=目标 oid、world 重读 HEAD=verify-ff、rev-list --parents 无合并提交）→
+ *         branchMerge 负路径 dirty（untracked 在场 ⇒ git/dirty-worktree pathCount≥1，
+ *         零命令）→ branchMerge 冲突（no-ff 双改 seed.md ⇒ git/merge-conflict
+ *         op='merge'、conflicted == world diff-filter=U、abortable）→ rebase 负路径
+ *         operation-in-progress（MERGE_HEAD 在场 ⇒ git/operation-in-progress op='merge'，
+ *         零命令、无 rebase 目录）→ abortOperation（aborted='merge'；world 重读 HEAD
+ *         回原、MERGE_HEAD 清空、干净）→ rebase 正路径（线性三提交 verify-rb 变基到
+ *         main——done=true、world 重读 rev-list --count main..verify-rb=3、merge-base
+ *         =main tip、subjects 顺序、文件内容）→ rebase up-to-date 幂等（再 rebase ⇒
+ *         done=true、HEAD 不动）。
+ *      R. v3 批次三 Agent 工具面两相断言（docs/v3-implementation-plan.md §5.8「verify-load
+ *         断言面扩展」硬前提——断言链 A–Q 不自动覆盖新面，漏扩 = 本批端到端零覆盖；
+ *         断言形态按批次三 spike verifyForm 定案：挂载 ⇒ toolsFaceAvailable=true +
+ *         registered 白名单面断言，未挂载 ⇒ WARN 登记 + 降级一致性断言，绝不 fail）：
+ *         第一相（默认 off 档、主断言链宿主上）——ping 后 agentToolsStatus 形状
+ *         （ok:true + mode='off' + registered 深等 [] + toolsFaceAvailable boolean，
+ *         false ⇒ WARN）+ client bundle 内联 git/agentToolsStatus 生成描述符锚；
+ *         第二相（主链收口后）——taskkill 停第一相宿主 → profile 补丁 config 块内
+ *         追加 agentTools: 'readonly'（脚本自撰 ghCommand 行之后）→ 同 profile 重启
+ *         宿主 → 重换 cookie → agentToolsStatus：mode='readonly'（Config plumb-through
+ *         真宿主面），toolsFaceAvailable=true ⇒ registered 深等 readonly 8 工具名
+ *         （§5.4 表、注册序）；false ⇒ WARN + registered=[] 降级一致性。两相共用
+ *         profile 与夹具仓库（第二相只读观测，零 repo 交互）。
+ *      S. v3 批次四检查点/归因三断言 + client bundle 描述符锚（docs/v3-implementation-plan.md
+ *         §6.7「verify-load 断言面扩展」硬前提——断言链 A–R 不自动覆盖新面，漏扩 =
+ *         本批端到端零覆盖；§6.8 门禁 = 批次一同款四件套 + 本脚本，本链先扩再跑）：
+ *         checkpointList（真宿主一回合后 entries≥1——本链为裸 RPC 驱动、不开真实聊天
+ *         回合 ⇒ entries=0 时降级 WARN 登记（agentToolsStatus R 相先例，绝不 fail；
+ *         entries≥1 时走严格形状断言 sessionId/seq/turn/endedAt/summary 投影））→
+ *         checkpointDiff 负路径（环外 seq ⇒ git/checkpoint-unavailable details.seq 回带）→
+ *         attributionGet 形状（entries 数组 + path/turns/attribution 四态词汇）。
+ *      T. v3 批次五自动化两相断言 + client bundle 描述符锚（docs/v3-implementation-plan.md
+ *         §7.6「verify-load 断言面扩展」）：第一相——automationStatus off 档形状
+ *         （autoCommitMode/autoBranchMode 深等 'off' + lastActions 深等 []——off 全程
+ *         零动作的端到端面）；第二相——profile 补丁追加 autoCommitMode='turn-end' +
+ *         autoBranchMode='session-start'（与 agentTools:'readonly' 同一次重启）⇒
+ *         automationStatus 双 mode plumb-through 断言；「开启 + 夹具 turn 完成 ⇒ 新提交」
+ *         断言按 §7.6 预案降级 status-only + 人工走查登记（本链无可编程的起一回合面，
+ *         completed turn 无法产生——WARN 如实，不硬凑；lastActions 意外非空时升级为
+ *         严格条目形状 + 夹具仓 trailer 提交 world 重读）。
  *
  *   ④ 结束清理：taskkill 宿主进程树 + 删临时 DSH_HOME（runbook §6.9 清理纪律）。
  *
@@ -204,6 +260,52 @@ function killTree(pid) {
     const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
     killer.on('error', () => { /* best effort */ })
   } catch { /* best effort */ }
+}
+
+/** Spawn the dsh web host once（R 断言两相复用）；output 经回调累积（诊断尾打印）。 */
+function spawnHost(env, onOutput) {
+  const child = spawn(target.cli, [...target.cliArgs, '--profile', PROFILE, '--no-open', '--port', '0'], {
+    cwd: target.cliCwd, env, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const collect = (chunk) => { onOutput(chunk.toString('utf8')) }
+  child.stdout.on('data', collect)
+  child.stderr.on('data', collect)
+  return child
+}
+
+/** Wait for the boot line (bootLineMatch per column)——spawnHost 的成对等待半。 */
+function waitBootLine(child, getOutput, timeoutMs = BOOT_TIMEOUT_MS) {
+  return new Promise((resolveBoot, rejectBoot) => {
+    const timer = setTimeout(() => rejectBoot(new Error(`host boot timed out after ${timeoutMs}ms`)), timeoutMs)
+    // spawn 失败（DSH_BIN 指错等）只触发 'error' 事件不触发 'exit'——显式兜底 reject。
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      rejectBoot(new Error(`host spawn failed: ${error?.message ?? error}`))
+    })
+    child.stdout.on('data', function pump() {
+      // boot 行按列匹配：dev-tree 严格形；npm/bin 列宽松兜底形（verify-target.bootLineMatch）。
+      const bootURL = bootLineMatch(getOutput(), target)
+      if (bootURL) {
+        clearTimeout(timer)
+        child.stdout.off('data', pump)
+        resolveBoot(bootURL)
+      }
+    })
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      rejectBoot(new Error(`host exited early (code ${code}):\n${getOutput().slice(-3000)}`))
+    })
+  })
+}
+
+/** Graceful-ish stop：taskkill 进程树 + 等待 exit（上限 10s——finally 清理同纪律）。 */
+async function stopHost(child) {
+  if (!child?.pid || child.exitCode !== null) return
+  killTree(child.pid)
+  await new Promise((resolveExit) => {
+    const timer = setTimeout(resolveExit, 10_000)
+    child.on('exit', () => { clearTimeout(timer); resolveExit() })
+  })
 }
 
 /** Extract a balanced-brace JSON object starting at the first `{` after `marker`. */
@@ -357,32 +459,8 @@ async function main() {
     //        （它会变成内层 app 参数 → "too many arguments"——首跑实测踩坑），
     //        app 由 profile 的 dsh-web-app bundle 层挂载，--no-open/--port 是内层 app flags。──
     step('starting dsh web host…')
-    host = spawn(target.cli, [...target.cliArgs, '--profile', PROFILE, '--no-open', '--port', '0'], {
-      cwd: target.cliCwd, env, stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    host.stdout.on('data', (c) => { hostOutput += c.toString('utf8') })
-    host.stderr.on('data', (c) => { hostOutput += c.toString('utf8') })
-    const bootLine = await new Promise((resolveBoot, rejectBoot) => {
-      const timer = setTimeout(() => rejectBoot(new Error(`host boot timed out after ${BOOT_TIMEOUT_MS}ms`)), BOOT_TIMEOUT_MS)
-      // spawn 失败（DSH_BIN 指错等）只触发 'error' 事件不触发 'exit'——显式兜底 reject。
-      host.on('error', (error) => {
-        clearTimeout(timer)
-        rejectBoot(new Error(`host spawn failed: ${error?.message ?? error}`))
-      })
-      host.stdout.on('data', function pump() {
-        // boot 行按列匹配：dev-tree 严格形；npm/bin 列宽松兜底形（verify-target.bootLineMatch）。
-        const bootURL = bootLineMatch(hostOutput, target)
-        if (bootURL) {
-          clearTimeout(timer)
-          host.stdout.off('data', pump)
-          resolveBoot(bootURL)
-        }
-      })
-      host.on('exit', (code) => {
-        clearTimeout(timer)
-        rejectBoot(new Error(`host exited early (code ${code}):\n${hostOutput.slice(-3000)}`))
-      })
-    })
+    host = spawnHost(env, (chunk) => { hostOutput += chunk })
+    const bootLine = await waitBootLine(host, () => hostOutput)
     const base = new URL(bootLine)
     const token = base.searchParams.get('token')
     step(`host booted: ${base.origin} (token acquired)`)
@@ -476,6 +554,17 @@ async function main() {
       && bundleBody.includes('"git/auditLog"') && bundleBody.includes('"git/generatePrDescription"')
       && bundleBody.includes('"git/createPr"') && bundleBody.includes('"git/prForBranch"'),
     'client bundle lacks the batch-four generated method descriptors (initRepository/submoduleStatus/auditLog/generatePrDescription/createPr/prForBranch)')
+    // v3 批次三（[清单 45] R 相第一半）：生成描述符 += agentToolsStatus（50→51——
+    // client 四处同步的最小面随本批落位，bundle 内联即证）。
+    assert(bundleBody.includes('"git/agentToolsStatus"'), 'client bundle lacks the batch-three generated agentToolsStatus method descriptor')
+    // v3 批次四（[清单 39/40/41] S 相第一半）：生成描述符 += checkpointList/
+    // checkpointDiff/checkpointRestore/attributionGet（51→55——四处同步随本批落位）。
+    assert(bundleBody.includes('"git/checkpointList"') && bundleBody.includes('"git/checkpointDiff"')
+      && bundleBody.includes('"git/checkpointRestore"') && bundleBody.includes('"git/attributionGet"'),
+    'client bundle lacks the batch-four generated checkpoint/attribution method descriptors')
+    // v3 批次五（[清单 42/43] T 相第一半）：生成描述符 += automationStatus（55→56——
+    // 只读观测面；client 状态行随本批落位，bundle 内联即证）。
+    assert(bundleBody.includes('"git/automationStatus"'), 'client bundle lacks the batch-five generated automationStatus method descriptor')
     assert(bundleBody.includes('data-git-init-card'), 'client bundle lacks the init empty-state card anchor ([清单 8])')
     assert(bundleBody.includes('data-git-pr-dialog') && bundleBody.includes('data-git-pr-confirm'),
       'client bundle lacks the PR dialog + danger-confirm anchors ([清单 46])')
@@ -497,6 +586,28 @@ async function main() {
       `git/ping returned unexpected value: ${JSON.stringify(pingResult)}`)
     const localGit = await run('git', ['--version'], { cwd: REPO, env: process.env, timeoutMs: 15_000 })
     step(`ping RPC round-trip OK: gitVersion=${JSON.stringify(gitVersion)} (local \`git --version\`: ${localGit.out.trim()})`)
+
+    // ── 5.1 断言 R 第一相（v3 批次三 §5.8）：agentToolsStatus off 档形状。默认
+    //        Config（profile 补丁未设 agentTools）⇒ mode='off' + registered 深等 []
+    //        （off 档零注册——plan §5.4/§5.5）；toolsFaceAvailable 是观测面（off 档
+    //        也观测——agent-tools.ts 注册面全档位观测语义）：true = dsh-tools 挂载在
+    //        场（spike 结论：base bundle 透传 tools 行）；false = 部署未挂载 ⇒ WARN
+    //        登记（spike verifyForm：未挂载分支绝不 fail——其他部署的 overlay 可能
+    //        禁用该行）。readonly 数量断言在第二相（R 第二相，主链收口后重启）。──
+    const agentStatusOff = await rpcCall(base.origin, apiCookie, 'git/agentToolsStatus', {})
+    assert(agentStatusOff.ok === true, `git/agentToolsStatus failed: ${JSON.stringify(agentStatusOff)}`)
+    assert(agentStatusOff.value?.mode === 'off',
+      `agentToolsStatus.mode should be 'off' (default config, no profile patch): ${JSON.stringify(agentStatusOff)}`)
+    assert(Array.isArray(agentStatusOff.value?.registered) && agentStatusOff.value.registered.length === 0,
+      `agentToolsStatus.registered should be [] at mode=off: ${JSON.stringify(agentStatusOff)}`)
+    assert(typeof agentStatusOff.value?.toolsFaceAvailable === 'boolean',
+      `agentToolsStatus.toolsFaceAvailable should be a boolean: ${JSON.stringify(agentStatusOff)}`)
+    if (agentStatusOff.value.toolsFaceAvailable === true) {
+      step('agentToolsStatus off-shape OK: mode=off, registered=[], toolsFaceAvailable=true (dsh-tools face mounted and observed)')
+    } else {
+      console.warn('[verify] WARN: toolsFaceAvailable=false at mode=off — the dsh-tools face was not observed on this deployment（降级口径，非失败——spike verifyForm：未挂载分支 WARN 登记）')
+      step('agentToolsStatus off-shape OK: mode=off, registered=[] (tools face not observed — degraded, see WARN)')
+    }
 
     // ── 5.5 断言 E：identity RPC 往返（带参方法；workspaceOverride → 夹具仓库本地身份）。
     const identity = await rpcCall(base.origin, apiCookie, 'git/identity', {})
@@ -1198,6 +1309,291 @@ async function main() {
     `prForBranch with the unresolvable fixture ghCommand should be git/pr-tool-missing: ${JSON.stringify(prBranch)}`)
     step('prForBranch negative path OK: git/pr-tool-missing via the pinned fixture ghCommand')
 
+    // ── 5.99 断言 P（v3 批次一 §3.8 verify-load 扩展）：冲突解决面三方法各一条真宿主
+    //        断言。world 重读纪律同 K/L/M/N。O-2 留下了 staged 未提交的 submodule
+    //        gitlink——先收尾成提交，给 cherry-pick 夹具一个干净起点。
+    worldGit('add', '-A')
+    worldGit('commit', '-q', '-m', 'chore: verify-load settle submodule')
+    const settleOid = worldGit('rev-parse', 'HEAD')
+    // UU 夹具前提（§3.8「夹具仓制造 UU 冲突」）：cf.txt 必须先落进 merge base——
+    // 双侧各自**修改**同一既有文件才是 UU；双侧各自**新增**同路径是 AA（首跑实测
+    // conflictList 回 AA 致 P-2 断言红）。base 版先在 main 提交，再分叉双侧修改。
+    writeFileSync(join(fixtureRepo, 'cf.txt'), 'cf base line\n')
+    worldGit('add', 'cf.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load cf base')
+    worldGit('checkout', '-q', '-b', 'verify-cf')
+    writeFileSync(join(fixtureRepo, 'cf.txt'), 'cf branch line\n')
+    worldGit('add', 'cf.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load cf branch')
+    const cfOid = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'main')
+    writeFileSync(join(fixtureRepo, 'cf.txt'), 'cf main line\n')
+    worldGit('add', 'cf.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load cf main')
+    const cfMainOid = worldGit('rev-parse', 'HEAD')
+    const cfPick = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+      options: { oid: cfOid, acknowledged: true, baseRevision: cfMainOid },
+    })
+    assert(cfPick.ok === false && cfPick.error?.code === 'git/merge-conflict',
+      `conflicting cherryPick (P fixture) should be git/merge-conflict: ${JSON.stringify(cfPick)}`)
+    assert(pseudoHeadExists('CHERRY_PICK_HEAD') === true && worldGit('rev-parse', 'HEAD') === cfMainOid,
+      'world re-read: CHERRY_PICK_HEAD present, HEAD not advanced (intermediate state ready for the P chain)')
+    assert(cfMainOid !== settleOid, 'fixture sanity: the cf main edit committed on top of the settled submodule')
+
+    // P-1 operationContinue 负路径：unmerged 未解 ⇒ git/bad-request 'conflicts-remaining'
+    //     （零命令——world HEAD 不动、unmerged 仍在）。
+    const cfContinueBlocked = await rpcCall(base.origin, apiCookie, 'git/operationContinue', {})
+    assert(cfContinueBlocked.ok === false && cfContinueBlocked.error?.code === 'git/bad-request'
+      && cfContinueBlocked.error?.details?.reason === 'conflicts-remaining',
+    `operationContinue with unresolved conflicts should be git/bad-request conflicts-remaining: ${JSON.stringify(cfContinueBlocked)}`)
+    const cfUnmerged = worldGit('diff', '--name-only', '--diff-filter=U').split('\n').filter((line) => line !== '')
+    assert(worldGit('rev-parse', 'HEAD') === cfMainOid && cfUnmerged.includes('cf.txt'),
+      'rejected operationContinue should execute zero commands (HEAD unchanged, unmerged intact)')
+    step('operationContinue guard OK: conflicts-remaining on the real host (zero commands)')
+
+    // P-2 conflictList 真宿主形状：UU 条目全字段 + operation='cherry-pick' + abortable，
+    //     路径集与 world diff-filter=U 一致。
+    const cfList = await rpcCall(base.origin, apiCookie, 'git/conflictList', {})
+    assert(cfList.ok === true && Array.isArray(cfList.value?.conflicts), `git/conflictList failed: ${JSON.stringify(cfList)}`)
+    const cfEntry = cfList.value.conflicts[0]
+    assert(cfList.value.conflicts.length === 1 && cfEntry?.path === 'cf.txt' && cfEntry?.code === 'UU'
+      && cfEntry?.kind === 'modified' && cfEntry?.oursExists === true && cfEntry?.theirsExists === true,
+    `conflictList entry should carry the full UU shape: ${JSON.stringify(cfEntry)}`)
+    assert(cfList.value?.operation === 'cherry-pick' && cfList.value?.abortable === true,
+      `conflictList should detect the in-progress cherry-pick: ${JSON.stringify(cfList.value)}`)
+    assert(JSON.stringify(cfList.value.conflicts.map((e) => e.path)) === JSON.stringify(cfUnmerged),
+      'conflictList paths should equal the world diff-filter=U read-back')
+    step('conflictList RPC OK: UU entry full shape + operation=cherry-pick, paths world-matched')
+
+    // P-3 conflictResolve（theirs）：RPC resolved 回带 + world 重读 unmerged 清空、
+    //     index 落对方侧内容 + git/status.conflicted 空。
+    const cfResolve = await rpcCall(base.origin, apiCookie, 'git/conflictResolve', {
+      options: { choices: [{ path: 'cf.txt', resolution: 'theirs' }] },
+    })
+    assert(cfResolve.ok === true && JSON.stringify(cfResolve.value?.resolved) === JSON.stringify(['cf.txt']),
+      `git/conflictResolve failed: ${JSON.stringify(cfResolve)}`)
+    assert(worldGit('diff', '--name-only', '--diff-filter=U').trim() === ''
+      && readFileSync(join(fixtureRepo, 'cf.txt'), 'utf8') === 'cf branch line\n'
+      && worldGit('ls-files', '-s', '--', 'cf.txt').trim().split(/\s+/)[2] === '0',
+    'world re-read after resolve: unmerged cleared, worktree + index carry the theirs side')
+    const statusAfterResolve = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    assert(statusAfterResolve.ok === true && Array.isArray(statusAfterResolve.value?.conflicted)
+      && statusAfterResolve.value.conflicted.length === 0,
+    `git/status.conflicted should be empty after conflictResolve: ${JSON.stringify(statusAfterResolve.value?.conflicted)}`)
+    step('conflictResolve RPC OK: unmerged cleared, theirs side staged, status.conflicted empty (world re-read)')
+
+    // P-4 operationContinue 正路径：done:true + world 重读（HEAD 前进为被摘提交、
+    //     序役伪引用清空、工作区干净——GIT_EDITOR=true 防挂起的真宿主面）。
+    const cfContinue = await rpcCall(base.origin, apiCookie, 'git/operationContinue', {})
+    assert(cfContinue.ok === true && cfContinue.value?.op === 'cherry-pick' && cfContinue.value?.done === true
+      && Array.isArray(cfContinue.value?.conflicted) && cfContinue.value.conflicted.length === 0,
+    `git/operationContinue should complete the pick: ${JSON.stringify(cfContinue)}`)
+    assert(worldGit('rev-parse', 'HEAD') !== cfMainOid && !pseudoHeadExists('CHERRY_PICK_HEAD')
+      && worldStatusPorcelain() === ''
+      && worldGit('log', '-1', '--format=%s') === 'chore: verify-load cf branch'
+      && readFileSync(join(fixtureRepo, 'cf.txt'), 'utf8') === 'cf branch line\n',
+    'world re-read after continue: pick committed (GIT_EDITOR=true kept it non-interactive), sequencer cleared, worktree clean')
+    step('operationContinue RPC OK: done=true, HEAD advanced to the picked commit (world re-read)')
+
+    // ── 5.995 断言 Q（v3 批次二 §4.7 verify-load 扩展）：merge/rebase 两方法各一条真宿主
+    //        正路径 + dirty / operation-in-progress 两负路径。world 重读纪律同 K/L/M/N/O/P。
+    //        夹具起点：main @ 'chore: verify-load cf branch' 的 pick（clean，无中间态）。
+    const gitPathState = (marker) => {
+      try {
+        return existsSync(resolve(fixtureRepo, worldGit('rev-parse', '--git-path', marker)))
+      } catch {
+        return false
+      }
+    }
+
+    // Q-1 branchMerge 正路径：ff-only 可 ff 合并 verify-ff ⇒ fastForward=true、
+    //     newOid=目标 oid（world 重读：HEAD 前进、无合并提交、干净、内容落盘）。
+    worldGit('checkout', '-q', '-b', 'verify-ff')
+    writeFileSync(join(fixtureRepo, 'ff.txt'), 'ff branch line\n')
+    worldGit('add', 'ff.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load ff branch')
+    const ffOid = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'main')
+    const ffMainOid = worldGit('rev-parse', 'HEAD')
+    const ffMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+      options: { branch: 'verify-ff', fastForward: 'ff-only', acknowledged: true, baseRevision: ffMainOid },
+    })
+    assert(ffMerge.ok === true, `git/branchMerge (ff-only) failed: ${JSON.stringify(ffMerge)}`)
+    assert(ffMerge.value?.oldOid === ffMainOid && ffMerge.value?.newOid === ffOid && ffMerge.value?.fastForward === true,
+      `branchMerge ff result should be {oldOid, newOid=target, fastForward:true}: ${JSON.stringify(ffMerge.value)}`)
+    assert(worldGit('rev-parse', 'HEAD') === ffOid
+      && worldGit('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(/\s+/).length === 2
+      && worldStatusPorcelain() === ''
+      && readFileSync(join(fixtureRepo, 'ff.txt'), 'utf8') === 'ff branch line\n',
+    'world re-read after ff merge: HEAD advanced to verify-ff, no merge commit (1 parent), worktree clean')
+    step('branchMerge RPC OK: ff-only fast-forward (fastForward=true, newOid=target, world re-read)')
+
+    // Q-2 branchMerge 负路径 dirty：untracked 在场 ⇒ git/dirty-worktree（零命令——
+    //     HEAD 不动、无 MERGE_HEAD）；清场后工作区回干净。
+    writeFileSync(join(fixtureRepo, 'dirty.txt'), 'dsh verify-load dirty sample\n')
+    const dirtyMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+      options: { branch: 'verify-cp', fastForward: 'auto', acknowledged: true, baseRevision: null },
+    })
+    assert(dirtyMerge.ok === false && dirtyMerge.error?.code === 'git/dirty-worktree'
+      && typeof dirtyMerge.error?.details?.pathCount === 'number' && dirtyMerge.error.details.pathCount >= 1
+      && dirtyMerge.error?.details?.branch === 'main',
+    `branchMerge on a dirty worktree should be git/dirty-worktree with pathCount/branch: ${JSON.stringify(dirtyMerge)}`)
+    assert(worldGit('rev-parse', 'HEAD') === ffOid && !pseudoHeadExists('MERGE_HEAD'),
+      'rejected dirty branchMerge should execute zero commands (HEAD unchanged, no MERGE_HEAD)')
+    rmSync(join(fixtureRepo, 'dirty.txt'), { force: true })
+    assert(worldStatusPorcelain() === '', 'fixture cleanup: worktree clean again after removing the untracked sample')
+    step('branchMerge guard OK: dirty-worktree on the real host (zero commands)')
+
+    // Q-3 branchMerge 冲突：no-ff 双改 seed.md ⇒ git/merge-conflict（op='merge'、
+    //     conflicted == world diff-filter=U、abortable=true、MERGE_HEAD 在场）。
+    worldGit('checkout', '-q', '-b', 'verify-mg')
+    writeFileSync(join(fixtureRepo, 'seed.md'), 'mg branch edit\n')
+    worldGit('add', 'seed.md')
+    worldGit('commit', '-q', '-m', 'chore: verify-load mg branch')
+    worldGit('checkout', '-q', 'main')
+    writeFileSync(join(fixtureRepo, 'seed.md'), 'mg main edit\n')
+    worldGit('add', 'seed.md')
+    worldGit('commit', '-q', '-m', 'chore: verify-load mg main')
+    const mgMainOid = worldGit('rev-parse', 'HEAD')
+    const mgMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+      options: { branch: 'verify-mg', fastForward: 'no-ff', acknowledged: true, baseRevision: mgMainOid },
+    })
+    assert(mgMerge.ok === false && mgMerge.error?.code === 'git/merge-conflict',
+      `conflicting branchMerge should be git/merge-conflict: ${JSON.stringify(mgMerge)}`)
+    const mgUnmerged = worldGit('diff', '--name-only', '--diff-filter=U').split('\n').filter((line) => line !== '')
+    assert(mgMerge.error?.details?.op === 'merge'
+      && JSON.stringify(mgMerge.error.details.conflicted) === JSON.stringify(mgUnmerged)
+      && mgMerge.error?.details?.abortable === true,
+    `merge-conflict details should carry op='merge'/conflicted(world)/abortable: ${JSON.stringify(mgMerge.error)}`)
+    assert(worldGit('rev-parse', 'HEAD') === mgMainOid && pseudoHeadExists('MERGE_HEAD') === true,
+      'world re-read: HEAD not advanced, MERGE_HEAD present after the conflicted merge')
+    step('branchMerge conflict OK: git/merge-conflict real-host shape (op=merge, conflicted world-matched, abortable)')
+
+    // Q-4 rebase 负路径 operation-in-progress：MERGE_HEAD 在场 ⇒ git/operation-in-progress
+    //     （op='merge'——批次一共享探测的真宿主面；零命令、无 rebase 目录）。
+    const rbOverlap = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+      options: { upstream: 'main', acknowledged: true, baseRevision: mgMainOid },
+    })
+    assert(rbOverlap.ok === false && rbOverlap.error?.code === 'git/operation-in-progress'
+      && rbOverlap.error?.details?.op === 'merge',
+    `rebase during an in-progress merge should be git/operation-in-progress: ${JSON.stringify(rbOverlap)}`)
+    assert(worldGit('rev-parse', 'HEAD') === mgMainOid && !gitPathState('rebase-merge') && !gitPathState('rebase-apply'),
+      'rejected rebase should execute zero commands (HEAD unchanged, no rebase state)')
+    step('rebase guard OK: operation-in-progress on the real host (shared detectOperation, zero commands)')
+
+    // Q-5 abort 治愈：aborted='merge'（world 重读 HEAD 回原、MERGE_HEAD 清空、干净）。
+    const mgAbort = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    assert(mgAbort.ok === true && mgAbort.value?.aborted === 'merge',
+      `git/abortOperation should clear the merge state: ${JSON.stringify(mgAbort)}`)
+    assert(worldGit('rev-parse', 'HEAD') === mgMainOid && !pseudoHeadExists('MERGE_HEAD')
+      && worldStatusPorcelain() === ''
+      && readFileSync(join(fixtureRepo, 'seed.md'), 'utf8') === 'mg main edit\n',
+    'world re-read after abort: HEAD restored, MERGE_HEAD cleared, worktree clean, seed.md back to the main edit')
+    step('abortOperation OK: conflicted merge aborted (world restored to the pre-merge HEAD)')
+
+    // Q-6 rebase 正路径：verify-rb 线性三提交变基到 main ⇒ done=true（world 重读：
+    //     计数/merge-base/subjects 顺序/文件内容/干净）。
+    worldGit('checkout', '-q', '-b', 'verify-rb')
+    for (const [n, body] of [[1, 'rb one\n'], [2, 'rb two\n'], [3, 'rb three\n']]) {
+      writeFileSync(join(fixtureRepo, `rb${n}.txt`), body)
+      worldGit('add', `rb${n}.txt`)
+      worldGit('commit', '-q', '-m', `chore: verify-load rb ${n}`)
+    }
+    const rbTip = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'main')
+    writeFileSync(join(fixtureRepo, 'mainline.txt'), 'rb mainline\n')
+    worldGit('add', 'mainline.txt')
+    worldGit('commit', '-q', '-m', 'chore: verify-load rb main')
+    const rbMainOid = worldGit('rev-parse', 'HEAD')
+    worldGit('checkout', '-q', 'verify-rb')
+    assert(worldGit('rev-list', '--count', 'main..verify-rb') === '3', 'fixture sanity: three rb commits behind main')
+    const rbRebase = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+      options: { upstream: 'main', acknowledged: true, baseRevision: rbTip },
+    })
+    assert(rbRebase.ok === true, `git/rebase failed: ${JSON.stringify(rbRebase)}`)
+    assert(rbRebase.value?.done === true && rbRebase.value?.oldOid === rbTip
+      && rbRebase.value?.newOid === worldGit('rev-parse', 'HEAD'),
+    `rebase result should be {oldOid, newOid=HEAD, done:true}: ${JSON.stringify(rbRebase.value)}`)
+    assert(worldGit('rev-list', '--count', 'main..verify-rb') === '3'
+      && worldGit('merge-base', 'main', 'verify-rb') === rbMainOid
+      && worldGit('log', '--format=%s', '-n', '4').trim().split('\n').join('|')
+        === 'chore: verify-load rb 3|chore: verify-load rb 2|chore: verify-load rb 1|chore: verify-load rb main'
+      && readFileSync(join(fixtureRepo, 'rb1.txt'), 'utf8') === 'rb one\n'
+      && worldStatusPorcelain() === '',
+    'world re-read after rebase: 3 replayed commits on main (count/merge-base/subjects/content/clean)')
+    step('rebase RPC OK: linear 3-commit rebase onto main (done=true, world re-read)')
+
+    // Q-7 rebase up-to-date 幂等：已基于 main 的分支再 rebase ⇒ done=true、HEAD 不动。
+    const rbHead = worldGit('rev-parse', 'HEAD')
+    const rbAgain = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+      options: { upstream: 'main', acknowledged: true, baseRevision: rbHead },
+    })
+    assert(rbAgain.ok === true && rbAgain.value?.done === true && rbAgain.value?.newOid === rbHead,
+      `idempotent rebase should succeed with an unchanged HEAD: ${JSON.stringify(rbAgain)}`)
+    assert(worldGit('rev-parse', 'HEAD') === rbHead && worldGit('rev-list', '--count', 'main..verify-rb') === '3',
+      'world re-read after the idempotent rebase: HEAD unchanged, commit count unchanged')
+    step('rebase idempotent OK: up-to-date branch rebased with zero rewrite (git up-to-date semantics)')
+
+    // ── 5.95 断言 S（v3 批次四 §6.7 verify-load 扩展）：检查点/归因三断言。
+    //        checkpointList（真宿主一回合后 entries≥1——夹具会话产生 workspace/changes
+    //        事件）。本链全部为裸 RPC 驱动、不开真实聊天回合（真宿主无可编程的「起一
+    //        回合」面），dev host 未挂 workspace-changes 或无会话回合 ⇒ 该断言列降级
+    //        WARN 登记（agentToolsStatus R 相先例——降级形态绝不 fail，plan §6.7
+    //        「施工时实测定案」的落地：entries≥1 时走严格形状断言，=0 时 WARN）。
+    //        checkpointDiff 负路径（环外 seq ⇒ git/checkpoint-unavailable details.seq）与
+    //        attributionGet 形状不依赖回合事件，恒严格。──
+    const checkpointListS = await rpcCall(base.origin, apiCookie, 'git/checkpointList', {})
+    assert(checkpointListS.ok === true, `git/checkpointList failed: ${JSON.stringify(checkpointListS)}`)
+    assert(Array.isArray(checkpointListS.value?.entries), `checkpointList.entries should be an array: ${JSON.stringify(checkpointListS)}`)
+    if (checkpointListS.value.entries.length >= 1) {
+      const entryS = checkpointListS.value.entries[0]
+      assert(typeof entryS.sessionId === 'string' && entryS.sessionId !== ''
+        && Number.isSafeInteger(entryS.seq) && Number.isSafeInteger(entryS.turn)
+        && typeof entryS.endedAt === 'string' && entryS.endedAt !== '',
+      `checkpoint entry shape wrong: ${JSON.stringify(entryS)}`)
+      assert(entryS.summary === null || (typeof entryS.summary === 'object'
+        && Number.isSafeInteger(entryS.summary.total)
+        && Number.isSafeInteger(entryS.summary.added)
+        && Number.isSafeInteger(entryS.summary.deleted)
+        && Array.isArray(entryS.summary.files)
+        && entryS.summary.files.every((file) => typeof file.path === 'string'
+          && Number.isSafeInteger(file.added) && Number.isSafeInteger(file.deleted))),
+      `checkpoint summary projection wrong: ${JSON.stringify(entryS)}`)
+      step(`checkpointList OK: ${checkpointListS.value.entries.length} ring entries observed (session turn recorded on this deployment)`)
+    } else {
+      console.warn('[verify] WARN: checkpointList returned zero entries — no session turn produced a workspace/changes event on this deployment (raw-RPC chain opens no chat turns; workspace-changes may be unmounted)（降级口径，非失败——agentToolsStatus R 相先例）')
+      step('checkpointList OK (degraded): entries=[] (no session turn observed — see WARN)')
+    }
+    const checkpointDiffNeg = await rpcCall(base.origin, apiCookie, 'git/checkpointDiff', { options: { seq: 987_654_321, index: 0 } })
+    assert(checkpointDiffNeg.ok === false, `git/checkpointDiff with a ring-external seq unexpectedly succeeded: ${JSON.stringify(checkpointDiffNeg)}`)
+    assert(checkpointDiffNeg.error?.code === 'git/checkpoint-unavailable'
+      && checkpointDiffNeg.error?.details?.seq === 987_654_321,
+    `expected git/checkpoint-unavailable with details.seq, got ${JSON.stringify(checkpointDiffNeg.error)}`)
+    step('checkpointDiff negative OK: ring-external seq rejected as git/checkpoint-unavailable (details.seq carried)')
+    const attributionS = await rpcCall(base.origin, apiCookie, 'git/attributionGet', {})
+    assert(attributionS.ok === true, `git/attributionGet failed: ${JSON.stringify(attributionS)}`)
+    assert(Array.isArray(attributionS.value?.entries), `attributionGet.entries should be an array: ${JSON.stringify(attributionS)}`)
+    for (const rowS of attributionS.value.entries) {
+      assert(typeof rowS.path === 'string' && Array.isArray(rowS.turns)
+        && rowS.turns.every((turn) => Number.isSafeInteger(turn))
+        && ['agent', 'user', 'mixed', 'unknown'].includes(rowS.attribution),
+      `attribution entry shape wrong: ${JSON.stringify(rowS)}`)
+    }
+    step(`attributionGet OK: ${attributionS.value.entries.length} entries, all in the four-state vocabulary (shape)`)
+
+    // ── 5.95b 断言 T 第一相（v3 批次五 §7.6 verify-load 扩展）：automationStatus off
+    //        档形状。默认 Config（profile 补丁未设自动化六键）⇒ autoCommitMode='off' +
+    //        autoBranchMode='off' + lastActions 深等 []（off 全程零动作——引擎 observe
+    //        即退的端到端面）；动作环条目形状（at/action/ok/detail）在 Phase-2 按实际
+    //        观测严格断言。──
+    const automationT = await rpcCall(base.origin, apiCookie, 'git/automationStatus', {})
+    assert(automationT.ok === true, `git/automationStatus failed: ${JSON.stringify(automationT)}`)
+    assert(automationT.value?.autoCommitMode === 'off' && automationT.value?.autoBranchMode === 'off',
+      `automationStatus off-shape wrong (default config, no profile patch): ${JSON.stringify(automationT)}`)
+    assert(Array.isArray(automationT.value?.lastActions) && automationT.value.lastActions.length === 0,
+      `automationStatus.lastActions should be [] at both modes off (zero actions end-to-end): ${JSON.stringify(automationT)}`)
+    step('automationStatus off-shape OK: autoCommitMode=off, autoBranchMode=off, lastActions=[]')
+
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的
     //        strict codec 在网关拒绝非法值为 gateway/input-invalid；若仍是 SRC
@@ -1223,6 +1619,80 @@ async function main() {
     assert(negative.rejected, `unknown endpoint unexpectedly succeeded: ${JSON.stringify(negative)}`)
     step(`negative check OK: unknown endpoint rejected (${negative.detail})`)
 
+    // ── 5.999 断言 R 第二相（v3 批次三 §5.8）：profile 补丁 agentTools='readonly' ⇒
+    //        taskkill 停第一相宿主 → 同 profile 重启 → agentToolsStatus 数量断言。
+    //        两相共用 profile 与夹具仓库（第二相只读观测，零 repo 交互——Q 链收尾的
+    //        仓库状态不影响）。失败形状 = mode 未随补丁（Config plumb-through 断）或
+    //        挂载面下 registered ≠ readonly 8 白名单。
+    //        T 第二相并入（v3 批次五 §7.6）：同一补丁追加 autoCommitMode='turn-end' +
+    //        autoBranchMode='session-start'（自动化档位 plumb-through——automationStatus
+    //        双 mode 断言）。新提交断言按 §7.6 预案降级：本链为裸 RPC 驱动、无可编程的
+    //        「起一回合」面（S 相 checkpointList entries=0 实测同源），completed turn
+    //        无法在此环境产生 ⇒ status-only 断言 + 人工走查登记（WARN——如如实，不硬
+    //        凑）；若环境意外产生了回合动作（lastActions 非空），则升级为严格形状 +
+    //        夹具仓 trailer 提交 world 重读断言。──
+    step('stopping phase-1 host for the agentTools=readonly phase (taskkill /T /F)')
+    await stopHost(host)
+    const readonlyPatchRows = "    agentTools: 'readonly'\n    autoCommitMode: 'turn-end'\n    autoBranchMode: 'session-start'"
+    let patchText = readFileSync(profilePatchPath, 'utf8')
+    if (!/^ {4}agentTools: /m.test(patchText)) {
+      // 补丁文件为本脚本自撰（ghCommand 行必在）——三行插进同一 config 块。
+      assert(/^ {4}ghCommand: .*/m.test(patchText), 'profile patch lacks the authored ghCommand row (unexpected shape)')
+      patchText = patchText.replace(/^ {4}ghCommand: .*/m, (match) => `${match}\n${readonlyPatchRows}`)
+      writeFileSync(profilePatchPath, patchText)
+      step(`profile cordis.patch.yml: agentTools='readonly' + autoCommitMode='turn-end' + autoBranchMode='session-start' appended to the git config block`)
+    }
+    step('starting phase-2 web host (agentTools=readonly)…')
+    // boot 行匹配只看第二相新增输出——累积输出里还有第一相的 boot 行（旧宿主已死，
+    // 匹配旧 URL ⇒ /connect fetch failed——首跑实测踩坑）。
+    const phase2OutputOffset = hostOutput.length
+    host = spawnHost(env, (chunk) => { hostOutput += chunk })
+    const bootLine2 = await waitBootLine(host, () => hostOutput.slice(phase2OutputOffset))
+    const base2 = new URL(bootLine2)
+    const token2 = base2.searchParams.get('token')
+    step(`phase-2 host booted: ${base2.origin} (token acquired)`)
+    const apiCookie2 = await exchangeTokenForCookie(base2.origin, token2)
+    const agentStatusRw = await rpcCall(base2.origin, apiCookie2, 'git/agentToolsStatus', {})
+    assert(agentStatusRw.ok === true, `git/agentToolsStatus (phase-2) failed: ${JSON.stringify(agentStatusRw)}`)
+    assert(agentStatusRw.value?.mode === 'readonly',
+      `agentToolsStatus.mode should be 'readonly' after the profile patch (Config plumb-through): ${JSON.stringify(agentStatusRw)}`)
+    const readonlyToolNames = ['git_status', 'git_diff', 'git_log', 'git_refs', 'git_blame', 'git_commit_detail', 'git_compare_branches', 'git_repo_diagnostics']
+    if (agentStatusRw.value?.toolsFaceAvailable === true) {
+      assert(JSON.stringify(agentStatusRw.value.registered) === JSON.stringify(readonlyToolNames),
+        `agentToolsStatus.registered should equal the readonly 8-tool whitelist (plan §5.4, registration order): ${JSON.stringify(agentStatusRw.value.registered)}`)
+      step(`agentToolsStatus readonly-phase OK: mode=readonly, toolsFaceAvailable=true, registered=${JSON.stringify(agentStatusRw.value.registered)}`)
+    } else {
+      console.warn('[verify] WARN: toolsFaceAvailable=false in the readonly phase — the dsh-tools face was not observed on this deployment（降级口径，非失败——spike verifyForm：未挂载分支 WARN 登记）')
+      assert(Array.isArray(agentStatusRw.value?.registered) && agentStatusRw.value.registered.length === 0,
+        `degraded consistency: mode=readonly without a tools face must leave registered=[]: ${JSON.stringify(agentStatusRw.value)}`)
+      step('agentToolsStatus readonly-phase OK (degraded): mode=readonly, toolsFaceAvailable=false, registered=[] (consistent)')
+    }
+    // ── T 第二相（v3 批次五 §7.6）：automationStatus 双 mode plumb-through + 动作环
+    //    形状。mode 断言 = 补丁两行随 Config 落进引擎（构造期定值）；lastActions 空 =
+    //    本环境无 completed turn（status-only 降级 + 人工走查 WARN 登记——预案 §7.6）；
+    //    非空 = 环境确有回合完成 ⇒ 升级严格断言（逐条 at/action/ok/detail 形状 + 夹具
+    //    仓含 'Auto-committed-by: dsh-git-plugin' 提交的 world 重读）。──
+    const automationRw = await rpcCall(base2.origin, apiCookie2, 'git/automationStatus', {})
+    assert(automationRw.ok === true, `git/automationStatus (phase-2) failed: ${JSON.stringify(automationRw)}`)
+    assert(automationRw.value?.autoCommitMode === 'turn-end' && automationRw.value?.autoBranchMode === 'session-start',
+      `automationStatus modes should follow the profile patch (autoCommitMode=turn-end, autoBranchMode=session-start): ${JSON.stringify(automationRw)}`)
+    assert(Array.isArray(automationRw.value?.lastActions), `automationStatus.lastActions should be an array: ${JSON.stringify(automationRw)}`)
+    if (automationRw.value.lastActions.length > 0) {
+      for (const entry of automationRw.value.lastActions) {
+        assert(typeof entry.at === 'string' && entry.at !== ''
+          && (entry.action === 'auto-commit' || entry.action === 'auto-branch')
+          && typeof entry.ok === 'boolean' && typeof entry.detail === 'string' && entry.detail !== '',
+        `automationStatus action entry shape wrong: ${JSON.stringify(entry)}`)
+      }
+      const trailerLog = worldGit('log', '--format=%B', '--all')
+      assert(trailerLog.includes('Auto-committed-by: dsh-git-plugin'),
+        'automation actions were recorded but the fixture repo holds no auto-commit trailer — the turn-end auto-commit path is broken')
+      step(`automationStatus phase-2 OK (upgraded): modes followed the patch, ${automationRw.value.lastActions.length} action(s) observed, fixture repo holds the trailer commit (world re-read)`)
+    } else {
+      console.warn('[verify] WARN: automationStatus.lastActions=[] in the turn-end/session-start phase — this chain is raw-RPC driven and cannot produce a completed session turn (same root as the S-phase checkpointList entries=0 downgrade); the commit-materialization assertion is downgraded to status-only per plan §7.6 — 人工走查登记：host 真仓范式已由 packages/host/tests/automation.spec.ts 全项覆盖（16 用例），本脚本只断言 Config plumb-through 与动作环形状')
+      step('automationStatus phase-2 OK (status-only downgrade): modes=turn-end/session-start, lastActions=[] (no turns fired on this deployment — see WARN)')
+    }
+
     outcome = 'PASS'
     exitCode = EXIT_PASS
     step('ALL CHECKS PASSED')
@@ -1246,11 +1716,7 @@ async function main() {
     // ── 7. 清理（runbook §6.9）──
     if (host?.pid && host.exitCode === null) {
       step(`stopping host pid ${host.pid} (taskkill /T /F)`)
-      killTree(host.pid)
-      await new Promise((resolveExit) => {
-        const t = setTimeout(resolveExit, 10_000)
-        host.on('exit', () => { clearTimeout(t); resolveExit() })
-      })
+      await stopHost(host)
     }
     try {
       rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })

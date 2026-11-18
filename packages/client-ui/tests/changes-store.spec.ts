@@ -275,6 +275,67 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.prForBranch must not be called by the changes store')
   }
 
+  // V3 批次一冲突解决 4 方法（conflictList/conflictResolve/conflictMarkResolved/
+  // operationContinue）——变更面板 store 不消费（冲突面板走 changes-ops-face 直通，
+  // 不经本 store）；断言守卫桩（FakeRpc.status 同款）。
+  async conflictList(): Promise<never> {
+    throw new Error('FakeRpc.conflictList must not be called by the changes store')
+  }
+
+  async conflictResolve(): Promise<never> {
+    throw new Error('FakeRpc.conflictResolve must not be called by the changes store')
+  }
+
+  async conflictMarkResolved(): Promise<never> {
+    throw new Error('FakeRpc.conflictMarkResolved must not be called by the changes store')
+  }
+
+  async operationContinue(): Promise<never> {
+    throw new Error('FakeRpc.operationContinue must not be called by the changes store')
+  }
+
+  // V3 批次二 merge / rebase 2 方法（branchMerge/rebase）——变更面板 store 不消费
+  // （对话框走 admin-face 直通，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
+  async branchMerge(): Promise<never> {
+    throw new Error('FakeRpc.branchMerge must not be called by the changes store')
+  }
+
+  async rebase(): Promise<never> {
+    throw new Error('FakeRpc.rebase must not be called by the changes store')
+  }
+
+  // V3 批次三 Agent 工具观测面（agentToolsStatus）——变更 store 不消费；断言守卫桩
+  // （FakeRpc.status 同款）。
+  async agentToolsStatus(): Promise<never> {
+    throw new Error('FakeRpc.agentToolsStatus must not be called by the changes store')
+  }
+
+  // V3 批次四检查点/归因面（checkpointList/checkpointDiff/checkpointRestore/
+  // attributionGet）——变更 store 不消费；断言守卫桩（GitRpcFace 方法对账的面补齐，
+  // v3-implementation-plan §6.3）。
+  async checkpointList(): Promise<never> {
+    throw new Error('FakeRpc.checkpointList must not be called by the changes store')
+  }
+
+  async checkpointDiff(): Promise<never> {
+    throw new Error('FakeRpc.checkpointDiff must not be called by the changes store')
+  }
+
+  async checkpointRestore(): Promise<never> {
+    throw new Error('FakeRpc.checkpointRestore must not be called by the changes store')
+  }
+
+  async attributionGet(): Promise<never> {
+    throw new Error('FakeRpc.attributionGet must not be called by the changes store')
+  }
+
+  // V3 批次五自动化观测面（automationStatus）——变更 store 不消费（header 菜单状态
+  // 行走 admin-face 直通）；断言守卫桩（GitRpcFace 方法对账的面补齐，
+  // v3-implementation-plan §7.3）。
+  async automationStatus(): Promise<never> {
+    throw new Error('FakeRpc.automationStatus must not be called by the changes store')
+  }
+
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan

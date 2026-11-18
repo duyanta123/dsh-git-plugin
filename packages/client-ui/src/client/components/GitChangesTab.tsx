@@ -20,17 +20,37 @@
  * 提示回落文件级 stage）；② CRLF 提示条（[56]；repoDiagnostics，可折叠不阻断）；
  * ③ stash 计数 chip → 面板（[14]；列表 / 应用=pop / 删除=drop danger 闸 /
  * 「Stash 全部变更」includeUntracked 缺省勾选 + untracked 计数提示，D4=B）。
+ *
+ * **V3 批次一（[13]；v3-implementation-plan §3.7）扩块**：变更 tab 顶部冲突条
+ * （status.conflicted 非空**常驻**——不依赖错误路径；计数 + operation 徽标）→
+ * GitConflictPanel（文件列表 code/kind 徽标 + ours/theirs + 手动标记 + 底部
+ * 继续/放弃 danger 闸）。merge-conflict 错误面板（变更动作错误条 / stash 面板
+ * op 错误条）追加「解决冲突…」入口 → 就地展开冲突面板。
+ *
+ * **V3 批次四（[39][40][41]；v3-implementation-plan §6.6）扩块**：① 会话改动时间线
+ * 折叠区（GitCheckpointTimeline——stash 条与文件组之间，打开才拉 checkpointList；
+ * 回合分组 + 文件 ± 计数 → 点击看 diff（checkpointDiff → FileDiffView 只读）→
+ * 「恢复此回合」（GitConfirmDialog danger 勾选闸 + baseRevision 确认时刻捕获——
+ * discard 三重守卫范式）；summary null 回合诚实 unavailable 文案 + 恢复禁用；
+ * wire 不携带 turn reason（session-watch.ts:81-82）——无 reason 徽标，缺口如实登记）；
+ * ② 文件卡片归因徽标（[40]——attributionGet 按 revision 拉取，agent/user/mixed/
+ * unknown 四态，unknown tooltip 明示宿主重启前无记录）；③ 时间线区归因筛选
+ * （filterChangesViewModel 过滤主文件列表；折叠区收起即复位 'all'）。
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { DiffFile, RepoDiagnostics, StashEntry } from 'dsh-gitkit/types'
+import type { ConflictListResult, DiffFile, RepoDiagnostics, StashEntry } from 'dsh-gitkit/types'
 import { Checkbox } from '@deepseek-ai/dsh-client-ui-primitives'
 import { parseGitChangesAddress } from '../addresses.js'
 import type { ChangeRow, ChangesViewModel } from '../changes-view-model.js'
 import { changesViewModel, crlfBarView } from '../changes-view-model.js'
+// V3 批次四（[40]）：归因徽标 + 按归因筛选（checkpoint-view 纯函数半）。
+import { attributionBadgeView, attributionMap, filterChangesViewModel } from '../checkpoint-view.js'
+import type { AttributionBadgeView, AttributionFilter } from '../checkpoint-view.js'
+import { conflictBarView } from '../conflict-view-model.js'
 import type { GitChangesOpsFace } from '../changes-ops-face.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
 import { assembleSelectedPatch, directionOfScope, hunkLineKeys } from '../diff/patch-select.js'
@@ -45,6 +65,7 @@ import {
   STASH_INCLUDE_UNTRACKED_DEFAULT, popConflictHint, stashChipView, stashDropConfirmView,
   stashPushDisabled, stashPushOptions, untrackedHint,
 } from '../stash-view-model.js'
+import type { GitCheckpointState } from '../store/checkpoint-store.js'
 import type { GitBlameState } from '../store/git-blame-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import { diffCacheKey } from '../store/git-changes-store.js'
@@ -53,7 +74,9 @@ import type { ChangesTabStoreHandle } from '../store/changes-tab-store.js'
 import { ChangeCard } from './ChangeCard.js'
 import { FileDiffView } from './FileDiffView.js'
 import { GitBlameView } from './GitBlameView.js'
+import { GitCheckpointTimeline } from './GitCheckpointTimeline.js'
 import { GitCommitDialog } from './GitCommitDialog.js'
+import { GitConflictPanel } from './GitConflictPanel.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 // V2 批次四（[61]）：子模块状态详情面板（submoduleStatus 列表——plan §6.6）。
@@ -68,6 +91,8 @@ export interface ChangesInjected {
     gitChanges: ObservableSnapshot<GitChangesState>
     /** blame 数据缓存（V2 批次二 [34]；D3=B -L 区间分片——git-blame-store）。 */
     gitBlame: ObservableSnapshot<GitBlameState>
+    /** 检查点/归因数据缓存（V3 批次四 [39][40]——checkpoint-store，按需拉取范式）。 */
+    gitCheckpoint: ObservableSnapshot<GitCheckpointState>
   }
   loadDiff(scope: ChangeRow['scope'], path: string): void
   stage(paths: readonly string[]): void
@@ -83,6 +108,12 @@ export interface ChangesInjected {
   blameEnsure(path: string): void
   /** blame 分片加载（-L start,end；D3=B 虚拟滚动联动；store 侧去重）。 */
   blameEnsureRange(path: string, start: number, end: number): void
+  /** 时间线按需拉取（折叠区打开且 store 相位 idle 时——V3 批次四 [39]）。 */
+  checkpointEnsureTimeline(): void
+  /** 归因拉取（仓库可用且 store 相位 idle 时——V3 批次四 [40]）。 */
+  checkpointEnsureAttribution(): void
+  /** 回合文件 diff 懒加载（checkpointDiff 槽位——V3 批次四 [41]；sessionId 随行 = wire 判别半，评审收口）。 */
+  checkpointLoadDiff(seq: number, index: number, sessionId: string): void
   /** 文件历史动作（[60]；跨 tab 意图 → 图 tab path 模式 + openResource 打开图 tab）。 */
   openFileHistory(path: string): void
   /** 批次三动作面（[10] stagePatch / [14] stash / [56] repoDiagnostics——changes-ops-face）。 */
@@ -130,9 +161,11 @@ function GroupSection(props: {
   onHistory(path: string): void
   /** 子模块详情动作（V2 批次四 [61]；submodule 文件的行内入口——GitSubmodulePanel 拉起）。 */
   onSubmoduleDetails(path: string): void
+  /** 归因徽标查询（V3 批次四 [40]；数据未就绪/路径缺席 → undefined——徽标不渲染）。 */
+  attributionOf(path: string): AttributionBadgeView | undefined
   t: GitChangesTabProps['t']
 }): ReactNode {
-  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, t } = props
+  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, attributionOf, t } = props
   const nodes = useMemo(() => groupPaths(group.rows.map((row) => row.path)), [group.rows])
   return (
     <section className='dsh-git-changes__group' data-git-changes-group={group.id}>
@@ -157,6 +190,7 @@ function GroupSection(props: {
           onRowKeyDown={onRowKeyDown}
           onHistory={onHistory}
           onSubmoduleDetails={onSubmoduleDetails}
+          attributionOf={attributionOf}
           t={t}
         />
       ))}
@@ -181,11 +215,13 @@ function NodeRows(props: {
   onHistory(path: string): void
   /** 子模块详情动作（V2 批次四 [61]；透传到 submodule 行的 ChangeCard）。 */
   onSubmoduleDetails(path: string): void
+  /** 归因徽标查询（V3 批次四 [40]；透传到 ChangeCard 的 attribution 形态）。 */
+  attributionOf(path: string): AttributionBadgeView | undefined
   t: GitChangesTabProps['t']
 }): ReactNode {
   const {
     node, depth, viewModel, groupId, expandedDirs, selectedPath,
-    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, t,
+    diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, attributionOf, t,
   } = props
   if (node.kind === 'dir') {
     const key = `${groupId}:${node.path}`
@@ -218,6 +254,7 @@ function NodeRows(props: {
             onRowKeyDown={onRowKeyDown}
             onHistory={onHistory}
             onSubmoduleDetails={onSubmoduleDetails}
+            attributionOf={attributionOf}
             t={t}
           />
         ))}
@@ -226,6 +263,8 @@ function NodeRows(props: {
   }
   const row = viewModel.rowByPath.get(node.path)
   if (row === undefined) return null
+  // [40] 归因徽标（exactOptionalPropertyTypes：缺席用条件展开——ChangeCardProps 可选属性面）。
+  const attribution = attributionOf(row.path)
   return (
     <ChangeCard
       key={node.path}
@@ -243,6 +282,7 @@ function NodeRows(props: {
       // [61] 仅 submodule 文件注入详情入口（exactOptionalPropertyTypes：缺席用
       // 条件展开而非显式 undefined——ChangeCardProps 的可选属性面）。
       {...(row.change.submodule ? { onSubmoduleDetails: (): void => { onSubmoduleDetails(row.path) } } : {})}
+      {...(attribution !== undefined ? { attribution } : {})}
       onKeyDown={(event) => { onRowKeyDown(row, event) }}
     />
   )
@@ -254,9 +294,10 @@ function NodeRows(props: {
  */
 export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const {
-    useTabInfo, useStore, actions, useGitStatus, useGitChanges, useGitBlame,
+    useTabInfo, useStore, actions, useGitStatus, useGitChanges, useGitBlame, useGitCheckpoint,
     loadDiff, stage, unstage, discard, refresh, dismissMutationError, commitDialog,
     blameEnsure, blameEnsureRange, openFileHistory, changesOps, t,
+    checkpointEnsureTimeline, checkpointEnsureAttribution, checkpointLoadDiff,
   } = props
   const { tab } = useTabInfo()
   const coordinates = useMemo(() => parseGitChangesAddress(tab.contentId), [tab.contentId])
@@ -266,10 +307,24 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const statusState = useGitStatus((state) => state)
   const changesState = useGitChanges((state) => state)
   const blameState = useGitBlame((state) => state)
+  const checkpointState = useGitCheckpoint((state) => state)
   const selectedPath = useStore((state) => state.selectedPath)
   const expandedDirs = useStore((state) => state.expandedDirs)
   const pendingConfirm = useStore((state) => state.pendingConfirm)
+  // ── V3 批次四（[39][40]）：时间线折叠区开合 + 归因筛选（声明先于下方的过滤 memo）──
+  const [timelineOpen, setTimelineOpen] = useState(false)
+  const [attributionFilter, setAttributionFilter] = useState<AttributionFilter>('all')
   const view = useMemo(() => changesViewModel(statusState), [statusState])
+  // [40] 归因映射（徽标查询 + 筛选数据源）与按归因过滤后的列表视图（'all' 原样返回
+  // 同引用；组/行过滤后空组裁撤——selection/rowByPath 仍吃全量 view）。
+  const attributionByPath = useMemo(
+    () => attributionMap(checkpointState.attribution.entries),
+    [checkpointState.attribution.entries],
+  )
+  const filteredView = useMemo(
+    () => filterChangesViewModel(view, attributionByPath, attributionFilter),
+    [view, attributionByPath, attributionFilter],
+  )
   const selection = useMemo(
     () => selectionOf(view, selectedPath, statusState.revision),
     [view, selectedPath, statusState.revision],
@@ -299,6 +354,9 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const [initRunning, setInitRunning] = useState(false)
   const [initError, setInitError] = useState<GitErrorLike | null>(null)
   const [submodulePanelPath, setSubmodulePanelPath] = useState<string | null>(null)
+  // ── V3 批次一（[13]）：冲突条开合 + conflictList 摘要（operation 徽标数据源）──
+  const [conflictOpen, setConflictOpen] = useState(false)
+  const [conflictSummary, setConflictSummary] = useState<ConflictListResult | null>(null)
 
   // blame 模式开着且展开行槽位缺席 ⇒ 首载（全区一次；oversized 转 D3=B 分片模式）。
   useEffect(() => {
@@ -334,6 +392,37 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     })
     return () => { cancelled = true }
   }, [view.available, changesOps])
+
+  // 冲突条摘要（V3 批次一 [13]）：conflicted 计数变化（含落到 0）即重取一次
+  // conflictList（只读、fresh 扫描）供 operation 徽标与可见性判定。计数归零**不清摘要**
+  // 而是以 fresh 结果裁决：中间态仍在场（operation ≠ null——continue 循环待续）则保留
+  // （条不撤、面板不卸，「继续操作」保持可达）；中间态已终结（外部完成/abort）即清。
+  // 仓库不可用直接清。面板动作后的精确回吐走 GitConflictPanel 的 onSummary。
+  const conflictedCount = statusState.status?.conflicted.length ?? 0
+  useEffect(() => {
+    if (!view.available) {
+      setConflictSummary(null)
+      return
+    }
+    let cancelled = false
+    void changesOps.conflictList().then((result) => {
+      if (cancelled) return
+      const keep = result.ok && (result.value.conflicts.length > 0 || result.value.operation !== null)
+      setConflictSummary(keep ? result.value : null)
+    })
+    return () => { cancelled = true }
+  }, [view.available, conflictedCount, changesOps])
+
+  // 归因徽标数据（[40]）：仓库可用且 store 相位 idle（首装/revision 失效后的自动回落）
+  // ⇒ 拉取一次（store 半去重；host 侧 status 快照 + 逐文件 mtime，tab 关闭不拉）。
+  useEffect(() => {
+    if (view.available && checkpointState.attribution.phase === 'idle') checkpointEnsureAttribution()
+  }, [view.available, checkpointState.attribution.phase, checkpointEnsureAttribution])
+
+  // 时间线折叠区收起 ⇒ 归因筛选复位 'all'（不可见的过滤不保留——筛选控件住在折叠区）。
+  useEffect(() => {
+    if (!timelineOpen) setAttributionFilter('all')
+  }, [timelineOpen])
 
   /**
    * 勾选变化 → 组装选中 patch → stagePatch（plan §5.6 数据流的组件半）：
@@ -601,6 +690,9 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     checking: statusState.repo.checking,
     statusError: statusState.statusError,
   })
+  // V3 批次一（[13]）：冲突条（常驻入口——status.conflicted 非空即显示，不依赖错误
+  // 路径；operation 徽标吃 conflictList 摘要，未加载时 null 不渲染徽标）。
+  const conflictBar = conflictBarView(conflictedCount, conflictSummary?.operation ?? null)
 
   /** [8] 初始化动作：成功 → refresh（workspace 从 unresolved → resolved，R5 manual
       取首帧——plan §6.3）；失败 → 就地错误条（git/init-failed 文案带 path/reason）。 */
@@ -623,11 +715,46 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
       {view.unborn && (
         <p className='dsh-git-changes__unborn' data-git-changes-unborn=''>{t('changes.emptyRepo')}</p>
       )}
+      {/* V3 批次一（[13]）冲突条：conflicted 非空常驻（不依赖错误路径）——计数 +
+          operation 徽标 → 展开冲突面板（plan §3.7「常驻入口」）。 */}
+      {conflictBar.visible && (
+        <div className='dsh-git-changes__conflict-bar' data-git-changes-conflict-bar=''>
+          <button
+            type='button'
+            className='dsh-git-changes__conflict-toggle'
+            data-git-changes-conflict-toggle=''
+            aria-expanded={conflictOpen}
+            onClick={() => { setConflictOpen(!conflictOpen) }}
+          >
+            {t(conflictBar.labelKey, conflictBar.params)}
+          </button>
+          {conflictBar.operationKey !== null && (
+            <span className='dsh-git-changes__conflict-op' data-git-changes-conflict-op=''>
+              {t(conflictBar.operationKey)}
+            </span>
+          )}
+        </div>
+      )}
+      {conflictBar.visible && conflictOpen && (
+        <GitConflictPanel
+          open
+          t={t}
+          ops={changesOps}
+          onClose={() => { setConflictOpen(false) }}
+          onMutated={refresh}
+          onSummary={setConflictSummary}
+        />
+      )}
       {statusState.statusError !== null && (
         <GitErrorNotice
           error={statusState.statusError}
           t={t}
-          onAction={(action) => { if (action === 'retry') refresh() }}
+          // resolve（V3 批次一）：merge-conflict 形态错误条的「解决冲突…」→ 就地展开
+          // 冲突面板（plan §3.7；status 读错误不会是 merge-conflict——分支仅兜底）。
+          onAction={(action) => {
+            if (action === 'retry') refresh()
+            else if (action === 'resolve') setConflictOpen(true)
+          }}
         />
       )}
       {mutationError !== null && (
@@ -636,6 +763,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
             error={mutationError.error}
             t={t}
             onAction={(action) => {
+              if (action === 'resolve') { setConflictOpen(true); return }
               if (action !== 'retry') return
               if (mutationError.kind === 'stage') stage(mutationError.paths)
               else if (mutationError.kind === 'unstage') unstage(mutationError.paths)
@@ -744,7 +872,26 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
           {popConflictVisible && (
             <p className='dsh-git-changes__stash-conflict' data-git-changes-stash-popconflict=''>{t('stash.popConflict')}</p>
           )}
-          {stashOpError !== null && <GitErrorNotice error={stashOpError} t={t} />}
+          {/* stash pop 的 merge-conflict 错误条（V2 批次三）：V3 批次一追加「解决冲突…」
+              动作 → 就地展开冲突面板（plan §3.7；面板在 stash 面板下方渲染）。 */}
+          {stashOpError !== null && (
+            <GitErrorNotice
+              error={stashOpError}
+              t={t}
+              onAction={(action) => {
+                if (action === 'resolve') setConflictOpen(true)
+                else if (action === 'abort') {
+                  setStashBusy(true)
+                  setStashOpError(null)
+                  void changesOps.abortOperation().then((result) => {
+                    setStashBusy(false)
+                    if (!result.ok) setStashOpError(result.error)
+                    else { refresh(); reloadStash() }
+                  })
+                }
+              }}
+            />
+          )}
           <div className='dsh-git-changes__stash-push' data-git-changes-stash-push=''>
             <button
               type='button'
@@ -768,6 +915,25 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
             )}
           </div>
         </div>
+      )}
+      {/* V3 批次四（[39][41]）会话改动时间线折叠区：打开才拉 checkpointList（不做
+          常驻轮询——store 半 HostReadStore 范式）；内含归因筛选行（[40]——作用对象
+          是下方文件卡片列表）。仓库不可用时不渲染（无会话事件面可言）。 */}
+      {view.available && (
+        <GitCheckpointTimeline
+          open={timelineOpen}
+          state={checkpointState}
+          sessionId={coordinates.sessionId}
+          baseRevision={statusState.status?.branch.oid ?? null}
+          filter={attributionFilter}
+          ops={changesOps}
+          t={t}
+          onToggle={() => { setTimelineOpen(!timelineOpen) }}
+          onFilterChange={setAttributionFilter}
+          ensureTimeline={checkpointEnsureTimeline}
+          loadDiff={checkpointLoadDiff}
+          onMutated={refresh}
+        />
       )}
       {!view.available ? (
         initView !== null ? (
@@ -794,9 +960,12 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         <p className='dsh-git-changes__empty' data-git-changes-empty={view.checking ? 'checking' : 'clean'}>
           {view.checking ? t('header.checking') : t('changes.empty')}
         </p>
+      ) : filteredView.groups.length === 0 ? (
+        // [40] 归因筛选启用且无一命中（筛选控件在时间线折叠区——复位即可全量回来）。
+        <p className='dsh-git-changes__empty' data-git-changes-empty='filtered'>{t('checkpoint.filter.empty')}</p>
       ) : (
         <div className='dsh-git-changes__groups' data-git-changes-groups=''>
-          {view.groups.map((group) => (
+          {filteredView.groups.map((group) => (
             <GroupSection
               key={group.id}
               viewModel={view}
@@ -811,6 +980,7 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
               onRowKeyDown={onRowKeyDown}
               onHistory={openFileHistory}
               onSubmoduleDetails={(path) => { setSubmodulePanelPath(path) }}
+              attributionOf={(path) => attributionBadgeView(attributionByPath.get(path)) ?? undefined}
               t={t}
             />
           ))}

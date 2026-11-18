@@ -1,7 +1,7 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-发布版本 **v0.2.0**（含 v0.1.2 全部内容，随 V2 首版一次发布；尚未打 tag/发 npm），由三部分组成（pnpm workspace）：
+发布版本 **v0.3.0**（含 v0.2.0 全部内容——tag `v0.2.0` 已发布并实核；v0.3.0 = V3 五批功能面，四 manifest 已随批次五收口升版，**tag/npm 尚未发布**——发布动作属发布批，门禁实跑口径见 §6），由三部分组成（pnpm workspace）：
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
@@ -12,7 +12,7 @@ dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
 
-## 1. 功能清单（v1 + V2 批次一～四）
+## 1. 功能清单（v1 + V2 批次一～四 + V3 批次一～五）
 
 **看清（变更感知）**
 - 工作区快照：staged / unstaged / untracked / conflicted 四类变更 + ahead/behind + 分支/HEAD 字段（含 detached、unborn 首提交前、rename、二进制、中文路径）；
@@ -62,6 +62,30 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 - 命令面板与全局快捷键（清单 51，客户端半）：'/' 菜单贡献「打开变更面板」「提交图」（纯 UI 动作）+ 全局快捷键 `Ctrl/Cmd+Shift+E`（变更面板）/ `Ctrl/Cmd+Shift+G`（提交图），可在 dsh 设置 → 快捷键改键，命令自动进快捷键参考页可搜索（机制 = dsh `commandUi`/`shortcuts` 注入服务，spike 结论见 `docs/v2-implementation-plan.md` §6.6）；
 - 子模块展示（清单 61）：变更卡片 submodule 徽标 →「子模块详情」面板（`submoduleStatus` **只列不递归**：path / 当前 oid vs 记录 oid 差异高亮 / state 徽标 clean·dirty·uninitialized·mismatch）；
 - 写操作审计日志（清单 66）：写方法**双出口**入环（成功 `ok:true`、失败 `ok:false`+域码），summary 只含 op 参数摘要白名单（不落提交正文 / 文件内容 / 密钥）；`auditLog` RPC 查询（newest-first + limit/since 过滤；按方案无专属 UI）。
+
+**冲突解决（V3 批次一）**
+- 冲突条（status.conflicted 非空常驻入口 + 中间态 op 徽标「正在 cherry-pick」等）展开冲突面板：文件列表（七码/类型徽标）→ 选中文件「保留我方 / 采用对方」按钮（由 wire 的 oursExists/theirsExists 驱动禁用——不可向禁用）+「我已手动编辑，标记已解决」（删除侧自动走 `git rm`）+ DD 双删显式确认单钮；
+- `conflictList`（fresh porcelain v2 扫描不走 1.5s 缓存）/ `conflictResolve`（七码×两向命令矩阵逐格实测；多文件中途失败已成功项不回滚、清单随 `git/git-error` details.resolved 如实分列）/ `conflictMarkResolved` / `operationContinue`（GIT_EDITOR=true 防挂起；下一冲突 done:false 驱动客户端循环）/ `abortOperation` 扩面（merge/rebase 目录探测）；
+- continue 循环：done:false → 面板刷新 → 下一冲突 → done:true（冲突是返回值不是错误）。
+
+**merge / rebase（V3 批次二）**
+- header 菜单「合并到当前分支…」（branch picker + ff 三态 ff-only/auto/no-ff + no-ff 消息编辑 + danger 确认）与「变基到…」（upstream/onto picker + danger 确认）；
+- 守卫链：acknowledged + baseRevision 乐观并发 + 目标修订剥 `^{commit}` 预检（annotated tag 不误报 ff）+ 中间态探测 + **从严档**（工作区四组全空才执行——比 git 原生更严，见 §5）；冲突 ⇒ `git/merge-conflict`（conflicted `-z` 口径原样路径）→ 批次一冲突面板/继续循环承接。
+
+**Agent 工具面（V3 批次三）**
+- `agentTools: off | readonly | readwrite`（默认 off）向模型注册 11 个 `git_*` 工具（readonly 8 + readwrite 增 stage/unstage/commit；merge/rebase/cherry-pick/reset 等高危写不进白名单）；`agentToolsStatus()` 观测锚（mode/registered/toolsFaceAvailable）；
+- 工具 execute 直调引擎层，失败以 `{ok:false,error,message}` 工具结果文本返回不抛宿主异常；写工具挂 audit 双出口；`git_commit` 内嵌 scanStaged secret 硬阻断前检；
+- 可选 `agentToolBlockShellGit` guard（shell+git 参数 deny 引导——引导性防线非安全边界，见 §5）；dsh-tools 未挂载 ⇒ 静默降级不注册。
+
+**检查点 · 归因 · 会话改动时间线（V3 批次四）**
+- 变更 tab「会话改动时间线」折叠区：turn 分组（相对时间 + turn/end reason 徽标 + 文件计数）→ 展开文件行（±计数）→ 点击看 diff（`checkpointDiff` → 既有 FileDiff 只读渲染）→「恢复此回合」（danger 勾选闸 + baseRevision 乐观并发；逐文件反向应用部分成功如实分列）；
+- 文件卡片归因徽标四态（agent/user/mixed/unknown，tooltip 诚实口径）+ 按归因筛选变更列表；
+- 多会话并发：diff/restore 带可选 sessionId 判别半（seq 是会话内序号——碰撞裸 seq 仍歧义硬拒）；summary 500 文件封顶的 restore-all fail-closed（见 §5）。
+
+**自动化（V3 批次五）**
+- auto-commit（`turn/end` completed）：fresh status 脏区 + 无中间态 + **无裸冲突**（stash pop 式 UU 硬拒——冲突走解决面板，§5）⇒ `git add -A` → secret 硬阻断前检（命中 ⇒ `git reset` 全撤销 staged + audit，不可豁免）→ commit 引擎落提交（`Auto-committed-by: dsh-git-plugin` trailer；消息 = 模板插值或 ai 路由回落模板）；
+- auto-branch（`turn/start`）：受保护分支 + clean ⇒ `branchCreate(prefix+会话短 id)` 建切（refs-admin 复用，命名冲突 `-2` 序号递增；per-session 判重；非 clean/非受保护 ⇒ 跳过）；
+- 全程静默性：失败不投 UI（无事件通道），audit + `automationStatus` 双路可查（lastActions 环 20 条）。
 
 ## 2. 安装（用户形态）
 
@@ -170,6 +194,17 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
     #   - dist/
     # guardSecretPatterns:                 # 提交护栏：追加的自定义密钥特征（固定串非正则，叠在内置表上；secret 类命中硬阻断不可豁免）
     # llmProvider / llmModel               # AI 提交信息的 LLM 路由（缺省 ⇒ git/llm-route-unresolved）
+    # agentTools: off | readonly | readwrite   # Agent 工具面档位（默认 off——工具白名单见 §5「Agent 工具面」）
+    # agentToolBlockShellGit: false        # true = 注册 shell+git 引导 guard（引导性防线非安全边界，见 §5）
+    # autoCommitMode: off | turn-end       # 回合结束自动提交（默认 off；secret 命中撤销 staged 并跳过——见 §5）
+    # autoCommitMessage: ai | template      # 自动提交消息（默认 template；ai 未配置/失败回落模板——每回合一 LLM 调用，见 §5）
+    # autoCommitTemplate: '...'            # 模板正文（{turn} 插值；缺省 'chore: auto-commit session changes (turn {turn})'）
+    # autoBranchMode: off | session-start  # 回合开始自动建任务分支（默认 off；前缀/受保护表见下两行）
+    # autoBranchPrefix: 'dsh/task-'        # 任务分支名前缀（+ 会话短 id；命名冲突序号递增）
+    # autoBranchProtected:                 # 受保护分支清单（命中才建任务分支；整表覆盖——缺省 main 与 master）
+    #   - main
+    #   - master
+    # checkpointMaxTurns: 50               # 会话检查点环容量（[39] 时间线/恢复的数据面）
 ```
 
 ## 4. 开发调试
@@ -243,6 +278,60 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
   快捷键参考页（只查/改键，不执行）；桌面原生菜单为固定模板，不挂第三方命令。
 - **push 真实凭证/网络失败未自动化**：sync 测试用本地 bare 远端 + stderr 分类器夹具覆盖
   （无凭证管理器，可离线确定）；真实网络路径靠 verify:load 的人工走查。
+- **冲突面板的部分失败仅以错误条呈现**：面板逐文件提交解决/标记请求（v3 §3.7 单文件面）
+  ——resolve/mark 中途失败时已成功项不回滚（git 级别也难回滚），已成功清单随
+  `git/git-error` details.resolved 如实分列（wire 面；v3 §3.10 与 conflicts.spec 真仓断言）。
+  UI 无「部分成功」计数文案：面板单文件提交下该文案不可达，评审定案随死代码移除
+  （conflict.partial 键与 partialResolveView 已删，locales.spec 死键断言锁定）。
+- **merge/rebase 从严档——工作区必须干净**：分支合并（branchMerge）与变基（rebase）
+  要求 fresh status **四组全空**（staged/unstaged/untracked/conflicted——`snapshot.clean`，
+  `packages/host/src/merge-rebase.ts:226-232`），任意非空即拒 `git/dirty-worktree`
+  （details 带四组路径计数）。这比 git 原生「允许部分脏合并」**更严**（插件口径：干净
+  工作区的合并/变基才可预测，方案 §4.9 如实登记的口径争议项）——遇拒可先在 stash 面板
+  一键暂存（V2 面板直达）再操作。
+- **Agent 工具面（`agentTools`，默认 off）**：dsh 挂载 tools 服务时可按档位向模型注册
+  11 个 `git_*` 工具（readonly 8 + readwrite 增 stage/unstage/commit；merge/rebase/
+  cherry-pick/reset 等高危写**不进白名单**——模型直接改写历史的口子不开，v3 §5.4）。
+  三条如实口径（v3 §5.3/§5.4/§5.10 义务行）：
+  ① `agentToolBlockShellGit` 的 shell+git guard 是**引导性防线非安全边界**——多行脚本
+  与启发式可绕过、误报面如实存在，不得当安全隔离用（默认关）；
+  ② **工具面降级**：dsh-tools 未挂载 ⇒ 静默不注册（宽限期单次 log），`agentToolsStatus()`
+  的 `toolsFaceAvailable` 可查（观测锚，REMOTE_METHODS 51 号）；
+  ③ model-facing 工具描述为**固定英文串**（模型面非 UI 面）——不进 locale 词典、不受
+  `check:locale` 约束。
+- **归因徽标是近似判定（v3 §6.9，[40] 消费式固有边界）**：徽标语义 =「该回合内被改动」
+  ——回合内用户与 agent 交替编辑无法区分（快照是 turn 级）；mixed = 文件 mtime 晚于最近
+  命中回合的 endedAt 的近似判定；被恢复过的文件之后 mtime 更新 ⇒ 会归为 mixed。unknown =
+  宿主重启前/服务未挂载的回合无记录（徽标 tooltip 明示，不冒充任何态）。归因记录与检查点
+  摘要同在 Host 内存（DE=A）——Session 处置/宿主重启即失（`checkpoints.ts` 文件头如实）：
+  重启后时间线清空、归因落 unknown，不伪造历史。
+- **检查点恢复（restore）的位置与 mode 近似（v3 §6.3，checkpoints.ts 文件头如实）**：
+  恢复走 `git apply -R` 反向应用 diff hunks——零上下文 hunk 按行号定位，回合后的并发编辑
+  若只增删了目标区间之后的行，patch 仍按原行号应用（恢复的是该回合自身的改动，回合后
+  追加的行保留）；恢复新建/删除文件时 mode 钉死 `100644`——可执行位与符号链接恢复后
+  失真（checkpoint-face 不携带 mode 信息，消费式固有近似）。
+- **检查点摘要 500 文件封顶对恢复的影响（v3 §6.9）**：workspace-changes 的 summary.files
+  受 recorder maxFiles 封顶（默认 500，total 仍计全量，时间线显示「共 N 文件」口径）。
+  封顶记录上「恢复此回合」**fail-closed**（`git/checkpoint-unavailable` 零命令——全量恢复
+  会静默欠恢复，文案给出 N/M 与补救路径）；显式点名恢复只能选清单内文件（封顶截去的文件
+  无法寻址）；多会话并发下 diff/restore 带 sessionId 判别（wire 可选项，client 回传当前
+  会话 id——seq 是会话内序号，裸 seq 碰撞仍歧义硬拒）。
+- **workspace-changes 未挂载的部署降级（v3 §6.2 可选切片口径）**：时间线只依赖事件流照常
+  构建，摘要不可用——`checkpointList` 条目的 `summary` 为 null（诚实呈现）、
+  `checkpointDiff`/`checkpointRestore` 落 `git/checkpoint-unavailable` 硬拒
+  （`checkpoints.ts:184/193/221/266`——消费点经 face 逐次现读，不伪造数据）。
+- **自动化无 UI 报错通道（v3 §7.3 设计口径）**：auto-commit/auto-branch 失败不投 UI
+  （无事件通道下的诚实口径）——结果经 `automationStatus()` 的 lastActions 环（20 条）与
+  `auditLog` 双路可查，状态刷新照常走写后失效/轮询。
+- **autoCommitMessage='ai' 的每回合一 LLM 调用**：completed turn 一次 message-gen 路由；
+  未配置 LLM 路由或生成失败 ⇒ 回落模板（不阻断自动提交）。成本/时延敏感部署用默认
+  `template`（零 LLM 调用）。
+- **auto-branch 分支蔓延**：每个符合条件的新会话建一支 `autoBranchPrefix+短id` 任务分支
+  （不会自动删除）——配合 `autoBranchProtected` 收窄启用面 + 手动清理（分支删除 UI 已有）。
+- **自动提交的 secret 命中 = `git reset` 全撤销 staged**：护栏硬阻断（不可豁免）会撤销
+  **index 全部条目**——若用户此前手工暂存了其他文件，会连带退回 unstaged（worktree 内容
+  原样保留，方案 DD=A 原文语义，如实告知）；敏感场景建议 `autoCommitMode: off` 或先清
+  护栏命中项。
 
 ## 6. 门禁（v0.2.0 终检实测回填，不预设通过的纪律不变）
 
@@ -260,6 +349,17 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
 | check:locale | `pnpm --dir dsh-git-plugin run check:locale` | **exit 0**（v0.2.0 终检实测回填） |
 | verify:load | `pnpm --dir dsh-git-plugin run verify:load` | **未回填**（本次终检回填未含本项，结果未提供——不预设通过；真实网络/凭证路径人工走查不进自动门禁） |
 | verify:install | `pnpm --dir dsh-git-plugin run verify:install` | **dev-tree 列两相 PASS**（working-copy 相 + clean-clone 相，v0.2.0 终检实测回填；npm 列与现成可执行列本次回填未含；clean-clone 相为本地发布门禁，CI 设 `DSH_VERIFY_INSTALL_SKIP_CLONE=1` 跳过） |
+
+**v0.3.0 批次五收口实跑（2026-11-18，本机 dev-tree 列；发布终检以 tag 批实跑为准）**：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| typecheck | `pnpm run typecheck` | **exit 0**（typert 生成 + 三 tsc） |
+| test | `pnpm test` | **exit 0，1042 用例全过**（65 文件 = 31 host + 32 client + 2 root；V3 五批增量含冲突/merge-rebase/agent-tools/checkpoints/automation spec） |
+| build | `pnpm run build` | **exit 0**（client bundle 755734 bytes；四 manifest 0.3.0 + 根 description/README 锚同文——build-client.mjs fail-closed 链通过） |
+| check:locale | `pnpm run check:locale` | **exit 0**（376 键 zh 权威，en aligned；23 tsx 无裸串） |
+| verify:load | `node scripts/verify-load.mjs` | **RESULT: outcome=PASS**（dev-tree 列；五批断言面全跑——含 agentTools 两相位、checkpointDiff 负路径、automationStatus 形状；checkpointList 降级 WARN 为 §6.7 预登记口径非失败） |
+| verify:install | — | **未回填**（发布批动作——随 tag `v0.3.0` 流程执行 dev-tree 两相 + npm 列，§7.7-4） |
 
 ## 7. 许可
 

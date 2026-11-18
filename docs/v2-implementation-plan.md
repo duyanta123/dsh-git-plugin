@@ -355,7 +355,7 @@ pnpm run verify:load        # 断言面已按 §3.7 扩展：本批 9 个新方�
 | 8 | 非 git 目录 git init 引导 | `initRepository()` + header/changes/graph 空态卡片引导 |
 | 46 | AI 生成 PR 描述 + 一键创建 PR | `generatePrDescription()`（复用 message-gen LLM 路由）+ `createPr()`（载体**已拍板 = gh CLI**，D1=A） |
 | 69 | PR↔分支名关联（D8 纳入） | `prForBranch(branch)`（gh 查询该分支关联 PR）+ 分支选择器 / 推送对话框 PR 链接展示；无关联 / 查询失败 ⇒ UI 静默降级（不占位不报错） |
-| 70 | 合并策略放 prompt（D8 纳入） | `generatePrDescription()` 的 LLM prompt 附带**仓库合并策略约定段**（只读检测：PR 模板 / CONTRIBUTING / `git config` merge 相关项；缺失即省略）——零新方法零新码，是 [46] 的 prompt 组成件。原始出处 `docs/003-execution.md` 已不可考（外层检索结论 §11-2）；若用户原意与此最小解释不符，批次四施工前修正本行 |
+| 70 | 合并策略放 prompt（D8 纳入） | `generatePrDescription()` 的 LLM prompt 附带**仓库合并策略约定段**（只读检测：PR 模板 / CONTRIBUTING / `git config` merge 相关项；缺失即省略）——零新方法零新码，是 [46] 的 prompt 组成件。原始出处 `docs/003-execution.md` 已考得（远端 main `8c32a9d` 的 docs/003-execution.md，2026-11-11 实读），v2 交付的管理面最小解释与原义对照见 `v3-implementation-plan.md` §0.2-⑤；若用户原意与此最小解释不符，修正本行 |
 | 51 | 快捷键与命令面板入口 | 先 spike dsh 命令面板机制（§0.4-7 仍未定位）；有机制 → 注册命令集；无 → 降级 = 组件内快捷键维持扩展 + header 菜单入口（如实登记） |
 | 61 | submodule/gitlink 状态展示（只列不递归） | `submoduleStatus()` + changes tab 卡片徽标与详情（v1 已有 `FileChange.submodule` 布尔位，`types.ts:66`） |
 | 66 | 写操作审计日志 | host 环缓冲 + `auditLog()` 查询（无事件通道 → logger + RPC 查询两路，§0.4-1）；无专属 UI |
@@ -493,7 +493,7 @@ pnpm run verify:load        # 断言面已按 §3.7 扩展：本批 9 个新方�
 ## 11. 待决事项备案（审查移交，非本方案新设）
 
 1. **C1 单包 vs 三包**：已按审查结论定案维持三层，登记为与官方 superagent 样本的已知有意分歧（书面位置：外层 `research/notes/superagent-prototype-crosscheck.md` §C1 行；官方样本单包双导出证据 §A1 行）——见 §8 D10，无返工义务。
-2. **三项 prompt 候选**（per-ticket `git worktree` / PR↔分支名关联 / 合并策略放 prompt）：唯一书面记录曾 = `research/notes/superagent-prototype-crosscheck.md` §D 末行；**2026-11-08 D8 拍板纳入 v2**——清单新增 68/69/70 并排期（§2/§3.1/§6.1），分期 24→27 项；`docs/003-execution.md` 原始出处已不可考（2026-11-07 检索结论），[70] 按 §6.1 的最小可执行解释落地、施工前可修正。
+2. **三项 prompt 候选**（per-ticket `git worktree` / PR↔分支名关联 / 合并策略放 prompt）：唯一书面记录曾 = `research/notes/superagent-prototype-crosscheck.md` §D 末行；**2026-11-08 D8 拍板纳入 v2**——清单新增 68/69/70 并排期（§2/§3.1/§6.1），分期 24→27 项；`docs/003-execution.md` 原始出处已考得（远端 main `8c32a9d` 的 docs/003-execution.md，2026-11-11 实读；v2 交付的管理面最小解释与原义——prepare 自动建 worktree、PR 按分支名归属、host 无 merge 逻辑全靠 prompt——的对照见 `v3-implementation-plan.md` §0.2-⑤），[70] 按 §6.1 的最小可执行解释落地、施工前可修正。
 3. **`DiffScope` ref-range**：审查列为 wire 缺口；经核对 v2 清单 36 仅要求提交级对比 → 默认不扩，登记为批次二条件扩展点（§4.2）——若后续要求分支级文件差异，先扩协议再施工（变更链 §1 第 1 步）。
 
 ---

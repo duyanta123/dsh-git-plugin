@@ -13,23 +13,32 @@
  *   1. acknowledged=false ⇒ git/bad-request 'unacknowledged'（零命令）；
  *   2. fresh status 扫描（绕 TTL 缓存——此刻的世界）；
  *   3. baseRevision 与最新 branch.oid 不一致 ⇒ 'stale-base-revision'（乐观并发）；
- *   4. CHERRY_PICK_HEAD / REVERT_HEAD 在场 ⇒ git/operation-in-progress（拒绝叠操作；
- *      治愈路径 = abortOperation）；
+ *   4. 中间态在场 ⇒ git/operation-in-progress（拒绝叠操作；治愈路径 = abortOperation）
+ *      ——v3 批次一探测面提共享至 conflicts.ts detectOperation（CHERRY_PICK_HEAD /
+ *      REVERT_HEAD / MERGE_HEAD / rebase-merge|apply 目录），本文件改消费；v2 已测的
+ *      cherry-pick/revert 探测行为不变，op 联合按 §3.2 += 'merge'|'rebase'；
  *   5. detached/unborn ⇒ git/no-branch（requireBranch 语义，remote-ops.ts 同款——
  *      cherry-pick/revert/reset 都在分支上落子）；
  *   6. 目标修订不可解析 ⇒ git/unknown-revision（rev-parse --verify --quiet 预检）。
  *
  * 冲突语义（§4.10 风险项）：cherry-pick/revert 冲突（exit 1 且输出含 CONFLICT）⇒
  * git/merge-conflict（details.op = 'cherry-pick'|'revert'，conflicted =
- * `diff --name-only --diff-filter=U` 回读，abortable = 中间态伪引用在场）——仓库
- * 留中间态直到 abort/解决（完整解决 UI 是 v3 [13]）；非冲突失败（空 cherry-pick /
+ * `diff --name-only --diff-filter=U -z` 回读——**-z 口径**：NUL 分隔路径原样不加引号，
+ * conflicts.ts scanUnmerged 的 porcelain v2 -z 同口径（评审收口统一；行分割口径会把
+ * 非 ASCII 路径 C-引号化），abortable = 中间态探测在场）——仓库
+ * 留中间态直到 abort/解决（v3 批次一交付解决 UI [13]）；非冲突失败（空 cherry-pick /
  * 空 revert 的 "nothing to commit" 等）⇒ git/git-error（方案 §4.3 对空 revert 的
  * 指认；cherry-pick 空态同映射——git 语义两者同形）。
+ *
+ * abortOperation（v3 批次一 §3.3 扩展）：探测面 += MERGE_HEAD（`git merge --abort`）
+ * 与 .git/rebase-merge / .git/rebase-apply（`git rebase --abort`）——消费共享
+ * detectOperation，命令名与 op 词汇恒同形；无中间态仍幂等空成功（零命令）。
  */
 
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { StatusEngine } from './status.ts'
+import { detectOperation } from './conflicts.ts'
 import type {
   AbortOperationResult, CherryPickOptions, RevertOptions, ResetOptions,
   TimeTravelResult,
@@ -39,14 +48,6 @@ import type { GitStatusSnapshot } from './types.ts'
 /** 时间旅行引擎构造项（预留 logger 诊断位，MutationEngine 同款）。 */
 export interface TimeTravelEngineOptions {
   logger?: { debug(message: string): void }
-}
-
-/** git 的中间态伪引用（cherry-pick 与 revert 二选一在场——git 互斥语义）。 */
-type PseudoHead = 'CHERRY_PICK_HEAD' | 'REVERT_HEAD'
-
-/** 伪引用 → wire 的 op 词汇（operation-in-progress/merge-conflict/AbortOperationResult 共用）。 */
-function opOfPseudoHead(head: PseudoHead): 'cherry-pick' | 'revert' {
-  return head === 'CHERRY_PICK_HEAD' ? 'cherry-pick' : 'revert'
 }
 
 export class TimeTravelEngine {
@@ -139,25 +140,27 @@ export class TimeTravelEngine {
 
   /**
    * 放弃中间态操作（幂等安全，无 acknowledged 闸——abort 是治愈路径不是危险动作）：
-   * 探测 CHERRY_PICK_HEAD → `git cherry-pick --abort`；REVERT_HEAD →
-   * `git revert --abort`；无中间态 ⇒ 空成功（{ aborted: null }，零命令）。
+   * 探测（共享 detectOperation，v3 §3.3 扩面）→ CHERRY_PICK_HEAD →
+   * `git cherry-pick --abort`；REVERT_HEAD → `git revert --abort`；MERGE_HEAD →
+   * `git merge --abort`；rebase-merge|apply 目录 → `git rebase --abort`；无中间态 ⇒
+   * 空成功（{ aborted: null }，零命令）。命令名与 op 词汇同形（'cherry-pick'|'revert'|
+   * 'merge'|'rebase'）。
    * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
    *   git/git-error（abort 命令失败兜底）。
    */
   async abortOperation(signal?: AbortSignal): Promise<AbortOperationResult> {
     const { repoRoot } = await this.scanFresh('abortOperation', signal)
-    const head = await this.detectPseudoHead(repoRoot, signal)
-    if (head === null) {
+    const operation = await detectOperation(repoRoot, this.gitRead, signal)
+    if (operation === null) {
       this.logger?.debug('git abortOperation: no operation in progress (idempotent no-op)')
       return { aborted: null }
     }
-    const command = head === 'CHERRY_PICK_HEAD' ? 'cherry-pick' : 'revert'
-    const result = await this.gitWrite.run([command, '--abort'], {
-      cwd: repoRoot, op: `abortOperation(git ${command} --abort)`, signal: active(signal),
+    const result = await this.gitWrite.run([operation, '--abort'], {
+      cwd: repoRoot, op: `abortOperation(git ${operation} --abort)`, signal: active(signal),
     })
-    assertGitOk(result, `abortOperation(git ${command} --abort)`)
-    this.logger?.debug(`git abortOperation: aborted=${opOfPseudoHead(head)}`)
-    return { aborted: opOfPseudoHead(head) }
+    assertGitOk(result, `abortOperation(git ${operation} --abort)`)
+    this.logger?.debug(`git abortOperation: aborted=${operation}`)
+    return { aborted: operation }
   }
 
   // ---------- 守卫与回读 ----------
@@ -186,11 +189,12 @@ export class TimeTravelEngine {
         reason: 'stale-base-revision', paths: [], expected: baseRevision, actual: snapshot.branch.oid,
       })
     }
-    // 守卫 4：中间态探测（拒绝叠操作——治愈路径 = abortOperation）。
-    const pseudoHead = await this.detectPseudoHead(repoRoot, signal)
-    if (pseudoHead !== null) {
-      throw gitError('git/operation-in-progress', `git ${op}: ${opOfPseudoHead(pseudoHead)} is in progress (CHERRY_PICK_HEAD/REVERT_HEAD present); abort or resolve it first`, {
-        op: opOfPseudoHead(pseudoHead),
+    // 守卫 4：中间态探测（拒绝叠操作——治愈路径 = abortOperation；v3 批次一共享
+    // detectOperation 扩面 MERGE_HEAD/rebase 目录，cherry-pick/revert 行为不变）。
+    const inProgress = await detectOperation(repoRoot, this.gitRead, signal)
+    if (inProgress !== null) {
+      throw gitError('git/operation-in-progress', `git ${op}: ${inProgress} is in progress (CHERRY_PICK_HEAD/REVERT_HEAD/MERGE_HEAD present or a rebase is in progress); abort or resolve it first`, {
+        op: inProgress,
       })
     }
     // 守卫 5：detached/unborn 拒绝（requireBranch 语义，remote-ops.ts 同款）。
@@ -227,26 +231,9 @@ export class TimeTravelEngine {
   }
 
   /**
-   * 中间态伪引用探测（CHERRY_PICK_HEAD 优先、REVERT_HEAD 次之——git 语义互斥）：
-   * `rev-parse --verify --quiet <head>` exit 0 = 在场、exit 1 = 缺席、其余 = 契约破坏。
-   */
-  private async detectPseudoHead(repoRoot: string, signal?: AbortSignal): Promise<PseudoHead | null> {
-    for (const head of ['CHERRY_PICK_HEAD', 'REVERT_HEAD'] as const) {
-      const probed = await this.gitRead.run(['rev-parse', '--verify', '--quiet', head], {
-        cwd: repoRoot, op: `time-travel(rev-parse --verify ${head})`, signal: active(signal),
-      })
-      if (probed.exitCode === 0) return head
-      if (probed.exitCode !== 1) {
-        throw gitRunError(`time-travel(rev-parse --verify ${head})`, probed.exitCode, probed.stderr, probed.truncated)
-      }
-    }
-    return null
-  }
-
-  /**
    * cherry-pick/revert 非零退出 → 域错误映射：输出含 CONFLICT ⇒ git/merge-conflict
-   * （conflicted = diff-filter=U 回读；abortable = 中间态伪引用在场——冲突路径恒
-   * true，防御性探测如实回值）；其余（空 cherry-pick / 空 revert 等）⇒ git-error。
+   * （conflicted = diff-filter=U 回读；abortable = 共享 detectOperation 在场——冲突
+   * 路径恒 true，防御性探测如实回值）；其余（空 cherry-pick / 空 revert 等）⇒ git-error。
    */
   private async throwOpFailure(
     result: { exitCode: number | null; stdout: string; stderr: string; truncated: boolean },
@@ -256,23 +243,28 @@ export class TimeTravelEngine {
   ): Promise<never> {
     if (/CONFLICT/.test(result.stdout) || /CONFLICT/.test(result.stderr)) {
       const conflicted = await this.conflictedPaths(repoRoot, signal)
-      const pseudoHead = await this.detectPseudoHead(repoRoot, signal)
+      const inProgress = await detectOperation(repoRoot, this.gitRead, signal)
       throw gitError('git/merge-conflict', `git ${op}: conflict; the repository is left in an intermediate state (abort or resolve it)`, {
         op,
         conflicted,
-        abortable: pseudoHead !== null,
+        abortable: inProgress !== null,
       })
     }
     throw gitRunError(op, result.exitCode, result.stderr, result.truncated)
   }
 
   /** 未合并路径回读（`diff --name-only --diff-filter=U`）。 */
+  /**
+   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）：-z 口径（NUL 分隔、路径
+   * 原样字节不加引号）——merge-rebase.ts conflictedPaths / conflicts.ts scanUnmerged
+   * 同口径（评审收口统一；不 trim——`-z` 输出无填充，条目即路径本身）。
+   */
   private async conflictedPaths(repoRoot: string, signal?: AbortSignal): Promise<string[]> {
-    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U'], {
-      cwd: repoRoot, op: 'time-travel(diff --diff-filter=U)', signal: active(signal),
+    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U', '-z'], {
+      cwd: repoRoot, op: 'time-travel(diff --diff-filter=U -z)', signal: active(signal),
     })
-    assertGitOk(listing, 'time-travel(diff --diff-filter=U)')
-    return listing.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '')
+    assertGitOk(listing, 'time-travel(diff --diff-filter=U -z)')
+    return listing.stdout.split('\0').filter((entry) => entry !== '')
   }
 
   /** 操作后 HEAD 回读（`rev-parse --verify HEAD`；时间旅行三操作均不产生 unborn）。 */

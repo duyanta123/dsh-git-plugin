@@ -125,6 +125,26 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     ]) {
       expect(keys.has(key), `缺 ${key}`).toBe(true)
     }
+    // V3 批次一冲突解决（v3-implementation-plan §3.7/§3.8）：冲突条 + operation 徽标 +
+    // 冲突面板（kind 徽标/两向按钮/DD 显式确认/手动标记）+ continue 循环提示 + abort
+    // danger 确认 + merge-conflict 面板「解决冲突…」动作键到齐（无新域码——bad-request
+    // 的 reason 联合扩值走既有 error.bad-request 插值，不新增键）。
+    for (const key of [
+      'conflict.bar.label', 'conflict.bar.resolved',
+      'conflict.operation.cherry-pick', 'conflict.operation.revert',
+      'conflict.operation.merge', 'conflict.operation.rebase',
+      'conflict.panelTitle', 'conflict.loading', 'conflict.empty',
+      'conflict.kind.modified', 'conflict.kind.added', 'conflict.kind.deleted',
+      'conflict.ours', 'conflict.theirs',
+      'conflict.ddAccept', 'conflict.ddConfirmHint',
+      'conflict.markResolved', 'conflict.selectHint',
+      'conflict.continue', 'conflict.continueRunning', 'conflict.continueDone', 'conflict.continueNext',
+      'conflict.abort', 'conflict.abort.title', 'conflict.abort.message',
+      'conflict.resolving',
+      'error.action.resolve',
+    ]) {
+      expect(keys.has(key), `缺 ${key}`).toBe(true)
+    }
   })
 
   it('V2 批次一清理：死键不复存在（P3-4/5 双删 + sync 占位键随转真移除）', () => {
@@ -132,6 +152,9 @@ describe('locale 词典（NS=git；zh 权威）', () => {
     for (const key of ['graph.head', 'changes.oversized', 'menu.sync', 'menu.placeholderHint']) {
       expect(keys.has(key), `死键 ${key} 应已删除`).toBe(false)
     }
+    // V3 评审定案 (c)：面板单文件提交（§3.7）下 conflict.partial 文案不可达——随
+    // 死函数 partialResolveView 一并移除（部分失败在 UI 仅以错误条呈现，README §5）。
+    expect(keys.has('conflict.partial'), '死键 conflict.partial 应已删除').toBe(false)
   })
 
   it('词典值均为非空字符串（无占位对象/空文案）', () => {

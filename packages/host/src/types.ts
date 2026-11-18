@@ -784,12 +784,300 @@ export interface TimeTravelResult {
 }
 
 /**
- * `git.abortOperation` 出参（[清单 37]）：aborted = 清除的中间态种类；null =
- * 无中间态（幂等成功，零命令）。
+ * `git.abortOperation` 出参（[清单 37]；v3 批次一 §3.2 联合扩展）：aborted = 清除的
+ * 中间态种类；null = 无中间态（幂等成功，零命令）。'merge'/'rebase' 由 v3 批次一
+ * 的探测面扩展（MERGE_HEAD 与 .git/rebase-merge|rebase-apply）进入联合。
  */
 export interface AbortOperationResult {
-  aborted: 'cherry-pick' | 'revert' | null
+  aborted: 'cherry-pick' | 'revert' | 'merge' | 'rebase' | null
 }
+
+// ---------- v3 批次一：冲突解决（[清单 13]；docs/v3-implementation-plan.md §3.2） ----------
+
+/** porcelain v2 unmerged 七码（status-parser.ts UNMERGED_CODES 同码表）。 */
+export type ConflictCode = 'DD' | 'AU' | 'UD' | 'UA' | 'DU' | 'AA' | 'UU'
+
+/**
+ * 中间态操作词汇（operation-in-progress/merge-conflict/ConflictListResult/
+ * OperationContinueResult/AbortOperationResult 共用）。
+ */
+export type OperationInProgressOp = 'cherry-pick' | 'revert' | 'merge' | 'rebase'
+
+/**
+ * 一条冲突条目（[13] 冲突面板数据面）。code/kind 来自冲突引擎的**独立 fresh
+ * porcelain v2 扫描**（不走 status 的 1.5s 缓存快照——解决动作必须基于此刻的世界）；
+ * oursExists/theirsExists 由七码推导（删除侧不存在对应 stage，供 UI 禁用不可向）。
+ */
+export interface ConflictEntry {
+  /** -z 下原样路径（repo 相对、斜杠分隔）。 */
+  path: string
+  /** porcelain v2 unmerged XY 码。 */
+  code: ConflictCode
+  /** kind 语义同 status-parser（AU/UA→added、UD/DU/DD→deleted、UU→modified）。 */
+  kind: 'modified' | 'added' | 'deleted'
+  /** 我方（stage#2）侧存在文件。 */
+  oursExists: boolean
+  /** 对方（stage#3）侧存在文件。 */
+  theirsExists: boolean
+}
+
+/** `git.conflictList` 出参（[13]）：operation = 中间态伪引用/rebase 目录探测；null = 无中间态但工作区仍有 unmerged 路径的裸冲突。 */
+export interface ConflictListResult {
+  conflicts: ConflictEntry[]
+  operation: OperationInProgressOp | null
+  /** 中间态在场（可 abortOperation）——裸冲突恒 false。 */
+  abortable: boolean
+}
+
+/** `git.conflictResolve` 入参（[13]）：逐条两向解决（ours/theirs 命令矩阵）。 */
+export interface ConflictResolveOptions {
+  choices: Array<{
+    /** 当前 unmerged 的 repo 相对路径；不在场 ⇒ git/bad-request 'path-not-conflicted'（零写命令）。 */
+    path: string
+    resolution: 'ours' | 'theirs'
+  }>
+}
+
+/** `git.conflictResolve` 出参：成功解决的路径（部分失败时已成功项不回滚——结果如实）。 */
+export interface ConflictResolveResult { resolved: string[] }
+
+/** `git.conflictMarkResolved` 入参（[13]）：手动编辑后标记已解决。 */
+export interface ConflictMarkOptions {
+  /** 当前 unmerged 的 repo 相对路径；文件已删（删除侧）走 `git rm`，存在走 `git add`。 */
+  paths: string[]
+}
+
+/** `git.conflictMarkResolved` 出参：成功标记的路径。 */
+export interface ConflictMarkResult { resolved: string[] }
+
+/**
+ * `git.operationContinue` 出参（[13]）：继续中间态操作。**冲突是返回值不是错误**
+ * ——continue 触发下一冲突时 done:false + conflicted（client 循环驱动需要）；全部
+ * 完成 done:true。
+ */
+export interface OperationContinueResult {
+  op: OperationInProgressOp
+  done: boolean
+  /** done:false 时 = 新冲突的 unmerged 路径（fresh 回读）；done:true 恒 []。 */
+  conflicted: string[]
+}
+
+// ---------- v3 批次二：merge / rebase（[清单 28/29]；docs/v3-implementation-plan.md §4.2） ----------
+
+/**
+ * `git.branchMerge` 入参（[清单 28]；time-travel 同款守卫入参——acknowledged C 级闸 +
+ * baseRevision 乐观并发，任一失败零命令执行）。
+ */
+export interface BranchMergeOptions {
+  /** 要合并进当前分支的分支名（rev-parse 可解析 ⇒ unknown-revision）。 */
+  branch: string
+  /**
+   * ff 三态：'auto' = 可 ff 则 ff（无合并提交）、否则产生合并提交；'ff-only' = 仅 ff
+   * （不可 ff ⇒ git/git-error，零改动）；'no-ff' = 恒产生合并提交（parents=2）。
+   */
+  fastForward: 'auto' | 'ff-only' | 'no-ff'
+  /**
+   * 合并提交消息（no-ff / 不可 ff 的 auto 才会用到）；null/缺省 = `--no-edit`
+   * （git 生成默认消息——编辑器挂起防护由命令面钉死）。
+   */
+  message?: string | null
+  /** C 级二次确认旗标（false ⇒ git/bad-request 'unacknowledged'）——合并提交是对外可见动作。 */
+  acknowledged: boolean
+  /** 乐观并发基线（同 CherryPickOptions）。 */
+  baseRevision: string | null
+}
+
+/**
+ * `git.branchMerge` 出参：oldOid = 操作前 HEAD（fresh 快照回读），newOid = 操作后 HEAD
+ * 回读（up-to-date 幂等成功时 = oldOid——git "Already up to date" 是成功不是错误）；
+ * fastForward = 「HEAD 真移动且落在目标 oid」（真 ff 恒 true；up-to-date 与 no-ff
+ * 合并提交均 false——up-to-date 不谎报 ff）。
+ */
+export interface BranchMergeResult {
+  oldOid: string
+  newOid: string | null
+  fastForward: boolean
+}
+
+/** `git.rebase` 入参（[清单 29]；非 interactive——upstream 必填 + onto 可选）。 */
+export interface RebaseOptions {
+  /** 变基基底（`git rebase <upstream>`；默认分支系 = 当前分支）。 */
+  upstream: string
+  /** `--onto <onto>` 透传；null/缺省 = 不使用 onto。 */
+  onto?: string | null
+  /** C 级二次确认旗标（重写历史语义——danger 闸）。 */
+  acknowledged: boolean
+  /** 乐观并发基线（同 CherryPickOptions）。 */
+  baseRevision: string | null
+}
+
+/**
+ * `git.rebase` 出参（[清单 29]）：oldOid = 操作前 HEAD，newOid = 操作后 HEAD 回读
+ * （up-to-date 幂等成功时 = oldOid）；done 恒 true——冲突走 git/merge-conflict 错误
+ * 路径，continue 由批次一 operationContinue 驱动（§4.2 注记：rebase 引擎自身不做内循环）。
+ */
+export interface RebaseResult {
+  oldOid: string
+  newOid: string | null
+  done: boolean
+}
+
+// ---------- v3 批次三：Agent 工具面（[清单 45]；docs/v3-implementation-plan.md §5.4–§5.5） ----------
+
+/** `git.agentToolsStatus` 的 mode 词汇（Config.agentTools 三档；默认 'off'——D-γ=A）。 */
+export type AgentToolsMode = 'off' | 'readonly' | 'readwrite'
+
+/**
+ * agent-tools.ts 注册面的运行态宿主（index.ts 持有、registerAgentTools 原地更新、
+ * agentToolsStatus 只读投影——非 wire 类型，wire 形状是 {@link AgentToolsStatusResult}）。
+ */
+export interface AgentToolsStatusState {
+  /** 工具档位（fiber 构造期定值——非 volatile Config 改动经 fiber 重载重读）。 */
+  readonly mode: AgentToolsMode
+  /** ctx.tools 切片是否已观察到（true = 面在场且注册流程已走完；降级恒 false）。 */
+  toolsFaceAvailable: boolean
+  /** 已成功注册的工具名（白名单子集；'off' 恒 []）。 */
+  registered: string[]
+}
+
+/**
+ * `git.agentToolsStatus` 出参（[清单 45]；plan §5.5）：观测/verify 断言锚。只读方法
+ * 不入审计环（audit.ts 双出口只对写方法）。
+ *   - mode = Config.agentTools 三档；
+ *   - toolsFaceAvailable = ctx.tools 可选切片是否已观察到（dsh-tools 未挂载的部署恒
+ *     false——降级口径 plan §5.5/§9；verify-load 断言形态按 spike verifyForm：挂载 ⇒
+ *     true + registered 白名单面，未挂载 ⇒ WARN 登记）；
+ *   - registered = 已注册工具名（'off' 恒 []；readonly 8 个；readwrite 11 个——§5.4 表；
+ *     逐工具注册被 tools face 校验拒绝时跳过该名——plan §5.10）。
+ */
+export interface AgentToolsStatusResult {
+  mode: AgentToolsMode
+  toolsFaceAvailable: boolean
+  registered: string[]
+}
+
+// ---------- v3 批次四：检查点 · 归因 · 聚合（[清单 39/40/41]；docs/v3-implementation-plan.md §6.2） ----------
+
+/**
+ * `git.checkpointList` 条目内嵌的 per-turn 变更摘要（workspace-changes summary 的
+ * wire 投影——`display`/`cwd`/`snapshot` 三个宿主侧字段不过线；snapshot tree id
+ * 引用私有临时对象库，本就不可恢复不可呈现——plan §0.2-③-1）。
+ */
+export interface CheckpointSummary {
+  /** 完整变更文件计数（含被 500 文件封顶截去的部分——§6.9）。 */
+  total: number
+  added: number
+  deleted: number
+  files: Array<{ path: string; added: number; deleted: number }>
+}
+
+/**
+ * `git.checkpointList` 的单条目（[清单 39] turn 粒度检查点索引行；plan §6.2）。
+ * endedAt = turn/end 事件时间（先到序 = workspace/changes 事件自身时间的 ISO）；
+ * summary = null 如实呈现 workspaceChanges 无该记录（Host 重启 / Session 处置 /
+ * 服务未挂载——不伪造，DE=A 口径）。
+ */
+export interface CheckpointEntry {
+  /** 产出该 workspace/changes 事件的会话 id（client 侧按当前会话过滤并回传作判别）。 */
+  sessionId: string
+  /** 事件的会话内序列号（workspaceChanges.summary 的取回键；跨会话不可比）。 */
+  seq: number
+  turn: number
+  /** turn 结束时刻（ISO 8601，host 时钟）。 */
+  endedAt: string
+  /**
+   * turn/end reason.kind（批次四评审收口起过线——plan §6.6 时间线 reason 徽标的数据半；
+   * dsh `TurnEndReasonMap` 基础词汇 = completed/aborted/blocked/error/max-tokens/
+   * interrupted/forked，merge-extensible——未知 kind 客户端原样显示）。null = 尚未
+   * 观察到 turn/end（先到序窗口）。
+   */
+  reason: string | null
+  /** per-turn 摘要；null = workspaceChanges 无该记录（诚实降级）。 */
+  summary: CheckpointSummary | null
+}
+
+/** `git.checkpointList` 出参：newest-first（环容量 = Config checkpointMaxTurns 默认 50）。 */
+export interface CheckpointListResult { entries: CheckpointEntry[] }
+
+/** unified diff hunk 本体（workspace-changes `WorkspaceDiffHunk` 同形投影——每行保留 +/-/空格 前缀）。 */
+export interface CheckpointDiffHunk {
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  lines: string[]
+}
+
+/**
+ * `git.checkpointDiff` 出参（workspace-changes `WorkspaceFileDiff` 同形投影，
+ * 纯 JSON 安全——RPC 序列化纪律；plan §6.2）。coarse = 行比较超时（每行示为替换，
+ * hunk 无上下文行——恢复路径以 `--unidiff-zero` 承载）。
+ */
+export type CheckpointFileDiff =
+  | { kind: 'text'; path: string; display: string; before: boolean; after: boolean; coarse: boolean; hunks: CheckpointDiffHunk[] }
+  | { kind: 'binary'; path: string; display: string }
+  | { kind: 'oversized'; path: string; display: string }
+
+/**
+ * `git.checkpointDiff` 入参：seq = 环内事件序列号，index = summary.files 的下标。
+ * sessionId = 可选判别半（批次四评审收口 wire 扩展）：seq 是**会话内**序号，多会话
+ * 并发下裸 seq 跨会话命中多条 ⇒ 歧义硬拒（git/checkpoint-unavailable）——客户端已
+ * 持有条目 sessionId，回传后 host 把解析收窄到单会话环。缺席 = 维持现状口径（唯一
+ * 命中放行 / 歧义硬拒）。
+ */
+export interface CheckpointDiffOptions {
+  seq: number
+  index: number
+  sessionId?: string | null
+}
+
+/**
+ * `git.checkpointRestore` 入参（[清单 39] DB=A 反向应用）：paths null/缺省 = 该 turn
+ * 全部文件；acknowledged danger 闸（false ⇒ bad-request 'unacknowledged' 零命令）；
+ * baseRevision 乐观并发基线（非 null 且 ≠ 最新 HEAD ⇒ 'stale-base-revision' 零命令——
+ * discard/stash 同款三重守卫范式）。
+ */
+export interface CheckpointRestoreOptions {
+  seq: number
+  /** 限定恢复的文件路径清单（checkpointList/checkpointDiff 面的 path）；null/缺省 = 全部。 */
+  paths?: string[] | null
+  /** C 级二次确认旗标。 */
+  acknowledged: boolean
+  /** 乐观并发基线（HEAD oid；null = 不校验）。 */
+  baseRevision: string | null
+  /**
+   * 可选判别半（同 checkpointDiff.sessionId——批次四评审收口）：多会话并发下把 seq
+   * 解析收窄到单会话环；缺席 = 维持现状口径（唯一命中放行 / 歧义硬拒）。
+   */
+  sessionId?: string | null
+}
+
+/**
+ * `git.checkpointRestore` 出参（逐文件部分成功语义）：applied = 已恢复到 turn-start
+ * 内容的路径；failed = 应用失败项（turn 后内容又被改等——已成功项不回滚，plan §6.3）。
+ */
+export interface CheckpointRestoreResult {
+  applied: string[]
+  failed: Array<{ path: string; reason: string }>
+}
+
+/** `git.attributionGet` 的单条归因（[清单 40] turn 索引 × status 快照求交）。 */
+export interface AttributionEntry {
+  /** status 快照内的仓库相对路径。 */
+  path: string
+  /** 覆盖该路径的回合号（升序累积）。 */
+  turns: number[]
+  /**
+   * 四态：'agent' = turn 记录命中且当前内容仍处于回合窗口内（文件 mtime ≤ 最近命中
+   * 回合的 endedAt——近似判定，§6.9 归因近似性）；'mixed' = turn 命中但回合结束后
+   * 又被改动；'user' = 快照有但零命中（有记录覆盖为前提）；'unknown' = 无记录覆盖
+   * （workspaceChanges 缺失 / 环空——重启前历史，DE=A 如实降级）。
+   */
+  attribution: 'agent' | 'user' | 'mixed' | 'unknown'
+}
+
+/** `git.attributionGet` 出参（当前 status 全路径 × turn→files 记忆映射；按 path 排序）。 */
+export interface AttributionResult { entries: AttributionEntry[] }
 
 // ---------- v2 批次四：体验集成与收尾（[清单 8/46/61/66/69]；docs/v2-implementation-plan.md §6.2） ----------
 
@@ -935,3 +1223,39 @@ export interface GitFrameError {
  * `refresh` = R5 manual 刷新；未知 type 被 host 忽略（前向兼容）。
  */
 export type GitFollowCommand = { type: 'refresh' }
+
+// ---------- v3 批次五：自动化（[清单 42/43]；docs/v3-implementation-plan.md §7.3） ----------
+
+/** 自动化动作词汇（automationStatus.lastActions.action）：auto-commit = [42]、auto-branch = [43]。 */
+export type AutomationActionKind = 'auto-commit' | 'auto-branch'
+
+/**
+ * `git.automationStatus` 的单条最近动作（plan §7.3：环 20 条，newest-first——auditLog
+ * 查询序同款）。detail = **白名单摘要**（固定标量字段组装：turn/branch/oid/动作结果，
+ * audit 同纪律——不落 commit message 正文/文件内容/stderr 原文；audit.ts §6.10 口径）。
+ */
+export interface AutomationActionEntry {
+  /** 动作完成时刻（ISO 8601，host 时钟）。 */
+  at: string
+  action: AutomationActionKind
+  /** true = 动作成功落地；false = 跳过/失败（原因在 detail）。 */
+  ok: boolean
+  /** 白名单摘要（英文诊断风格，不落密钥/消息正文）。 */
+  detail: string
+}
+
+/**
+ * `git.automationStatus` 出参（[清单 42/43]；plan §7.3）：观测/verify 断言锚 + client
+ * 可选状态行数据面。只读方法不入审计环（audit.ts 双出口只对写方法——自动化的写动作
+ * 自身在引擎内双出口入环）。mode = Config 对应键（fiber 构造期定值——非 volatile 改动
+ * 经 fiber 重载生效）。自动化失败不抛 RemoteError（§7.4 零新码——无 UI 报错通道，域码
+ * 无处着陆），全部经本面 lastActions + auditLog 双可查。
+ */
+export interface AutomationStatusResult {
+  /** [42] 自动提交档位（Config.autoCommitMode；默认 'off'）。 */
+  autoCommitMode: 'off' | 'turn-end'
+  /** [43] 自动开分支档位（Config.autoBranchMode；默认 'off'）。 */
+  autoBranchMode: 'off' | 'session-start'
+  /** 最近动作环（≤20 条，newest-first；空 = 尚无动作）。 */
+  lastActions: AutomationActionEntry[]
+}

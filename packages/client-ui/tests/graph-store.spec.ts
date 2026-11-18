@@ -265,6 +265,77 @@ describe('log 窗口（分页追加 / single-writer / 去重）', () => {
     store.dispose()
   })
 
+  // ── V3 批次二（v3-implementation-plan §4.6「merge/rebase 成功后走既有写后失效刷新
+  //    （R3 帧）→ graph 重载链路回归（keepMounted:true）」）────────────────────────
+
+  it('keepMounted 图 tab 的 merge 重载回归：no-ff 合并提交新帧（branch 名不变 oid 变）→ 同一 store 实例清窗重载 + refs 重取', async () => {
+    const { rpc, source, store } = makeHarness()
+    rpc.logPlan = [
+      { ok: true, value: page([commitInfo('a'), commitInfo('b')], false) },
+      { ok: true, value: page([commitInfo('m', ['a', 'x']), commitInfo('b')], false) },
+    ]
+    // 合并前：main@a 的窗口已加载（keepMounted 下的常态）。
+    source.store.update((draft) => {
+      draft.status = {
+        repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'a', abbrevOid: 'a', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
+        staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+      }
+    })
+    await flush()
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(['a', 'b'])
+    const refsBefore = rpc.refsCalls
+    // branchMerge 成功（no-ff 合并提交；host 侧 afterWrite → R3 帧）：branch 名不变、
+    // oid 前进到合并提交 m——merge 与 branchSwitch 的帧差异（V3 §4.6 与 §3.10 的对照面）。
+    source.store.update((draft) => {
+      draft.status = {
+        repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid: 'm', abbrevOid: 'm', upstream: null, ahead: null, behind: null, detached: false, unborn: false },
+        staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+      }
+    })
+    await flush()
+    // 同一 store 实例（tab keepMounted 不重铸）：窗口替换为含合并提交的新历史，refs 重取。
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(['m', 'b'])
+    expect(rpc.logCalls).toHaveLength(2)
+    expect(rpc.refsCalls).toBeGreaterThan(refsBefore)
+    store.dispose()
+  })
+
+  it('keepMounted 图 tab 的 rebase 重载回归：变基复制提交新帧（oid 变）→ 清窗重载；up-to-date 幂等成功（oid 不变）→ 不动图', async () => {
+    const { rpc, source, store } = makeHarness()
+    rpc.logPlan = [
+      { ok: true, value: page([commitInfo('a'), commitInfo('b')], false) },
+      { ok: true, value: page([commitInfo("a'"), commitInfo("b'")], false) },
+    ]
+    const frame = (oid: string): void => {
+      source.store.update((draft) => {
+        draft.status = {
+          repoRoot: '/r', generatedAt: '', branch: { name: 'main', oid, abbrevOid: oid, upstream: null, ahead: null, behind: null, detached: false, unborn: false },
+          staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
+        }
+      })
+    }
+    // 变基前：main@a 的窗口已加载。
+    frame('a')
+    await flush()
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(['a', 'b'])
+    const refsBefore = rpc.refsCalls
+    // rebase 成功（提交被复制为新 oid 链；host 侧 afterWrite → R3 帧）：branch 名不变、oid 变。
+    frame("a'")
+    await flush()
+    // 同一 store 实例：窗口替换为变基后的新历史，refs 重取。
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(["a'", "b'"])
+    expect(rpc.logCalls).toHaveLength(2)
+    expect(rpc.refsCalls).toBeGreaterThan(refsBefore)
+    // up-to-date 幂等成功（RebaseResult.done=true 不报错；merge "Already up to date"
+    // 同语义——plan §4.7）：R3 帧仍在但 oid 不变 ⇒ 不触发 reload（旧窗口对新历史仍准确）。
+    const logCallsAfter = rpc.logCalls.length
+    frame("a'")
+    await flush()
+    expect(rpc.logCalls).toHaveLength(logCallsAfter)
+    expect(store.store.getSnapshot().log.commits.map((commit) => commit.oid)).toEqual(["a'", "b'"])
+    store.dispose()
+  })
+
   it('connection/reset → reset 清缓存并按当前快照立即重载', async () => {
     const { rpc, source, store } = makeHarness()
     rpc.logPlan = [

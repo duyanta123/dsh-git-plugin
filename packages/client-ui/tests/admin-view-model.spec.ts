@@ -1,13 +1,15 @@
 /**
  * V2 批次一管理面纯视图模型测试（分支创建 / 标签创建 / worktree 列表与移除两段闸 /
  * worktree 新建草稿；plan §3.7 client 纯函数范式——推送对话框部分在 push-dialog.spec）。
+ * V3 批次三扩：Agent 工具状态行渲染模型（agentToolsStatusLine；v3-implementation-plan §5.8）。
+ * V3 批次五扩：自动化状态行渲染模型（automationStatusLines；v3-implementation-plan §7.5）。
  */
 
 import { describe, expect, it } from 'vitest'
-import type { WorktreeInfo } from 'dsh-gitkit/types'
+import type { AutomationActionEntry, AutomationStatusResult, WorktreeInfo } from 'dsh-gitkit/types'
 import {
-  branchCreateDraft, resetPlan, tagCreateDraft, timeTravelOptions, worktreeAddDraft,
-  worktreeRemovePlan, worktreeRows,
+  agentToolsStatusLine, automationStatusLines, branchCreateDraft, resetPlan, tagCreateDraft,
+  timeTravelOptions, worktreeAddDraft, worktreeRemovePlan, worktreeRows,
 } from '../src/client/admin-view-model.ts'
 import { pushRoute } from '../src/client/admin-face.ts'
 
@@ -144,3 +146,101 @@ describe('timeTravelOptions — cherry-pick/revert 入参组装（V2 批次二 [
     expect(timeTravelOptions('revert', { oid: '', baseRevision: 'a'.repeat(40) })).toBeNull()
   })
 })
+
+describe('agentToolsStatusLine — header 菜单「Agent 工具」状态行（V3 批次三 [45]；v3-plan §5.7）', () => {
+  it('off 档 ⇒ 关闭行（agentTools.status.off，无插值参数）', () => {
+    expect(agentToolsStatusLine({ mode: 'off', toolsFaceAvailable: true, registered: [] }))
+      .toEqual({ labelKey: 'agentTools.status.off', params: {} })
+  })
+
+  it('on 档（face 在场）⇒ on 行：mode 配置字面量词条 + registered 数（readonly 8 / readwrite 11——host §5.4 表）', () => {
+    expect(agentToolsStatusLine({ mode: 'readonly', toolsFaceAvailable: true, registered: readonlyTools() }))
+      .toEqual({ labelKey: 'agentTools.status.on', params: { mode: 'readonly', count: 8 } })
+    expect(agentToolsStatusLine({ mode: 'readwrite', toolsFaceAvailable: true, registered: [...readonlyTools(), 'git_stage', 'git_unstage', 'git_commit'] }))
+      .toEqual({ labelKey: 'agentTools.status.on', params: { mode: 'readwrite', count: 11 } })
+  })
+
+  it('降级档（mode 开而 toolsFaceAvailable=false）⇒ 关闭行（有效态无可用工具——"readonly (0 tools)" 会把不可用宣成可用）', () => {
+    expect(agentToolsStatusLine({ mode: 'readonly', toolsFaceAvailable: false, registered: [] }))
+      .toEqual({ labelKey: 'agentTools.status.off', params: {} })
+    expect(agentToolsStatusLine({ mode: 'readwrite', toolsFaceAvailable: false, registered: [] }))
+      .toEqual({ labelKey: 'agentTools.status.off', params: {} })
+  })
+
+  it('null（未拉取/拉取失败）⇒ null——状态行整行缺席（观测行不进错误卡）', () => {
+    expect(agentToolsStatusLine(null)).toBeNull()
+  })
+})
+
+describe('automationStatusLines — header 菜单「自动化」状态行（V3 批次五 [42][43]；v3-plan §7.5）', () => {
+  /** automationStatus 出参夹具（默认档 = off/off + 空动作环）。 */
+  function automation(overrides: Partial<AutomationStatusResult> = {}): AutomationStatusResult {
+    return { autoCommitMode: 'off', autoBranchMode: 'off', lastActions: [], ...overrides }
+  }
+
+  it('两模式全 off ⇒ 关闭行（automation.status.off，无插值参数）；空动作环 ⇒ 摘要行缺席', () => {
+    expect(automationStatusLines(automation())).toEqual({
+      status: { labelKey: 'automation.status.off', params: {} },
+      latest: null,
+    })
+  })
+
+  it('任一开 ⇒ 档位行：{commit}/{branch} = Config 档位字面量（配置 token 原样——agentTools {mode} 同款纪律）', () => {
+    expect(automationStatusLines(automation({ autoCommitMode: 'turn-end' }))).toEqual({
+      status: { labelKey: 'automation.status.on', params: { commit: 'turn-end', branch: 'off' } },
+      latest: null,
+    })
+    expect(automationStatusLines(automation({ autoBranchMode: 'session-start' }))).toEqual({
+      status: { labelKey: 'automation.status.on', params: { commit: 'off', branch: 'session-start' } },
+      latest: null,
+    })
+    expect(automationStatusLines(automation({ autoCommitMode: 'turn-end', autoBranchMode: 'session-start' }))).toEqual({
+      status: { labelKey: 'automation.status.on', params: { commit: 'turn-end', branch: 'session-start' } },
+      latest: null,
+    })
+  })
+
+  it('最近动作 = lastActions 首条（host newest-first 环）：kind → 词条键映射 + ok/detail 原样透传', () => {
+    const ring: AutomationActionEntry[] = [
+      { at: '2026-11-18T06:30:00.000Z', action: 'auto-commit', ok: true, detail: 'committed a1b2c3d on main (turn 5)' },
+      { at: '2026-11-18T06:00:00.000Z', action: 'auto-branch', ok: false, detail: 'skipped: worktree dirty' },
+    ]
+    expect(automationStatusLines(automation({ autoCommitMode: 'turn-end', lastActions: ring }))).toEqual({
+      status: { labelKey: 'automation.status.on', params: { commit: 'turn-end', branch: 'off' } },
+      latest: { kindKey: 'automation.action.commit', ok: true, detail: 'committed a1b2c3d on main (turn 5)' },
+    })
+  })
+
+  it('首条 auto-branch 且未成功 ⇒ branch 词条键 + ok:false（detail = host 白名单摘要原样——已消毒/200 上限，client 不再截断）', () => {
+    const ring: AutomationActionEntry[] = [
+      { at: '2026-11-18T06:00:00.000Z', action: 'auto-branch', ok: false, detail: 'failed: no free dsh/task-<id> name within 16 suffixes' },
+    ]
+    const lines = automationStatusLines(automation({ autoBranchMode: 'session-start', lastActions: ring }))
+    expect(lines?.latest).toEqual({
+      kindKey: 'automation.action.branch', ok: false,
+      detail: 'failed: no free dsh/task-<id> name within 16 suffixes',
+    })
+  })
+
+  it('全 off 但动作环非空 ⇒ 关闭行 + 摘要行并存（重取覆盖档位切换前的动作历史——诚实呈现）', () => {
+    const ring: AutomationActionEntry[] = [
+      { at: '2026-11-18T06:30:00.000Z', action: 'auto-commit', ok: false, detail: 'secret block: 2 violation(s); staged reset, worktree changes kept' },
+    ]
+    expect(automationStatusLines(automation({ lastActions: ring }))).toEqual({
+      status: { labelKey: 'automation.status.off', params: {} },
+      latest: { kindKey: 'automation.action.commit', ok: false, detail: 'secret block: 2 violation(s); staged reset, worktree changes kept' },
+    })
+  })
+
+  it('null（未拉取/拉取失败）⇒ null——开关态行与摘要行整组缺席（观测行不进错误卡）', () => {
+    expect(automationStatusLines(null)).toBeNull()
+  })
+})
+
+/** host agent-tools.ts §5.4 表的 readonly 8 工具名（registered 白名单断言样本）。 */
+function readonlyTools(): string[] {
+  return [
+    'git_status', 'git_diff', 'git_log', 'git_refs', 'git_blame', 'git_commit_detail',
+    'git_compare_branches', 'git_repo_diagnostics',
+  ]
+}

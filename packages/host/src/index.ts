@@ -83,6 +83,67 @@
  * generatePrDescription()/createPr()/prForBranch()`（六方法，REMOTE_METHODS 38→44）
  * + 域码三码（init-failed/pr-tool-missing/pr-create-failed）+ Config ghCommand/
  * auditMaxEntries。
+ * v3 批次一（2026-11-12，docs/v3-implementation-plan.md §3）接线：ConflictsEngine
+ * （conflicts.ts，[清单 13] 冲突解决——fresh porcelain v2 扫描 + §3.4 七码×两向命令
+ * 矩阵（查表；UD/DU 按 git 2.55 实测语义落表，与方案表格列互换的实测裁决见
+ * conflicts.ts 文件头）+ detectOperation 中间态探测提共享）+ TimeTravelEngine 改消费
+ * 共享探测（abortOperation 探测面 += MERGE_HEAD/rebase 目录，§3.3）+ `@Remote
+ * conflictList()/conflictResolve()/conflictMarkResolved()/operationContinue()`
+ * （四方法，REMOTE_METHODS 44→48）+ 域码零新码（operation-in-progress op 联合 +=
+ * 'merge'|'rebase'、bad-request reason 联合 += 'path-not-conflicted'|
+ * 'conflicts-remaining'）+ operationContinue 执行 env 追加 GIT_EDITOR=true（防
+ * sequencer 编辑器挂起）。
+ * v3 批次二（2026-11-13，docs/v3-implementation-plan.md §4）接线：MergeRebaseEngine
+ * （merge-rebase.ts，[清单 28/29] merge/rebase——守卫链 acknowledged / baseRevision
+ * 乐观并发 / rev-parse --verify / detectOperation（批次一共享探测，不重复实现）/
+ * dirty-worktree 从严档（git 允许部分脏合并，插件口径要求干净才可预测，README 如实
+ * 注明）+ merge ff 三态（auto/ff-only/no-ff；-m msg|--no-edit 命令面防编辑器挂起）+
+ * rebase [--onto] upstream（执行 env GIT_EDITOR=true）+ up-to-date 幂等成功 + 冲突 ⇒
+ * git/merge-conflict（op 'merge'|'rebase'，conflicted 回读，continue 由批次一
+ * operationContinue 驱动））+ `@Remote branchMerge()/rebase()`（两方法，REMOTE_METHODS
+ * 48→50）+ 域码零新码。
+ * v3 批次三（2026-11-13，docs/v3-implementation-plan.md §5）接线：Agent 工具面
+ * （[清单 45]）agent-tools.ts（11 工具定义表——readonly 8 + readwrite 3，plan §5.4
+ * 权威表；本地最小结构接口零运行期依赖 dsh-tools；raw JSON Schema 形态；execute
+ * 直调引擎层不走 RPC 自调；失败以 `{ok:false,error,message}` 值返回不抛宿主异常）
+ * + registerAgentTools 注册面（可选切片 ctx.get('tools') 结构读取——绝不进 static
+ * inject；即时尝试 + 'internal/service' 事件跟随 + 宽限期单次降级 warn；逐工具
+ * register 包 try/catch——schema 校验拒绝 log + 跳过不炸服务；写工具按批次四双出口
+ * 纪律挂 AuditEngine.record，op 名 = 工具名）+ agentToolBlockShellGit 引导 guard
+ * （shell 类工具参数的 git 命令模式 deny——文案引导改用 git_* 工具；引导性防线非
+ * 安全边界，默认关）+ `@Remote agentToolsStatus()`（观测/verify 断言锚，REMOTE_METHODS
+ * 50→51）+ Config agentTools（三档，默认 off——D-γ=A）/agentToolBlockShellGit
+ * （默认 false）。零新域码（工具内失败以结果文本表达——plan §5.6）。
+ * v3 批次四（2026-11-14，docs/v3-implementation-plan.md §6）接线：检查点·归因·聚合
+ * （[清单 39/40/41]，消费式）——SessionWatch（session-watch.ts，构造期挂
+ * session/event + session/disposed，workspace.ts 先例；消费 workspace/changes 事件建
+ * (sessionId,seq,turn) 环索引 + turn/end 补 endedAt/reason；per-session 环容量
+ * Config checkpointMaxTurns 默认 50；事件缺 seq/turn 按降级跳过不炸监听——plan §6.9
+ * 残余风险守卫）+ CheckpointsEngine（checkpoints.ts，checkpointList/checkpointDiff/
+ * checkpointRestore/attributionGet 四引擎 + hunk→patch 序列化器纯函数；restore =
+ * `git apply -R --whitespace=nowarn --unidiff-zero` worktree 应用——DB=A diff hunks
+ * 反向应用，私有 tree id 绝不触碰（§0.2-③-1）；逐文件部分成功语义；--unidiff-zero
+ * 为施工增补（coarse/整文件替换 hunk 无上下文行，git apply 缺旗标即拒，probe 实测））
+ * + workspaceChanges 服务经可选切片 ctx.get('workspaceChanges') 读取（绝不进 static
+ * inject——未挂载部署索引照建、summary null / 操作侧 checkpoint-unavailable 降级）
+ * + `@Remote checkpointList()/checkpointDiff()/checkpointRestore()/attributionGet()`
+ * （四方法，REMOTE_METHODS 51→55）+ 域码一码（checkpoint-unavailable）+
+ * checkpointRestore 审计双出口（checkpointDiff/Restore 的 seq 校验硬失败在引擎守卫链）。
+ * v3 批次五（2026-11-18，docs/v3-implementation-plan.md §7）接线：自动化（[清单
+ * 42/43]，DA=C 会话锚定）——AutomationEngine（automation.ts，构造期挂 session/event
+ * + session/disposed——批次四 session-watch.ts 同款接线，消费 GitSessionFace.id 投影）：
+ * auto-commit（turn/end reason.kind==='completed' + workspace 已解析 + fresh status
+ * 非干净 ⇒ add -A → scanStagedContents（secret 命中 ⇒ git reset 全撤销 + audit——
+ * DD=A 不豁免不重试）→ CommitEngine 落提交（模板 `{turn}` 插值或 message-gen AI 路由
+ * 未解析/失败回落模板 + trailer 'Auto-committed-by: dsh-git-plugin'；hook 失败放弃
+ * + audit；identity-missing 跳过 + audit））+ auto-branch（turn/start per-session
+ * 判重 + 当前分支 ∈ autoBranchProtected + fresh status clean ⇒ refsAdmin.branchCreate
+ * checkout=true，branch-exists ⇒ 序号后缀递增；非 clean/非受保护 ⇒ 跳过 + log）+
+ * 并发纪律（fresh status + detectOperation 双检 + 全局单飞；自动化永不向 UI 报错——
+ * §7.4 零新码，结果经 auditLog + automationStatus 双可查）+ `@Remote automationStatus()`
+ * （只读观测面，lastActions 环 20 条 newest-first，detail 白名单摘要——REMOTE_METHODS
+ * 55→56）+ Config autoCommitMode/autoCommitMessage/autoCommitTemplate/autoBranchMode/
+ * autoBranchPrefix/autoBranchProtected 六键（默认全 off/template/['main','master']）。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -102,6 +163,10 @@ import type { GitLlmFace, GitRouteEventHost } from './message-gen.ts'
 import { GraphEngine, DEFAULT_LOG_DEFAULT_LIMIT, DEFAULT_LOG_MAX_LIMIT } from './graph.ts'
 import { BlameEngine } from './blame.ts'
 import { TimeTravelEngine } from './time-travel.ts'
+import { ConflictsEngine } from './conflicts.ts'
+import { MergeRebaseEngine } from './merge-rebase.ts'
+import { registerAgentTools } from './agent-tools.ts'
+import type { AgentToolEngines, GitAgentToolsEventHost, GitToolsFace } from './agent-tools.ts'
 import { RefsAdminEngine } from './refs-admin.ts'
 import { StagingPatchEngine } from './staging-patch.ts'
 import { StashEngine } from './stash.ts'
@@ -116,14 +181,21 @@ import { StatusWatcher, DEFAULT_DEBOUNCE_MS, DEFAULT_POLL_INTERVAL_MS } from './
 import type { GitFsWatchFace } from './watcher.ts'
 import { WorkspaceResolver } from './workspace.ts'
 import type { GitSessionEventHost, GitWorkspaceResolution } from './workspace.ts'
+import { SessionWatch, DEFAULT_CHECKPOINT_MAX_TURNS } from './session-watch.ts'
+import type { SessionWatchHost, GitWorkspaceChangesFace } from './session-watch.ts'
+import { CheckpointsEngine } from './checkpoints.ts'
+import { AutomationEngine, DEFAULT_AUTO_COMMIT_TEMPLATE } from './automation.ts'
+import type { AutomationStatusResult } from './types.ts'
 import type {
-  AbortOperationResult, AuditLogOptions, AuditLogResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions, BranchCreateResult,
-  BranchDeleteOptions, BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
-  CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, DiffResult, DiffScope,
+  AbortOperationResult, AgentToolsStatusResult, AgentToolsStatusState, AttributionResult, AuditLogOptions, AuditLogResult, BlameOptions, BlameResult, BranchCompareResult, BranchCreateOptions, BranchCreateResult,
+  BranchDeleteOptions, BranchDeleteResult, BranchMergeOptions, BranchMergeResult, BranchSwitchResult, CherryPickOptions,
+  CheckpointDiffOptions, CheckpointFileDiff, CheckpointListResult, CheckpointRestoreOptions, CheckpointRestoreResult,
+  CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, ConflictListResult,
+  ConflictMarkOptions, ConflictMarkResult, ConflictResolveOptions, ConflictResolveResult, DiffResult, DiffScope,
   DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage, GitFollowCommand, GitIdentityResult,
-  GitIdentityScope, GitPingResult, GitStatusFrame, GitStatusSnapshot, InitResult, LogOptions, LogPage, PrCreateOptions,
+  GitIdentityScope, GitPingResult, GitStatusFrame, GitStatusSnapshot, InitResult, LogOptions, LogPage, OperationContinueResult, PrCreateOptions,
   PrDescription, PrLinkResult, PrResult, PullResult, PushOptions,
-  PushResult, RefsSnapshot, RepoDiagnostics, RemoteListResult, ResetOptions, RevertOptions, ShowOptions,
+  PushResult, RebaseOptions, RebaseResult, RefsSnapshot, RepoDiagnostics, RemoteListResult, ResetOptions, RevertOptions, ShowOptions,
   StagePatchOptions, StagePatchResult, StageResult, StashDropOptions, StashListResult, StashOpResult,
   StashPopOptions, StashPushOptions, SubmoduleStatusResult, TagCreateOptions, TagCreateResult, TagDeleteResult,
   TimeTravelResult, UnstageResult, WorktreeAddOptions, WorktreeAddResult, WorktreeListResult, WorktreeRemoveOptions, WorktreeRemoveResult,
@@ -240,12 +312,59 @@ export interface Config {
   ghCommand?: string
   /** 写操作审计环缓冲上限条数（v2 批次四 [清单 66]，方案 §6.3：默认 500）。 */
   auditMaxEntries?: number
+  /**
+   * Agent 工具档位（v3 批次三 [清单 45]，方案 §5.3：默认 `'off'`——工具面默认不改变
+   * 既有部署行为，显式开启；D-γ=A 拍板）。`'readonly'` 注册 8 个只读工具、
+   * `'readwrite'` 增 3 个写工具（git_stage/git_unstage/git_commit——白名单**不含**
+   * merge/rebase/cherry-pick/reset 等历史改写类，§8 DG=A）。注册走 ctx.tools 可选
+   * 切片（dsh-tools 未挂载的部署降级不注册，agentToolsStatus.toolsFaceAvailable=false
+   * 可查——§5.5/§9）。
+   */
+  agentTools?: 'off' | 'readonly' | 'readwrite'
+  /**
+   * shell-git 引导 guard 开关（方案 §5.3：默认 `false`）。true 时对 shell 类工具
+   * （名称匹配 bash|shell|pwsh|powershell|cmd——实际词表见 agent-tools.ts
+   * SHELL_TOOL_NAME_RE，批次五评审收口对齐）的调用参数做 git 命令模式匹配，命中 ⇒
+   * deny（文案引导改用 git_* 工具）。**误报/漏报面如实登记**：多行脚本/间接执行不在
+   * 拦截面内；`git -c key=val commit` 形态（旗标后跟配置赋值）会漏拦（批次五评审
+   * 登记）——引导性防线非安全边界（README §5 注明）。
+   */
+  agentToolBlockShellGit?: boolean
+  /**
+   * 检查点环容量（v3 批次四 [清单 39]，方案 §6.2：per-session 环的条目上限，默认
+   * 50）。环只存 (sessionId, seq, turn) 索引行——容量不涉文件内容内存面。
+   */
+  checkpointMaxTurns?: number
+  /**
+   * 自动提交档位（v3 批次五 [清单 42]，方案 §7.2：默认 `'off'`——自动化默认不改变
+   * 既有部署行为，显式开启；DA=C 会话锚定）。`'turn-end'` = 每回合 turn/end
+   * （reason.kind==='completed'）+ 工作区非干净时自动 `add -A` → secret 扫描 →
+   * 落一笔署名提交（automation.ts）。
+   */
+  autoCommitMode?: 'off' | 'turn-end'
+  /**
+   * 自动提交的消息来源（方案 §7.2：默认 `'template'`——零 LLM 调用；`'ai'` = 每次
+   * completed turn 一次 message-gen 路由，未解析/失败回落模板——§7.9 成本注记）。
+   */
+  autoCommitMessage?: 'ai' | 'template'
+  /** 自动提交模板（方案 §7.2：`{turn}` 占位符 = 回合号；默认 'chore: auto-commit session changes (turn {turn})'）。 */
+  autoCommitTemplate?: string
+  /**
+   * 自动开分支档位（v3 批次五 [清单 43]，方案 §7.2：默认 `'off'`）。`'session-start'`
+   * = 会话首回合 + 当前分支 ∈ autoBranchProtected + 工作区干净时建切
+   * `autoBranchPrefix<短id>`（refs-admin 复用，branch-exists ⇒ 序号后缀递增）。
+   */
+  autoBranchMode?: 'off' | 'session-start'
+  /** 自动分支名前缀（方案 §7.2：默认 'dsh/task-'；后缀 = 会话 id 短 token）。 */
+  autoBranchPrefix?: string
+  /** 受保护分支表（方案 §7.2：默认 ['main','master']——仅这些分支上才自动开任务分支）。 */
+  autoBranchProtected?: string[]
 }
 
 /** `ping`/`identity`/`status`/`diff`/`followStatus`/写操作之外的可读常量：本服务当前端点清单（诊断用）。 */
-export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation', 'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics', 'initRepository', 'submoduleStatus', 'auditLog', 'generatePrDescription', 'createPr', 'prForBranch'] as const
+export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation', 'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics', 'initRepository', 'submoduleStatus', 'auditLog', 'generatePrDescription', 'createPr', 'prForBranch', 'conflictList', 'conflictResolve', 'conflictMarkResolved', 'operationContinue', 'branchMerge', 'rebase', 'agentToolsStatus', 'checkpointList', 'checkpointDiff', 'checkpointRestore', 'attributionGet', 'automationStatus'] as const
 
-/** `REMOTE_METHODS` 的权威注释口径：16（v1）→25（批次一）→31（批次二）→38（批次三）→**44**（批次四：+initRepository/submoduleStatus/auditLog/generatePrDescription/createPr/prForBranch）。 */
+/** `REMOTE_METHODS` 的权威注释口径：16（v1）→25（批次一）→31（批次二）→38（批次三）→44（批次四：+initRepository/submoduleStatus/auditLog/generatePrDescription/createPr/prForBranch）→**48**（v3 批次一：+conflictList/conflictResolve/conflictMarkResolved/operationContinue）→**50**（v3 批次二：+branchMerge/rebase）→**51**（v3 批次三：+agentToolsStatus）→**55**（v3 批次四：+checkpointList/checkpointDiff/checkpointRestore/attributionGet）→**56**（v3 批次五：+automationStatus）。 */
 
 /**
  * Git 插件 host 服务。构造即注册（`ctx.reflect.provide`），
@@ -278,6 +397,20 @@ export class GitService extends TypertRemoteService {
     guardSecretPatterns: z.array(z.string()).default([]),
     ghCommand: z.string().default('gh'),
     auditMaxEntries: z.number().step(1).min(1).max(10_000).default(DEFAULT_AUDIT_MAX_ENTRIES),
+    // v3 批次三 [清单 45]：z.union(z.const) 联合 = dsh 树 gateway websocketCompression
+    // 先例（packages/api/gateway/src/index.ts:219 同款三 const 形态）。
+    agentTools: z.union([z.const('off'), z.const('readonly'), z.const('readwrite')]).default('off'),
+    agentToolBlockShellGit: z.boolean().default(false),
+    // v3 批次四 [清单 39]：per-session 检查点环容量（方案 §6.2 默认 50）。
+    checkpointMaxTurns: z.number().step(1).min(1).max(10_000).default(DEFAULT_CHECKPOINT_MAX_TURNS),
+    // v3 批次五 [清单 42/43]（方案 §7.2）：自动化六键——z.union(z.const) 联合 =
+    // agentTools 三档同款先例（index.ts 构造期读取 + automation.ts 归一兜底双保险）。
+    autoCommitMode: z.union([z.const('off'), z.const('turn-end')]).default('off'),
+    autoCommitMessage: z.union([z.const('ai'), z.const('template')]).default('template'),
+    autoCommitTemplate: z.string().default(DEFAULT_AUTO_COMMIT_TEMPLATE),
+    autoBranchMode: z.union([z.const('off'), z.const('session-start')]).default('off'),
+    autoBranchPrefix: z.string().default('dsh/task-'),
+    autoBranchProtected: z.array(z.string()).default(['main', 'master']),
   })
 
   private readonly runners: Record<GitCommandClass, GitRunner>
@@ -289,6 +422,8 @@ export class GitService extends TypertRemoteService {
   private readonly refsAdmin: RefsAdminEngine
   private readonly blameEngine: BlameEngine
   private readonly timeTravel: TimeTravelEngine
+  private readonly conflicts: ConflictsEngine
+  private readonly mergeRebase: MergeRebaseEngine
   private readonly stagingPatch: StagingPatchEngine
   private readonly stash: StashEngine
   private readonly guardScan: GuardScanEngine
@@ -302,6 +437,14 @@ export class GitService extends TypertRemoteService {
   private readonly statusWatcher: StatusWatcher
   private readonly workspace: WorkspaceResolver
   private readonly logger: GitLoggerFace
+  /** Agent 工具面运行态（v3 批次三 [清单 45]——agentToolsStatus 投影宿主；registerAgentTools 原地更新）。 */
+  private readonly agentToolsState: AgentToolsStatusState
+  /** 会话事件观察（v3 批次四 [清单 39/40/41]——检查点环索引宿主；session-watch.ts 构造期挂监听）。 */
+  private readonly sessionWatch: SessionWatch
+  /** 检查点/归因引擎（v3 批次四——checkpointList/checkpointDiff/checkpointRestore/attributionGet）。 */
+  private readonly checkpoints: CheckpointsEngine
+  /** 自动化引擎（v3 批次五 [清单 42/43]——auto-commit/auto-branch 的会话事件驱动半）。 */
+  private readonly automation: AutomationEngine
 
   constructor(ctx: Context, config: Config) {
     // serviceKey 必须是源码字面量（typert-generator gatewayBindingArguments 契约）。
@@ -347,6 +490,18 @@ export class GitService extends TypertRemoteService {
     // 实例，守卫走 fresh 扫描（acknowledged/baseRevision/中间态/no-branch）。
     this.timeTravel = new TimeTravelEngine(this.runners.write, this.runners.readonly, this.statusEngine)
     this.logger = (ctx as unknown as { logger: GitLoggerFace }).logger
+    // 冲突解决引擎（v3 批次一 [清单 13]）：resolve/mark/continue 执行走 write 实例、
+    // fresh porcelain v2 扫描与中间态探测（共享 detectOperation）走只读实例；repo 发现
+    // 走 workspace 探测（stash.ts 同款）。fresh 扫描不经 StatusEngine TTL 缓存（§3.2）。
+    this.conflicts = new ConflictsEngine(this.runners.write, this.runners.readonly, this.workspace, {
+      logger: this.logger,
+    })
+    // merge/rebase 引擎（v3 批次二 [清单 28/29]）：执行走 write 实例（fastTimeoutMs——
+    // §4.5 定死「写 runner 档」；rebase 多提交慢场景实测超时再开独立档，§4.9），预检/
+    // 回读走只读实例，守卫走 fresh 扫描 + 批次一共享 detectOperation + 从严档脏区拒绝。
+    this.mergeRebase = new MergeRebaseEngine(this.runners.write, this.runners.readonly, this.statusEngine, {
+      logger: this.logger,
+    })
     // commit 引擎（spec §1.4 + v2 批次三 [清单 18/22/63]）：trailers 组装、process
     // 捕获与 secret 硬阻断守卫（guard = Config 护栏三键——scanStaged 预检面共用）。
     // 兜底归一：真宿主由 schemastery 默认值填充；直接构造（测试）不带 schema 面时
@@ -433,6 +588,93 @@ export class GitService extends TypertRemoteService {
     this.graph = new GraphEngine(this.runners.readonly, this.workspace, this.diffEngine, {
       logDefaultLimit: resolved.logDefaultLimit,
       logMaxLimit: resolved.logMaxLimit,
+    })
+    // Agent 工具面（v3 批次三 [清单 45]，plan §5.5）：可选切片注册 effect——全档位
+    // 观测（toolsFaceAvailable 与 mode 解耦），注册面在 'off' 时零工具、guard 关时
+    // 零 guard（工具面默认不改变既有部署行为，D-γ=A；宽限期 warn 仅在功能启用时
+    // 发声——agent-tools.ts）。state 先建（agentToolsStatus 投影宿主），
+    // registerAgentTools 即时尝试 + 'internal/service' 事件跟随 + 宽限期降级 warn
+    // （agent-tools.ts 文件头时序注；ctx.tools 结构读取**绝不进 static inject**——
+    // 未挂 tools 的部署整个 git 服务拒载是禁区）。写工具的 audit 双出口在工具体内
+    // （引擎层无 audit——agent-tools.ts 文件头审计注）。Config 热更 = 非 volatile
+    // 改动 ⇒ fiber 重载 ⇒ 构造期重挂（plan §5.5 天然满足）。
+    this.agentToolsState = {
+      mode: resolved.agentTools ?? 'off',
+      toolsFaceAvailable: false,
+      registered: [],
+    }
+    {
+      const engines: AgentToolEngines = {
+        status: this.statusEngine,
+        diff: this.diffEngine,
+        graph: this.graph,
+        blame: this.blameEngine,
+        mutations: this.mutations,
+        commit: this.commitEngine,
+        guardScan: this.guardScan,
+        diagnostics: this.diagnostics,
+      }
+      const mode = this.agentToolsState.mode
+      const blockShellGit = resolved.agentToolBlockShellGit === true
+      ctx.effect(() => {
+        const registration = registerAgentTools({
+          mode,
+          blockShellGit,
+          engines,
+          audit: this.audit,
+          host: ctx as unknown as GitAgentToolsEventHost,
+          readFace: () => GitService.readAgentToolsFace(ctx),
+          logger: this.logger,
+          state: this.agentToolsState,
+        })
+        return () => { registration.dispose() }
+      })
+    }
+    // 会话事件观察（v3 批次四 [清单 39/40/41]，plan §6.4）：构造期挂 session/event +
+    // session/disposed（workspace.ts WorkspaceResolver 先例——监听随宿主 fiber 清理，
+    // 绝不进 static inject）；per-session 环容量 Config.checkpointMaxTurns。消费面 =
+    // workspace/changes 事件（事件自身携带 seq，data.turn）建索引 + turn/end 补
+    // endedAt/reason；workspaceChanges 服务经可选切片逐次现读（未挂载部署索引照建、
+    // summary null / 操作侧 checkpoint-unavailable 降级——plan §0.2-②③）。
+    this.sessionWatch = new SessionWatch(ctx as unknown as SessionWatchHost, {
+      maxTurns: resolved.checkpointMaxTurns ?? DEFAULT_CHECKPOINT_MAX_TURNS,
+      logger: this.logger,
+    })
+    // 检查点/归因引擎（v3 批次四）：restore 的 apply 走 write 实例、repoRoot/HEAD 探测
+    // 走只读实例（staging-patch 同款 probe 面）、attribution 走 StatusEngine 快照，
+    // 环索引走 SessionWatch；readFace 闭包逐次现读（服务 fiber 时序跟随——ctx.tools 同款）。
+    this.checkpoints = new CheckpointsEngine(this.runners.write, this.runners.readonly, this.statusEngine, this.workspace, this.sessionWatch, {
+      readFace: () => GitService.readWorkspaceChangesFace(ctx),
+      logger: this.logger,
+    })
+    // 自动化引擎（v3 批次五 [清单 42/43]，plan §7.3）：构造期挂 session/event +
+    // session/disposed（批次四 session-watch.ts 同款接线——绝不进 static inject），
+    // 消费 turn/end(completed) 走 auto-commit、turn/start（per-session 判重）走
+    // auto-branch；add -A/reset 走 write 实例、中间态探测走只读实例、fresh status
+    // 双检走 StatusEngine、落提交复用 CommitEngine、建切复用 RefsAdminEngine、AI 消息
+    // 路由复用 MessageGenEngine（'ai' 档且未解析/失败回落模板）、审计双出口复用
+    // AuditEngine（§1-SOP(b)）；guardOptions 与 commit 引擎共用同一份归一参数源；
+    // onWrite = 服务面 afterWrite（status 失效 + R3 帧——自动化写后与 RPC 写同刷新）。
+    // 并发纪律 + 永不报错（§7.4 零新码）在引擎内收敛——automation.ts 文件头。
+    this.automation = new AutomationEngine({
+      gitWrite: this.runners.write,
+      gitRead: this.runners.readonly,
+      status: this.statusEngine,
+      workspace: this.workspace,
+      commit: this.commitEngine,
+      refsAdmin: this.refsAdmin,
+      messageGen: this.messageGen,
+      audit: this.audit,
+      guard: guardOptions,
+      onWrite: () => { this.afterWrite() },
+    }, ctx as unknown as SessionWatchHost, {
+      autoCommitMode: resolved.autoCommitMode ?? 'off',
+      autoCommitMessage: resolved.autoCommitMessage ?? 'template',
+      autoCommitTemplate: resolved.autoCommitTemplate ?? DEFAULT_AUTO_COMMIT_TEMPLATE,
+      autoBranchMode: resolved.autoBranchMode ?? 'off',
+      autoBranchPrefix: resolved.autoBranchPrefix ?? 'dsh/task-',
+      autoBranchProtected: resolved.autoBranchProtected ?? ['main', 'master'],
+      logger: this.logger,
     })
     // 装载标记（runbook §5.4：ctx.logger.info 不出现在控制台，调试标记用 stdout）。
     process.stdout.write('[dsh-plugin-git] GitService active (serviceKey=git)\n')
@@ -1248,9 +1490,11 @@ export class GitService extends TypertRemoteService {
   }
 
   /**
-   * 放弃中间态操作（[清单 37]；权限 B，幂等安全）：探测 CHERRY_PICK_HEAD /
-   * REVERT_HEAD → `git cherry-pick --abort` / `git revert --abort`；无中间态 ⇒
-   * 空成功（{ aborted: null }，零命令）。无 acknowledged 闸——abort 是治愈路径。
+   * 放弃中间态操作（[清单 37]；权限 B，幂等安全；v3 批次一 §3.3 探测面扩展）：探测
+   * CHERRY_PICK_HEAD / REVERT_HEAD / MERGE_HEAD / rebase-merge|apply 目录（共享
+   * detectOperation）→ `git cherry-pick|revert|merge|rebase --abort`；无中间态 ⇒
+   * 空成功（{ aborted: null }，零命令）。aborted 联合 += 'merge'|'rebase'（§3.2）。
+   * 无 acknowledged 闸——abort 是治愈路径。
    * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
    *   git/git-error。
    */
@@ -1273,6 +1517,333 @@ export class GitService extends TypertRemoteService {
       this.auditFail('abortOperation', startedAt, code)
       throw cause
     }
+  }
+
+  // ── v3 批次一：冲突解决面（[清单 13]；docs/v3-implementation-plan.md §3.3；引擎半 = conflicts.ts） ──
+
+  /**
+   * 冲突清单（[清单 13]；权限 A，只读）：fresh porcelain v2 扫描（独立于 status 的
+   * 1.5s TTL 缓存——§3.2 解决动作必须基于此刻的世界）unmerged 七码路径 + 中间态探测
+   * （共享 detectOperation：伪引用/rebase 目录），组 ConflictEntry[]（code/kind/
+   * oursExists/theirsExists 由七码查表推导——UI 禁用不可向）。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error。
+   */
+  @Remote
+  async conflictList(signal?: AbortSignal): Promise<ConflictListResult> {
+    const startedAt = Date.now()
+    const result = await this.conflicts.conflictList(signal)
+    logRead(this.logger, 'conflictList', {
+      count: result.conflicts.length,
+      operation: result.operation ?? '(none)',
+      abortable: result.abortable,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * 逐文件两向解决（[清单 13]；权限 C）：守卫（全部 path ∈ fresh unmerged 集，违反 ⇒
+   * git/bad-request 'path-not-conflicted' 零写命令）→ 逐条按 §3.4 七码×两向命令矩阵
+   * 执行 checkout/rm + add（查表——引擎文件内矩阵函数，禁止调用点散布分支）。部分
+   * 失败不回滚已成功项（§3.10 逐文件语义，结果如实）。写后失效 + 审计双出口。
+   * @throws git/no-paths、git/bad-request（'path-not-conflicted' / 'invalid-options'）、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async conflictResolve(options: ConflictResolveOptions, signal?: AbortSignal): Promise<ConflictResolveResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.conflicts.conflictResolve(options, signal)
+      logWrite(this.logger, 'conflictResolve', {
+        resolvedCount: result.resolved.length,
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('conflictResolve', startedAt, { resolvedCount: result.resolved.length })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'conflictResolve', code)
+      this.auditFail('conflictResolve', startedAt, code)
+      throw cause
+    }
+  }
+
+  /**
+   * 手动编辑后标记已解决（[清单 13]；权限 B）：守卫同 conflictResolve → 逐路径
+   * `git add -- <path>`（删除侧用户已删文件 ⇒ `git rm -- <path>`——工作区实况判定）。
+   * 写后失效 + 审计双出口。
+   * @throws git/no-paths、git/bad-request 'path-not-conflicted'、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async conflictMarkResolved(options: ConflictMarkOptions, signal?: AbortSignal): Promise<ConflictMarkResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.conflicts.conflictMarkResolved(options, signal)
+      logWrite(this.logger, 'conflictMarkResolved', {
+        resolvedCount: result.resolved.length,
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('conflictMarkResolved', startedAt, { resolvedCount: result.resolved.length })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'conflictMarkResolved', code)
+      this.auditFail('conflictMarkResolved', startedAt, code)
+      throw cause
+    }
+  }
+
+  /**
+   * 继续中间态操作（[清单 13]；权限 C）：守卫（仍有 unmerged 路径 ⇒ git/bad-request
+   * 'conflicts-remaining' 零命令；无中间态 ⇒ 'invalid-options'）→ `git cherry-pick|
+   * revert|merge|rebase --continue`（执行 env 追加 GIT_EDITOR=true——防 sequencer
+   * 打开编辑器挂起，GIT_TERMINAL_PROMPT=0 同纪律的编辑器版）。**冲突是返回值不是
+   * 错误**：下一冲突 ⇒ {done:false, conflicted}（client 循环驱动刷新面板）；完成 ⇒
+   * {done:true}。写后失效 + 审计双出口。
+   * @throws git/bad-request（'conflicts-remaining' / 'invalid-options'）、
+   *   git/no-repository、git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async operationContinue(signal?: AbortSignal): Promise<OperationContinueResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.conflicts.operationContinue(signal)
+      logWrite(this.logger, 'operationContinue', {
+        op: result.op,
+        done: result.done,
+        conflicted: result.conflicted.length,
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('operationContinue', startedAt, { op: result.op, done: result.done, conflicted: result.conflicted.length })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'operationContinue', code)
+      this.auditFail('operationContinue', startedAt, code)
+      throw cause
+    }
+  }
+
+  // ── v3 批次二：merge / rebase（[清单 28/29]；docs/v3-implementation-plan.md §4.3；引擎半 = merge-rebase.ts） ──
+
+  /**
+   * 分支合并（[清单 28]；权限 C）：守卫链（acknowledged C 级闸 + baseRevision 乐观并发
+   * + rev-parse 预检 + 批次一共享 detectOperation + dirty-worktree 从严档——§4.3 ①→⑤）
+   * → `git merge <branch> [--ff-only|--no-ff] [-m <msg>|--no-edit]`。ff 场景
+   * newOid=目标 oid、fastForward=true；up-to-date 幂等成功（零提交，fastForward=false）；
+   * 冲突 ⇒ git/merge-conflict（op 'merge'，conflicted 回读，仓库留中间态——错误面板给
+   * 批次一冲突面板 + abortOperation）。写后失效 + 审计双出口。
+   * @throws git/bad-request（'unacknowledged' / 'stale-base-revision' /
+   *   'invalid-options'）、git/unknown-revision、git/operation-in-progress、
+   *   git/dirty-worktree、git/no-branch、git/merge-conflict、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async branchMerge(options: BranchMergeOptions, signal?: AbortSignal): Promise<BranchMergeResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.mergeRebase.branchMerge(options, signal)
+      logWrite(this.logger, 'branchMerge', {
+        branch: options.branch,
+        fastForward: options.fastForward,
+        resultFastForward: result.fastForward,
+        oldOid: result.oldOid.slice(0, 12),
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('branchMerge', startedAt, {
+        branch: options.branch,
+        fastForward: options.fastForward,
+        merged: result.fastForward,
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'branchMerge', code)
+      this.auditFail('branchMerge', startedAt, code)
+      throw cause
+    }
+  }
+
+  /**
+   * 变基（[清单 29]；权限 C）：守卫链同 branchMerge → `git rebase [--onto <onto>]
+   * <upstream>`（非 interactive；默认分支系 = 当前分支；执行 env GIT_EDITOR=true 防编辑器
+   * 挂起）。done 恒 true——冲突 ⇒ git/merge-conflict（op 'rebase'），continue 由批次一
+   * operationContinue 驱动（§4.2 注记）；up-to-date 幂等成功。写后失效 + 审计双出口。
+   * @throws 同 branchMerge。
+   */
+  @Remote
+  async rebase(options: RebaseOptions, signal?: AbortSignal): Promise<RebaseResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.mergeRebase.rebase(options, signal)
+      logWrite(this.logger, 'rebase', {
+        upstream: options.upstream,
+        onto: options.onto ?? '(none)',
+        oldOid: result.oldOid.slice(0, 12),
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('rebase', startedAt, {
+        upstream: options.upstream,
+        onto: options.onto ?? '(none)',
+        newOid: result.newOid?.slice(0, 12) ?? '(null)',
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'rebase', code)
+      this.auditFail('rebase', startedAt, code)
+      throw cause
+    }
+  }
+
+  // ── v3 批次三：Agent 工具观测面（[清单 45]；docs/v3-implementation-plan.md §5.5；注册半 = agent-tools.ts） ──
+
+  /**
+   * Agent 工具状态（[清单 45]；权限 A，只读）：`{ mode, toolsFaceAvailable, registered }`
+   * 观测/verify 断言锚（plan §5.5）。mode = Config.agentTools（fiber 构造期定值——
+   * 非 volatile 改动经 fiber 重载生效）；toolsFaceAvailable = ctx.tools 可选切片是否
+   * 已观察到（dsh-tools 未挂载的部署恒 false——降级口径 §5.10）；registered = 已注册
+   * 工具名白名单子集（'off' 恒 []、readonly 8 个、readwrite 11 个——§5.4 表；逐工具
+   * 注册被 tools face 校验拒绝时跳过该名）。只读不入审计环。
+   */
+  @Remote
+  async agentToolsStatus(): Promise<AgentToolsStatusResult> {
+    const state = this.agentToolsState
+    logRead(this.logger, 'agentToolsStatus', {
+      mode: state.mode,
+      toolsFaceAvailable: state.toolsFaceAvailable,
+      registeredCount: state.registered.length,
+    })
+    return { mode: state.mode, toolsFaceAvailable: state.toolsFaceAvailable, registered: [...state.registered] }
+  }
+
+  // ── v3 批次四：检查点 · 归因 · 聚合（[清单 39/40/41]；docs/v3-implementation-plan.md §6.3；引擎半 = session-watch.ts / checkpoints.ts） ──
+
+  /**
+   * 检查点清单（[清单 39]；权限 A，只读）：session-watch 环内索引 → 逐条
+   * workspaceChanges.summary 现读补 summary（服务缺失/记录缺失 ⇒ summary null——
+   * Host 重启/Session 处置后如实呈现 unavailable，不伪造，plan §6.2）。newest-first；
+   * limit 缺省全量（受环容量 Config checkpointMaxTurns 钳制）。只读不入审计环。
+   * @throws git/bad-request 'invalid-options'（limit 非 safe 正整数）。
+   */
+  @Remote
+  async checkpointList(limit?: number | null): Promise<CheckpointListResult> {
+    const startedAt = Date.now()
+    const result = await this.checkpoints.checkpointList(limit)
+    logRead(this.logger, 'checkpointList', {
+      count: result.entries.length,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * 检查点逐文件 diff（[清单 41] 点击看 diff 的数据面；权限 A，只读）：seq 校验
+   * （不在环/跨会话歧义/workspaceChanges 缺/summary 缺 ⇒ git/checkpoint-unavailable
+   * ——操作侧显式拒绝防误恢复，plan §6.2/§6.5）→ index 越界 ⇒ git/bad-request →
+   * face.diff 投影过线（与 workspace-changes WorkspaceFileDiff 同形，纯 JSON 安全）。
+   * @throws git/checkpoint-unavailable、git/bad-request 'invalid-options'、
+   *   git/git-error（宿主快照读失败收编）、git/no-repository。
+   */
+  @Remote
+  async checkpointDiff(options: CheckpointDiffOptions, signal?: AbortSignal): Promise<CheckpointFileDiff> {
+    const startedAt = Date.now()
+    const result = await this.checkpoints.checkpointDiff(options, signal)
+    logRead(this.logger, 'checkpointDiff', {
+      seq: options.seq,
+      index: options.index,
+      kind: result.kind,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  /**
+   * 检查点恢复（[清单 39]；权限 C，danger 闸 + DB=A 拍板）：acknowledged 闸 →
+   * seq 校验（同 checkpointDiff 硬失败）→ paths 校验（非该 turn 记录成员 ⇒
+   * bad-request 零命令；空数组 ⇒ git/no-paths）→ baseRevision 乐观并发 → 逐文件
+   * diff 现读 → hunk 序列化 → `git apply -R --whitespace=nowarn --unidiff-zero`
+   * （worktree 应用非 --cached；逐文件单独调用 = 部分成功语义——apply 失败项进
+   * failed 列表，已成功项不回滚，stderr 脱敏进 reason）。写后失效 + 审计双出口。
+   * @throws git/bad-request（'unacknowledged' / 'stale-base-revision' / 'invalid-options'）、
+   *   git/no-paths、git/checkpoint-unavailable、git/no-repository、
+   *   git/session-workspace-unresolved、git/timeout、git/git-error。
+   */
+  @Remote
+  async checkpointRestore(options: CheckpointRestoreOptions, signal?: AbortSignal): Promise<CheckpointRestoreResult> {
+    const startedAt = Date.now()
+    try {
+      const result = await this.checkpoints.checkpointRestore(options, signal)
+      logWrite(this.logger, 'checkpointRestore', {
+        seq: options.seq,
+        applied: result.applied.length,
+        failed: result.failed.length,
+        durationMs: Date.now() - startedAt,
+      })
+      this.auditOk('checkpointRestore', startedAt, {
+        seq: options.seq,
+        applied: result.applied.length,
+        failed: result.failed.length,
+      })
+      this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, 'checkpointRestore', code)
+      this.auditFail('checkpointRestore', startedAt, code)
+      throw cause
+    }
+  }
+
+  /**
+   * 变更归因（[清单 40]；权限 A，只读）：当前 status 全路径 × turn→files 现读映射
+   * 四态求交——agent（回合记录命中且文件仍处于回合窗口内，mtime 近似判定）/ mixed
+   * （命中但回合结束后又被改动）/ user（快照有但零命中，以有记录覆盖为前提）/
+   * unknown（无记录覆盖——重启前历史，DE=A 如实降级）。只读不入审计环。
+   * @throws git/no-repository、git/session-workspace-unresolved、git/timeout、
+   *   git/git-error（status 扫描失败兜底）。
+   */
+  @Remote
+  async attributionGet(signal?: AbortSignal): Promise<AttributionResult> {
+    const startedAt = Date.now()
+    const result = await this.checkpoints.attributionGet(signal)
+    logRead(this.logger, 'attributionGet', {
+      count: result.entries.length,
+      durationMs: Date.now() - startedAt,
+    })
+    return result
+  }
+
+  // ── v3 批次五：自动化观测面（[清单 42/43]；docs/v3-implementation-plan.md §7.3–§7.5；引擎半 = automation.ts） ──
+
+  /**
+   * 自动化状态（[清单 42/43]；权限 A，只读）：`{ autoCommitMode, autoBranchMode,
+   * lastActions }` 观测/verify 断言锚 + client 可选状态行数据面（plan §7.3/§7.5）。
+   * mode = Config.autoCommitMode/autoBranchMode（fiber 构造期定值——非 volatile 改动
+   * 经 fiber 重载生效）；lastActions = 自动化最近动作环（≤20 条 newest-first，
+   * automation.ts record 面——detail 白名单摘要，不落 message 正文/文件内容/stderr
+   * 原文）。自动化失败不抛 RemoteError（§7.4 零新码——无 UI 报错通道），本面 +
+   * auditLog 是失败的两条可查路。只读不入审计环。
+   */
+  @Remote
+  async automationStatus(): Promise<AutomationStatusResult> {
+    const result = this.automation.status()
+    logRead(this.logger, 'automationStatus', {
+      autoCommitMode: result.autoCommitMode,
+      autoBranchMode: result.autoBranchMode,
+      lastActionCount: result.lastActions.length,
+    })
+    return result
   }
 
   // ── v2 批次三：提交链路与护栏（[清单 10/14/21/22/56]；引擎半 = staging-patch.ts / stash.ts / guard-scan.ts / diagnostics.ts） ──
@@ -1694,6 +2265,16 @@ export class GitService extends TypertRemoteService {
     this.statusWatcher.notifyMutation()
   }
 
+  /** 供测试与批次五自动化复用的会话事件观察入口（直喂 observe/断言环——不影响 wire 面）。 */
+  sessionWatchOf(): SessionWatch {
+    return this.sessionWatch
+  }
+
+  /** 供测试复用的自动化引擎入口（直喂 observe/断言 lastActions 环与判重记忆——不影响 wire 面）。 */
+  automationOf(): AutomationEngine {
+    return this.automation
+  }
+
   /** 供测试与后续模块复用的 watcher 引擎入口（观测面/接线用，不影响 wire 面）。 */
   watcherOf(): StatusWatcher {
     return this.statusWatcher
@@ -1710,6 +2291,45 @@ export class GitService extends TypertRemoteService {
       const face = candidate as Partial<GitFsWatchFace>
       if (typeof face.resolve !== 'function' || typeof face.watch !== 'function') return undefined
       return candidate as GitFsWatchFace
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * 宿主 tools 能力切片的结构化读取（`ctx.get('tools')`；readFsFace/readLlmFace 同款
+   * 先例——**可选切片，绝不进 static inject**，plan §0.2-① 可达性口径）。tools 缺席
+   * 或形状不符 → undefined（agent-tools.ts 注册面降级），不阻断服务激活。注意 cordis
+   * ctx.get 只回已激活 fiber 的实现（lib/index.js reflect get strict 默认 true）——
+   * 注册面的事件跟随补齐时序（agent-tools.ts 文件头）。
+   */
+  private static readAgentToolsFace(ctx: Context): GitToolsFace | undefined {
+    try {
+      const candidate: unknown = (ctx as unknown as { get(key: string): unknown }).get('tools')
+      if (typeof candidate !== 'object' || candidate === null) return undefined
+      const face = candidate as Partial<GitToolsFace>
+      if (typeof face.register !== 'function') return undefined
+      return candidate as GitToolsFace
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * 宿主 workspaceChanges 能力切片的结构化读取（`ctx.get('workspaceChanges')`；
+   * readAgentToolsFace/readLlmFace 同款先例——**可选切片，绝不进 static inject**，
+   * plan §0.2-② 可达性口径）。切片缺席或形状不符 → undefined（检查点索引照建、
+   * summary null / 操作侧 git/checkpoint-unavailable 降级），不阻断服务激活。
+   * 逐次现读（闭包经 CheckpointsEngine 消费）——workspaceChanges 服务 fiber 可能晚于
+   * 本服务激活，ctx.get 每次重取天然跟随（ctx.tools 时序同款）。
+   */
+  private static readWorkspaceChangesFace(ctx: Context): GitWorkspaceChangesFace | undefined {
+    try {
+      const candidate: unknown = (ctx as unknown as { get(key: string): unknown }).get('workspaceChanges')
+      if (typeof candidate !== 'object' || candidate === null) return undefined
+      const face = candidate as Partial<GitWorkspaceChangesFace>
+      if (typeof face.summary !== 'function' || typeof face.diff !== 'function') return undefined
+      return candidate as GitWorkspaceChangesFace
     } catch {
       return undefined
     }

@@ -16,6 +16,19 @@
 
 ## 2. 登记表（随施工推进；新条目追加在「历史条目」之后）
 
+### v3 批次一~五（2026-11-18）
+
+| 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |
+|---|---|---|---|---|---|
+| C | `packages/host/src/conflicts.ts`（冲突解决引擎：[清单 13] conflictList/conflictResolve/conflictMarkResolved/operationContinue + 共享 detectOperation；七码×两向命令矩阵查表） | 无第三方代码来源——**不对照 codex/zode 已知实现**（docs/v3-implementation-plan.md §7.7-3 预期落点）：porcelain v2 unmerged 七码语义按 git 官方文档 + 本机 git 2.55.0.windows.2 真仓 UD/DU/AU/UA/DD 夹具逐格实测（文件头自述实测矩阵——方案 §3.4 UD/DU 两行与 git 语义相反，按实测落表未照抄方案；UD 的 theirs 走 `rm` 因 `checkout --theirs` 在 stage#3 缺席报错） | git 2.55.0.windows.2 实测（2026-11-12 逐格） | —（无第三方材料入仓） | 自研实现，零代码搬运（v3 §3.2–§3.4/§3.6；文件头之登记即本行——C 级登记以 git 文档语义对照为据，防将来「顺手抄冲突解决库代码」无据可查）。多文件中途失败已成功项不回滚、清单随 git-error details.resolved 分列、GIT_EDITOR=true 防挂起均为任务口径 |
+| C | `packages/host/src/merge-rebase.ts`（merge/rebase 引擎：[清单 28][清单 29] branchMerge/rebase，守卫链 + 从严档） | 无第三方代码来源——`git merge`/`git rebase` 命令形态与冲突/中间态语义按 git 官方文档 + 本机实测（conflicted `-z` 口径与批次一 conflicts.ts 共享）；目标修订剥 `^{commit}` 剥壳预检按 git rev-parse 官方语义 | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（v3 §4.1–§4.5；文件头之登记即本行）。从严档（fresh 四组全空才执行——比 git 原生更严）、annotated tag 不误报 ff、执行 env GIT_EDITOR=true 均为任务口径；冲突面复用 conflicts.ts 实测矩阵（零散布分支纪律） |
+| C | `packages/host/src/agent-tools.ts`（Agent 工具面：[清单 45] 三档 11 工具定义 + guard + 宽限降级） | dsh 参照树（`D:\DeepSeekHarness` @ fcc0ad46，2026-11-13 spike 实读）`packages/llm/llm/src/types.ts:517-528`（ToolSchema 形状）+ `packages/core/tools/src/contracts.ts:17-24,40,410`（ToolOutputDefinition/execute/ToolGuard 契约）——**type-only 形状对照，零代码搬运**（本地最小结构接口构造，零运行期依赖纪律禁止 import dsh-tools） | dsh 树 fcc0ad46 | MIT（dsh） | 语义学习，零代码搬运（v3 §5.3–§5.5；文件头之登记即本行——C 级）。白名单/三档语义/spike 实测坑（output.schema 显式 additionalProperties、output 侧无 required）与工具描述固定英文串均为任务口径；高危写（merge/rebase/cherry-pick/reset）不进白名单为 D-γ=A 定案 |
+| C | `packages/host/src/session-watch.ts`（会话事件观察/检查点索引：[清单 39/40/41] 消费底座） | dsh 参照树 `packages/deliverables/workspace-changes/`（`src/index.ts:145-152` 的 `ctx.on('session/event')` 消费范式 + README turn 时序「latest event for one turn replaces earlier ones」环语义）——语义学习，零代码搬运；事件形状按 dsh 0.2.1-rc.5 声明面 type-only（`workspace/changes` 事件 `seq`/载荷 `{ turn }`） | dsh 树 fcc0ad46 | MIT（dsh） | 语义学习，零代码搬运（v3 §6.4；文件头之登记即本行——C 级）。可选切片逐次现读、降级守卫（seq/turn 缺形跳条不炸监听）、per-session 环容量 checkpointMaxTurns 均为任务口径 |
+| C | `packages/host/src/checkpoints.ts`（检查点/归因引擎：[清单 39/40/41] checkpointDiff/Restore + attributionGet） | 无第三方代码来源——`git apply -R` 反向应用/`git apply --check`/工作区四组状态语义按 git 官方文档 + 本机实测；消费纪律三条硬边界（私有 tree id 不可达/摘要内存态/mtime 近似归因）按 dsh workspace-changes README 形状对照（dsh 参照树，C 级） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（v3 §6.3；文件头之登记即本行）。DB=A diff 反向应用（绝不 checkout 快照 tree）、summary 封顶 restore-all fail-closed（`git/checkpoint-unavailable` 零命令）、逐文件部分成功如实分列均为任务口径 |
+| C | `packages/host/src/automation.ts`（自动化引擎：[清单 42][清单 43] auto-commit/auto-branch + automationStatus） | 无第三方代码来源——turn 生命周期（reason.kind==='completed' 过线）按 dsh 0.2.1-rc.5 SessionEventMap 声明面 type-only；编排全部复用仓库内已登记引擎（commit/scanStaged/refs-admin/branch-exists），`git add -A`/`git reset` 撤销语义按 git 官方文档 | dsh 0.2.1-rc.5 声明面 + git 官方文档 | —（无第三方材料入仓） | 自研实现，零代码搬运（v3 §7.3；文件头之登记即本行）。DD=A secret 命中 `git reset` 全撤销 staged 不豁免、裸冲突（UU 无中间态）硬拒、静默性（失败不投 UI——audit + automationStatus 双路可查）均为任务口径 |
+
+（v3 批次一~五对既有已登记文件的续写改动——`index.ts`/`types.ts`/`error-codes.ts`/`workspace.ts`/`time-travel.ts` 的服务面/类型面/域码/探测面共享扩展、client 面 `GitConflictPanel.tsx`/`GitMergeDialog.tsx`/`GitRebaseDialog.tsx`/`GitCheckpointTimeline.tsx`/`conflict-view-model.ts`/`checkpoint-view.ts`/`store/checkpoint-store.ts` 与对应 spec 文件（均按 v3 方案 §3.7/§4.6/§6.6 与 dsh 基线积木自研，无第三方对照来源）——均无登记义务。**A 级零新增**（v3 全部自研/type-only 对照，发布收口核对于 2026-11-18）。）
+
 ### v2 批次四 体验集成模块（2026-11-10）
 
 | 级 | 本仓库目标文件 | 来源 | 来源版本 | 许可 | 移植内容与修改 |

@@ -46,6 +46,27 @@ export const gitZh = {
   'menu.branches': '分支',
   'menu.branchCompare': '与当前分支比较…',
   'menu.branchReset': '重置当前分支…',
+  // V3 批次二扩行（v3-implementation-plan §4.6）：merge/rebase 两行拉起对话框。
+  'menu.branchMerge': '合并到当前分支…',
+  'menu.branchRebase': '变基到…',
+  // V3 批次三（[45]；v3-implementation-plan §5.7）：header 菜单「Agent 工具」状态行
+  // （只读展示，无操作面——工具启停在 profile 配置层）。{mode} = Config 档位字面量
+  // （'readonly'/'readwrite'——配置 token 原样词条，用户可对着 profile config 核对）。
+  'agentTools.status.off': 'Agent 工具：关闭',
+  'agentTools.status.on': 'Agent 工具：{mode}（{count} 个工具）',
+  // V3 批次五（[42][43]；v3-implementation-plan §7.5）：header 菜单「自动化」状态行
+  // （只读观测，无操作面——启停在 profile 配置层）。{commit}/{branch} = Config 档位
+  // 字面量（'off'/'turn-end'/'session-start'——配置 token 原样词条，agentTools {mode}
+  // 同款）。最近动作摘要 = lastActions 首条（host newest-first 环）；{kind} 词条见
+  // automation.action 组；{detail} = host 白名单摘要原样（英文诊断风格——audit 同
+  // 纪律不落消息正文）。
+  'automation.status.off': '自动化：关闭',
+  'automation.status.on': '自动化：提交 {commit} · 分支 {branch}',
+  'automation.status.latest': '最近动作：{kind} {outcome} — {detail}',
+  'automation.action.commit': '自动提交',
+  'automation.action.branch': '自动开分支',
+  'automation.action.ok': '成功',
+  'automation.action.fail': '未成功',
   'menu.branchCreate': '新建分支…',
   'menu.tagCreate': '打标签…',
   'menu.worktree': 'Worktree…',
@@ -152,6 +173,36 @@ export const gitZh = {
   'stash.popConflict': '应用遇到冲突：stash 条目已保留未丢失，请解决冲突后再试。',
   'stash.drop.title': '删除 stash',
   'stash.drop.message': '将删除第 {index} 条 stash（{message}），且无法撤销。',
+  // ── conflict：V3 批次一 [13] 冲突条 + 冲突面板（v3-implementation-plan §3.7：变更 tab
+  //    顶部冲突条常驻入口（计数 + operation 徽标）→ 面板（文件列表 code/kind 徽标 +
+  //    ours/theirs 按钮由 oursExists/theirsExists 驱动禁用 + DD 两向同效显式确认 +
+  //    手动标记行）→ 底部 继续操作/放弃操作（danger 闸））──
+  'conflict.bar.label': '冲突待解决（{count}）',
+  'conflict.bar.resolved': '冲突已全部解决，操作待继续',
+  'conflict.operation.cherry-pick': '正在 cherry-pick',
+  'conflict.operation.revert': '正在 revert',
+  'conflict.operation.merge': '正在 merge',
+  'conflict.operation.rebase': '正在 rebase',
+  'conflict.panelTitle': '解决冲突',
+  'conflict.loading': '冲突清单加载中…',
+  'conflict.empty': '没有未解决的冲突。',
+  'conflict.kind.modified': '修改',
+  'conflict.kind.added': '新增',
+  'conflict.kind.deleted': '删除',
+  'conflict.ours': '保留我方（ours）',
+  'conflict.theirs': '采用对方（theirs）',
+  'conflict.ddAccept': '接受删除（双方均已删除，两向同效）',
+  'conflict.ddConfirmHint': '再次点击确认接受删除。',
+  'conflict.markResolved': '我已手动编辑，标记已解决',
+  'conflict.selectHint': '选择一个文件查看解决动作。',
+  'conflict.continue': '继续操作',
+  'conflict.continueRunning': '继续中…',
+  'conflict.continueDone': '操作已完成。',
+  'conflict.continueNext': '已停在下一批冲突（{count} 个文件），请继续解决。',
+  'conflict.abort': '放弃操作',
+  'conflict.abort.title': '放弃当前操作',
+  'conflict.abort.message': '将放弃进行中的 {op} 操作并恢复到操作前状态，无法撤销。',
+  'conflict.resolving': '处理中…',
   // ── diff：FileDiffView 占位与渲染注记（C2/C3 共用；本模块 ask §⑥ 补齐） ──
   'diff.loading': '差异加载中…',
   'diff.binary': '二进制文件，没有文本差异。',
@@ -259,6 +310,28 @@ export const gitZh = {
   'timeTravel.reset.mixed': 'mixed——更改保留在工作区（未暂存）',
   'timeTravel.reset.hard': 'hard——丢弃全部未提交更改（不可逆）',
   'timeTravel.reset.hardMessage': '将丢弃 {count} 个文件的未提交更改，且无法撤销。',
+  // ── merge / rebase：V3 批次二 [28][29] 对话框（v3-implementation-plan §4.6：
+  //    分支选择器扩两行——merge（branch picker + ff 三态单选 + no-ff 时 message
+  //    编辑 + danger 恒档确认——合并提交是对外可见动作）/ rebase（upstream picker
+  //    + onto 可选 + danger 恒档确认——重写历史语义文案明示）；冲突路径零新 UI）──
+  'merge.title': '合并到当前分支',
+  'merge.currentBranch': '当前分支：{name}',
+  'merge.branchLabel': '要合并的分支',
+  'merge.branchEmpty': '没有可合并的分支',
+  'merge.ffLabel': '快进模式',
+  'merge.ff.auto': 'auto——可快进则快进，否则创建合并提交',
+  'merge.ff.ffOnly': 'ff-only——仅快进（不可快进则拒绝，零改动）',
+  'merge.ff.noFf': 'no-ff——恒创建合并提交',
+  'merge.messageLabel': '合并提交消息（可选，缺省由 git 生成）',
+  'merge.dangerNote': '合并将移动当前分支指针；no-ff 还会创建合并提交——这是对外可见的动作。',
+  'merge.merging': '合并中…',
+  'rebase.title': '变基当前分支',
+  'rebase.currentBranch': '当前分支：{name}',
+  'rebase.upstreamLabel': '变基基底（upstream）',
+  'rebase.upstreamEmpty': '没有可作为基底的分支',
+  'rebase.ontoLabel': 'onto（可选，缺省 = upstream）',
+  'rebase.rewriteNote': '变基将重写当前分支历史：基底之后的既有提交会被复制为新提交（oid 改变）；若这些提交已推送，之后推送需要强制推送。',
+  'rebase.rebasing': '变基中…',
   // ── commit：C4 GitCommitDialog —— spec §4 commit dialog 键组（种子全集，值随
   //    host locale/*.json 包资产同文案）+ ④-K 组件所需的动作/确认/计数扩充键 ──
   'commit.title': '提交',
@@ -354,12 +427,57 @@ export const gitZh = {
   'error.init-failed': '在 {path} 初始化 Git 仓库失败：{reason}。',
   'error.pr-tool-missing': 'PR 命令行工具（{tool}）不可用：请安装 GitHub CLI 并完成 gh auth login 后重试。',
   'error.pr-create-failed': '创建 PR 失败，详见下方输出。',
+  // V3 批次四检查点新码（plan §6.5）：无记录 seq 的操作侧拒绝——诚实降级文案
+  // （Host 重启/会话处置后的回合无变更记录，不伪造数据）。
+  'error.checkpoint-unavailable': '检查点不可用（seq {seq}）：宿主重启或会话处置后的回合没有变更记录。',
   'error.gateway-service-unavailable': 'git 服务尚未就绪，请重试。',
   'error.gateway': '请求失败（{code}）。',
   'error.action.setUpstream': '设置 upstream 并推送',
   'error.action.fetch': '获取（fetch）',
   'error.action.pull': '拉取（pull）',
   'error.action.abort': '放弃操作',
+  // V3 批次一：git/merge-conflict 错误面板的「解决冲突…」入口（plan §3.7——打开变更
+  // tab 的冲突面板；'error.action.resolve' 消费方 = 变更 tab 就地开面板 / 图 tab 跨槽
+  // 路由到变更 tab）。
+  'error.action.resolve': '解决冲突…',
+  // ── checkpoint：V3 批次四 [39][40][41] 会话改动时间线 + 归因徽标（v3-implementation-plan
+  //    §6.6；相对时间复用 blame.time.* 词典——本组不另造相对时间词汇）。诚实降级口径：
+  //    turnUnavailable/unknownTip 明示「宿主重启/会话处置后的记录不保留」（DE=A）。──
+  'checkpoint.toggle': '会话改动时间线',
+  'checkpoint.toggleCount': '会话改动时间线（{count} 回合）',
+  'checkpoint.regionAria': '会话改动时间线',
+  'checkpoint.loading': '回合清单加载中…',
+  'checkpoint.empty': '当前会话还没有已记录的回合变更。',
+  'checkpoint.turn': '回合 {turn}',
+  'checkpoint.fileCount': '{count} 个文件',
+  'checkpoint.turnUnavailable': '该回合的变更记录不可用（宿主重启或会话处置后的记录不保留）。',
+  'checkpoint.restore': '恢复此回合',
+  'checkpoint.restore.running': '恢复中…',
+  'checkpoint.restore.title': '恢复此回合的文件？',
+  'checkpoint.restore.message': '将把回合 {turn} 的 {count} 个文件恢复到该回合开始前的内容，无法自动撤销。',
+  'checkpoint.restore.applied': '已恢复 {count} 个文件到该回合开始前的内容。',
+  'checkpoint.restore.partial': '已恢复 {applied} 个文件；{failed} 个失败——回合后内容又被改动的文件无法应用，已成功项不回滚。',
+  'checkpoint.diffLoading': '差异加载中…',
+  'checkpoint.reason.completed': '完成',
+  'checkpoint.reason.aborted': '已中止',
+  'checkpoint.reason.blocked': '被阻塞',
+  'checkpoint.reason.error': '出错',
+  'checkpoint.reason.maxTokens': '达到 token 上限',
+  'checkpoint.reason.interrupted': '被中断',
+  'checkpoint.reason.forked': '已分叉',
+  'checkpoint.expandAria': '展开回合 {turn} 的文件清单',
+  'checkpoint.collapseAria': '收起回合 {turn} 的文件清单',
+  'checkpoint.filterAria': '按归因筛选变更列表',
+  'checkpoint.filter.all': '全部',
+  'checkpoint.filter.empty': '没有符合该归因筛选的变更文件。',
+  'checkpoint.attribution.agent': '回合',
+  'checkpoint.attribution.user': '用户',
+  'checkpoint.attribution.mixed': '混合',
+  'checkpoint.attribution.unknown': '无记录',
+  'checkpoint.attribution.agentTip': '回合 {turns} 由 agent 改动',
+  'checkpoint.attribution.userTip': '没有已记录的回合触及此文件。',
+  'checkpoint.attribution.mixedTip': '回合命中，但回合结束后又被改动。',
+  'checkpoint.attribution.unknownTip': '宿主重启前的回合没有变更记录，无法归因。',
   // ── common：错误面板动作与折叠区（spec §4） ──
   'common.retry': '重试',
   'common.details': '详情',
@@ -387,6 +505,29 @@ export const gitEn = {
   'menu.branches': 'Branches',
   'menu.branchCompare': 'Compare with current branch…',
   'menu.branchReset': 'Reset current branch…',
+  // V3 batch-2 rows (v3-implementation-plan §4.6): merge/rebase rows open dialogs.
+  'menu.branchMerge': 'Merge into current branch…',
+  'menu.branchRebase': 'Rebase onto…',
+  // V3 batch-3 ([45]; v3-implementation-plan §5.7): header-menu "Agent tools" status
+  // line (read-only display, no action surface — toggling lives in the profile
+  // config). {mode} = the Config tier token verbatim ('readonly'/'readwrite' — the
+  // literal config word, so users can cross-check their profile config).
+  'agentTools.status.off': 'Agent tools: off',
+  'agentTools.status.on': 'Agent tools: {mode} ({count} tools)',
+  // V3 batch-5 ([42][43]; v3-implementation-plan §7.5): header-menu "Automation"
+  // status line (read-only display, no action surface — toggling lives in the
+  // profile config). {commit}/{branch} = the Config tier tokens verbatim
+  // ('off'/'turn-end'/'session-start' — agentTools {mode} same discipline). The
+  // recent-action summary = the first lastActions entry (host newest-first ring);
+  // {kind} words live in the automation.action group; {detail} = the host whitelist
+  // summary verbatim (English diagnostic style — audit discipline: no message bodies).
+  'automation.status.off': 'Automation: off',
+  'automation.status.on': 'Automation: commit {commit} · branch {branch}',
+  'automation.status.latest': 'Recent action: {kind} {outcome} — {detail}',
+  'automation.action.commit': 'auto-commit',
+  'automation.action.branch': 'auto-branch',
+  'automation.action.ok': 'ok',
+  'automation.action.fail': 'failed',
   'menu.branchCreate': 'New branch…',
   'menu.tagCreate': 'Create tag…',
   'menu.worktree': 'Worktree…',
@@ -496,6 +637,37 @@ export const gitEn = {
   'stash.popConflict': 'The apply hit conflicts: the stash entry is kept and nothing was lost. Resolve the conflicts and retry.',
   'stash.drop.title': 'Drop stash',
   'stash.drop.message': 'Stash entry {index} ({message}) will be dropped; this cannot be undone.',
+  // ── conflict：V3 batch-1 [13] conflict bar + panel (v3-implementation-plan §3.7:
+  //    persistent bar at the top of the changes tab (count + operation badge) → panel
+  //    (file list with code/kind badges + ours/theirs buttons gated by
+  //    oursExists/theirsExists + DD explicit same-effect confirm + manual mark row) →
+  //    footer continue/abort (danger gate)) ──
+  'conflict.bar.label': 'Conflicts to resolve ({count})',
+  'conflict.bar.resolved': 'All conflicts resolved — the operation awaits continue',
+  'conflict.operation.cherry-pick': 'cherry-pick in progress',
+  'conflict.operation.revert': 'revert in progress',
+  'conflict.operation.merge': 'merge in progress',
+  'conflict.operation.rebase': 'rebase in progress',
+  'conflict.panelTitle': 'Resolve conflicts',
+  'conflict.loading': 'Loading conflict list…',
+  'conflict.empty': 'No unresolved conflicts.',
+  'conflict.kind.modified': 'modified',
+  'conflict.kind.added': 'added',
+  'conflict.kind.deleted': 'deleted',
+  'conflict.ours': 'Keep ours',
+  'conflict.theirs': 'Take theirs',
+  'conflict.ddAccept': 'Accept deletion (deleted on both sides; both directions are equivalent)',
+  'conflict.ddConfirmHint': 'Click again to confirm the deletion.',
+  'conflict.markResolved': 'I edited it manually — mark resolved',
+  'conflict.selectHint': 'Select a file to see its resolution actions.',
+  'conflict.continue': 'Continue operation',
+  'conflict.continueRunning': 'Continuing…',
+  'conflict.continueDone': 'The operation is complete.',
+  'conflict.continueNext': 'Stopped at the next batch of conflicts ({count} file(s)); keep resolving.',
+  'conflict.abort': 'Abort operation',
+  'conflict.abort.title': 'Abort the current operation',
+  'conflict.abort.message': 'The in-progress {op} operation will be aborted and rolled back to its pre-operation state; this cannot be undone.',
+  'conflict.resolving': 'Working…',
   // ── diff：FileDiffView ──
   'diff.loading': 'Loading diff…',
   'diff.binary': 'Binary file — no textual diff.',
@@ -605,6 +777,29 @@ export const gitEn = {
   'timeTravel.reset.mixed': 'mixed — keep changes in the working tree (unstaged)',
   'timeTravel.reset.hard': 'hard — discard all uncommitted changes (irreversible)',
   'timeTravel.reset.hardMessage': 'Discards the uncommitted changes of {count} file(s); this cannot be undone.',
+  // ── merge / rebase：V3 batch-2 [28][29] dialogs (v3-implementation-plan §4.6:
+  //    branch-selector rows — merge (branch picker + ff tri-state radio + message
+  //    editor when no-ff + always-danger confirm — a merge commit is externally
+  //    visible) / rebase (upstream picker + optional onto + always-danger confirm —
+  //    rewrite-history wording shown); conflict path adds no new UI) ──
+  'merge.title': 'Merge into current branch',
+  'merge.currentBranch': 'Current branch: {name}',
+  'merge.branchLabel': 'Branch to merge',
+  'merge.branchEmpty': 'No branch to merge',
+  'merge.ffLabel': 'Fast-forward mode',
+  'merge.ff.auto': 'auto — fast-forward when possible, otherwise create a merge commit',
+  'merge.ff.ffOnly': 'ff-only — fast-forward only (rejected when not possible, zero changes)',
+  'merge.ff.noFf': 'no-ff — always create a merge commit',
+  'merge.messageLabel': 'Merge commit message (optional; generated by git when empty)',
+  'merge.dangerNote': 'Merging moves the current branch pointer; no-ff also creates a merge commit — an externally visible action.',
+  'merge.merging': 'Merging…',
+  'rebase.title': 'Rebase current branch',
+  'rebase.currentBranch': 'Current branch: {name}',
+  'rebase.upstreamLabel': 'Upstream (rebase base)',
+  'rebase.upstreamEmpty': 'No branch to rebase onto',
+  'rebase.ontoLabel': 'onto (optional; defaults to upstream)',
+  'rebase.rewriteNote': 'Rebase rewrites the current branch history: commits after the base are replayed as new commits (oids change); if they were pushed, the next push requires force.',
+  'rebase.rebasing': 'Rebasing…',
   // ── commit：C4 GitCommitDialog（en 与 zh 逐键对齐；种子值随 host locale/en.json）──
   'commit.title': 'Commit',
   'commit.placeholder': 'Commit message (Conventional Commits recommended)',
@@ -703,12 +898,59 @@ export const gitEn = {
   'error.init-failed': 'Initializing a Git repository at {path} failed: {reason}.',
   'error.pr-tool-missing': 'The PR command-line tool ({tool}) is unavailable: install the GitHub CLI and run gh auth login first.',
   'error.pr-create-failed': 'Creating the PR failed; see the output below.',
+  // V3 batch-4 checkpoint code (plan §6.5): operator-side rejection of a record-less
+  // seq — honest-degradation copy (turns from before a Host restart or session
+  // disposal carry no change records; no data is fabricated).
+  'error.checkpoint-unavailable': 'The checkpoint is unavailable (seq {seq}): turns from before a Host restart or session disposal carry no change records.',
   'error.gateway-service-unavailable': 'The git service is not ready yet. Retry.',
   'error.gateway': 'The request failed ({code}).',
   'error.action.setUpstream': 'Set upstream and push',
   'error.action.fetch': 'Fetch',
   'error.action.pull': 'Pull',
   'error.action.abort': 'Abort operation',
+  // V3 batch-1: the "Resolve conflicts…" entry of the git/merge-conflict error panel
+  // (plan §3.7 — opens the changes-tab conflict panel; consumers = the changes tab
+  // opening it in place / the graph tab routing across slots to the changes tab).
+  'error.action.resolve': 'Resolve conflicts…',
+  // ── checkpoint: V3 batch-4 [39][40][41] session change timeline + attribution badges
+  //    (v3-implementation-plan §6.6; relative time reuses the blame.time.* vocabulary).
+  //    Honest-degradation wording: turnUnavailable / unknownTip state plainly that
+  //    records do not survive a Host restart or session disposal (DE=A). ──
+  'checkpoint.toggle': 'Session change timeline',
+  'checkpoint.toggleCount': 'Session change timeline ({count} turns)',
+  'checkpoint.regionAria': 'Session change timeline',
+  'checkpoint.loading': 'Loading turn list…',
+  'checkpoint.empty': 'No recorded turn changes for the current session yet.',
+  'checkpoint.turn': 'Turn {turn}',
+  'checkpoint.fileCount': '{count} file(s)',
+  'checkpoint.turnUnavailable': 'The change record for this turn is unavailable (records do not survive a Host restart or session disposal).',
+  'checkpoint.restore': 'Restore this turn',
+  'checkpoint.restore.running': 'Restoring…',
+  'checkpoint.restore.title': 'Restore this turn\'s files?',
+  'checkpoint.restore.message': 'The {count} file(s) of turn {turn} will be restored to their content before that turn started; this cannot be undone automatically.',
+  'checkpoint.restore.applied': 'Restored {count} file(s) to their pre-turn content.',
+  'checkpoint.restore.partial': 'Restored {applied} file(s); {failed} failed — files changed again after the turn could not be applied; applied files are not rolled back.',
+  'checkpoint.diffLoading': 'Loading diff…',
+  'checkpoint.reason.completed': 'Completed',
+  'checkpoint.reason.aborted': 'Aborted',
+  'checkpoint.reason.blocked': 'Blocked',
+  'checkpoint.reason.error': 'Error',
+  'checkpoint.reason.maxTokens': 'Token ceiling',
+  'checkpoint.reason.interrupted': 'Interrupted',
+  'checkpoint.reason.forked': 'Forked',
+  'checkpoint.expandAria': 'Expand the file list of turn {turn}',
+  'checkpoint.collapseAria': 'Collapse the file list of turn {turn}',
+  'checkpoint.filterAria': 'Filter the change list by attribution',
+  'checkpoint.filter.all': 'All',
+  'checkpoint.filter.empty': 'No change files match this attribution filter.',
+  'checkpoint.attribution.agent': 'agent',
+  'checkpoint.attribution.user': 'user',
+  'checkpoint.attribution.mixed': 'mixed',
+  'checkpoint.attribution.unknown': 'unknown',
+  'checkpoint.attribution.agentTip': 'Changed by the agent in turn(s) {turns}',
+  'checkpoint.attribution.userTip': 'No recorded turn touched this file.',
+  'checkpoint.attribution.mixedTip': 'Changed in a recorded turn and again after it ended.',
+  'checkpoint.attribution.unknownTip': 'Turns from before the Host restart carry no change records; attribution is unavailable.',
   // ── common ──
   'common.retry': 'Retry',
   'common.details': 'Details',

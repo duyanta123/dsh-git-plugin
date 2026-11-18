@@ -51,23 +51,39 @@ export interface GitSessionHeaderFace {
   delegationDepth?: number
 }
 
-/** 本插件感知的最小会话对象（只读头 + 身份形状）。 */
+/** 本插件感知的最小会话对象（只读头 + 身份形状；v3 批次四 += id——session-watch 索引键，批次五 auto-branch 亦消费）。 */
 export interface GitSessionFace {
+  /** 会话身份（dsh `Session.id`——branded string 的运行时形态即 string）。 */
+  readonly id: string
   readonly header: GitSessionHeaderFace
 }
 
-/** 本插件感知的最小会话事件（`session/event` 回调第二参）。 */
+/**
+ * 本插件感知的最小会话事件（`session/event` 回调第二参）。v3 批次四扩投影
+ * `seq`/`time`/`data`——字段名已按 dsh 树 rc.2 `createAppendEvent` 冻结形状核实
+ * （`{ type, seq, time: Date.now(), data, ...surface }`，core/session/src/index.ts:540）。
+ * 三字段**可选**：0.2.1-rc.5 声明下限上的同形性未实证（plan §6.9 残余风险）——
+ * 消费方（session-watch.ts）以运行时守卫窄化，字段缺席按降级跳过，不炸监听。
+ */
 export interface GitSessionEventFace {
   readonly type: string
+  /** 事件的会话内序列号（`workspace/changes` 记录取回键）。 */
+  readonly seq?: number
+  /** 事件产生时刻（host epoch 毫秒）。 */
+  readonly time?: number
+  /** 事件载荷（`workspace/changes` = `{ turn }`；`turn/end` = `{ turn, reason }`）。 */
+  readonly data?: unknown
 }
 
 /**
- * 宿主事件面切片：`ctx.on('session/event', listener)`。
+ * 宿主事件面切片：`ctx.on('session/event', listener)` 与 `ctx.on('session/disposed',
+ * listener)`（后者 = workspace-changes src/index.ts:154 同款清理时机）。
  * cordis Context 的结构子集——本包不声明 `@deepseek-ai/dsh-session` 依赖，
  * 运行时对象由宿主提供（同 git-runner.ts 的 SubprocessFace 先例）。
  */
 export interface GitSessionEventHost {
   on(event: 'session/event', listener: (session: GitSessionFace, event: GitSessionEventFace) => void): unknown
+  on(event: 'session/disposed', listener: (session: GitSessionFace) => void): unknown
 }
 
 /**

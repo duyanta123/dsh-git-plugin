@@ -24,6 +24,13 @@
  * （[51] '/' 菜单贡献——spike 结论 (C)）。服务包名同步加进 package.json 的
  * `dsh.client.inject`（ui-open-in-app 先例）；两个服务的类型面 = commands-face.ts
  * 的结构化局部声明（零 devDependencies——plan §0.4-5 零新增 client 运行期依赖）。
+ *
+ * **V3 批次四（[39][40][41]；v3-implementation-plan §6.6）装配扩面**：`checkpointStore`
+ * （root 作用域，范式 A——timeline 打开折叠区才拉 / attribution 按 revision 一次 /
+ * 回合 diff 槽 seq:index）+ changes tab inject 的 `gitCheckpoint` hook 与
+ * `checkpointEnsureTimeline/EnsureAttribution/LoadDiff` 三动作 + `changesOps`
+ * 的 `checkpointRestore` 写直通（danger 闸与 baseRevision 捕获在组件状态机
+ * checkpoint-view.reduceRestore）。
  */
 
 // 唯一样式导入点（审查报告 §2.2 P2）：side-effect import 经 build-client.mjs 的
@@ -60,6 +67,7 @@ import { gitEn, gitZh, NS } from './locales.js'
 import { createGitPrFace } from './pr-face.js'
 import { createGitRpcClient, mountGitRemote, GATEWAY_UNAVAILABLE } from './remote/mount.js'
 import { createChangesTabStore } from './store/changes-tab-store.js'
+import { createCheckpointStore } from './store/checkpoint-store.js'
 import { createGitBlameStore } from './store/git-blame-store.js'
 import { createGitChangesStore } from './store/git-changes-store.js'
 import { createGitCompareStore } from './store/git-compare-store.js'
@@ -108,6 +116,10 @@ export function apply(ctx: ClientContext): void {
   const graphIntent = createGraphIntentStore()
   const compareStore = createGitCompareStore(rpc, source)
   const blameStore = createGitBlameStore(rpc)
+  // V3 批次四（[39][40][41]；plan §6.6）：检查点/归因缓存——timeline（打开折叠区才拉）
+  // + attribution（按 revision 一次）+ 回合 diff 槽（seq:index，快照冻结不随 revision
+  // 失效）。restore 不走本 store（写直通在 changesOps——状态机在组件半）。
+  const checkpointStore = createCheckpointStore(rpc, source)
   // 提交对话框业务面（④-K）：commit/push/AI 生成/身份/HEAD 预取——header 与变更面板
   // 两个拉起方共享同一闭包（apply 顶层单例，无第二份状态）。
   const commitDialogFace = createCommitDialogFace(rpc)
@@ -128,12 +140,14 @@ export function apply(ctx: ClientContext): void {
     graphStore.reset()
     compareStore.reset()
     blameStore.reset()
+    checkpointStore.reset()
     graphIntent.consume()
   })
   ctx.effect(() => async () => {
     source.dispose()
     changesStore.dispose()
     graphStore.dispose()
+    checkpointStore.dispose()
   }, 'dsh-plugin-git: client data stores')
 
   // ── remote.git 命名空间（④-A 生成产物）挂载；完成后开首代状态流 ──
@@ -206,6 +220,8 @@ export function apply(ctx: ClientContext): void {
           gitChanges: changesStore.store,
           // V2 批次二（[34]）：blame 分片缓存（blame 模式的数据半）。
           gitBlame: blameStore.store,
+          // V3 批次四（[39][40][41]）：检查点/归因缓存（时间线/徽标/筛选的数据半）。
+          gitCheckpoint: checkpointStore.store,
         },
         loadDiff: (scope, path) => { void changesStore.loadDiff(scope, path) },
         stage: (paths) => { void changesStore.stage(paths) },
@@ -223,6 +239,12 @@ export function apply(ctx: ClientContext): void {
         },
         // V2 批次三：hunk/行级勾选的 stagePatch / stash 面板 / CRLF 提示条数据面。
         changesOps,
+        // V3 批次四（[39][40][41]）：时间线/归因按需拉取 + 回合 diff 懒加载（restore
+        // 写半在 changesOps.checkpointRestore——组件状态机承接闸与基线）。
+        checkpointEnsureTimeline: () => { void checkpointStore.ensureTimeline() },
+        checkpointEnsureAttribution: () => { void checkpointStore.ensureAttribution() },
+        // sessionId 随行（wire 判别半——多会话 seq 碰撞防歧义，批次四评审收口）。
+        checkpointLoadDiff: (seq, index, sessionId) => { void checkpointStore.loadDiff(seq, index, sessionId) },
       }),
     }, GitChangesTab)
     yield ctx.slots.register({

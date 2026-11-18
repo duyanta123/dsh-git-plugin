@@ -1824,6 +1824,111 @@
   --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
 }
 
+/* ── merge / rebase 对话框（V3 批次二 [28][29]）：branch picker + ff 三态单选 /
+   onto 输入 + danger 恒档勾选闸（骨架复用 push picker 与 reset modes 形态）── */
+.dsh-git-merge-dialog,
+.dsh-git-rebase-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--dsw-font-family);
+}
+
+.dsh-git-merge-dialog__current,
+.dsh-git-rebase-dialog__current {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-merge-dialog__field,
+.dsh-git-rebase-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-merge-dialog__field-label,
+.dsh-git-rebase-dialog__field-label {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-merge-dialog__picker,
+.dsh-git-rebase-dialog__picker {
+  justify-content: flex-start;
+  text-align: left;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-s-14-font-size);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-merge-dialog__picker:disabled,
+.dsh-git-rebase-dialog__picker:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.dsh-git-merge-dialog__modes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-merge-dialog__mode {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 4px 10px;
+  text-align: left;
+}
+
+.dsh-git-merge-dialog__mode[aria-checked='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-merge-dialog__message,
+.dsh-git-rebase-dialog__onto {
+  min-width: 0;
+}
+
+.dsh-git-merge-dialog__danger-note {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-rebase-dialog__rewrite-note {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-merge-dialog__checkbox,
+.dsh-git-rebase-dialog__checkbox {
+  font-size: var(--dsw-font-s-14-font-size);
+}
+
+/* danger 确认按钮：GitConfirmDialog/reset 对话框同款 token 覆写（恒档——合并提交
+   对外可见 / 变基重写历史）。 */
+.dsh-git-merge-dialog__confirm[data-git-merge-danger],
+.dsh-git-rebase-dialog__confirm[data-git-rebase-danger] {
+  --dsw-alias-button-primary-fill: var(--dsw-alias-state-error-primary);
+  --dsw-alias-button-primary-hover: var(--dsw-alias-state-error-primary);
+}
+
 /* ── 提交行菜单锚（[37]）：详情面板头部的动作按钮（Menu 浮层本体在原语）── */
 .dsh-git-graph-detail__actions {
   flex: none;
@@ -2117,6 +2222,271 @@
   margin: 0;
   color: var(--dsw-alias-label-tertiary);
   font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+/* ── V3 批次一：变更 tab 冲突条 + 冲突解决面板（[13]；v3-implementation-plan §3.7）── */
+.dsh-git-changes__conflict-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dsh-git-changes__conflict-toggle {
+  align-self: flex-start;
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-state-warn-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 2px 10px;
+}
+
+.dsh-git-changes__conflict-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-changes__conflict-op {
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  padding: 8px 10px;
+}
+
+.dsh-git-conflict__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dsh-git-conflict__title {
+  margin: 0;
+  font-size: var(--dsw-font-xs-13-font-size);
+  font-weight: 600;
+}
+
+.dsh-git-conflict__close {
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-conflict__close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-conflict__status {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dsh-git-conflict__item {
+  min-width: 0;
+}
+
+.dsh-git-conflict__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.dsh-git-conflict__row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-conflict__row[aria-pressed='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-git-conflict__code {
+  flex: none;
+  border: 0.5px solid var(--dsw-alias-state-warn-primary);
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0 4px;
+}
+
+.dsh-git-conflict__kind {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-git-conflict__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dsh-git-conflict__side,
+.dsh-git-conflict__dd,
+.dsh-git-conflict__mark {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 1px 8px;
+}
+
+.dsh-git-conflict__side:hover,
+.dsh-git-conflict__dd:hover,
+.dsh-git-conflict__mark:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-conflict__side:disabled,
+.dsh-git-conflict__dd:disabled,
+.dsh-git-conflict__mark:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dsh-git-conflict__dd {
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-git-conflict__dd-hint {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict__partial {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict__continue-hint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-conflict__action-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dsh-git-conflict__error-dismiss {
+  align-self: flex-end;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xxs-12-font-size);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+
+.dsh-git-conflict__error-dismiss:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-conflict__footer {
+  display: flex;
+  gap: 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
+.dsh-git-conflict__continue {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 3px 12px;
+}
+
+.dsh-git-conflict__continue:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-conflict__continue:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dsh-git-conflict__abort {
+  border: 0.5px solid var(--dsw-alias-state-error-primary);
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary);
+  font: inherit;
+  font-size: var(--dsw-font-xs-13-font-size);
+  cursor: pointer;
+  padding: 3px 12px;
+}
+
+.dsh-git-conflict__abort:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-git-conflict__abort:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* ── V2 批次三：GitCommitDialog 三块扩展（plan §5.6 ②）── */
@@ -2512,4 +2882,229 @@
 .dsh-git-submodule-panel__hint {
   color: var(--dsw-alias-state-error-primary);
   font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+/* ── V3 批次四（[39][40][41]；v3-implementation-plan §6.6）：会话改动时间线折叠区 +
+      文件卡片归因徽标（全部走 --dsw-* 设计 token——git.css 纪律）── */
+
+.dsh-git-changes__checkpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 10px;
+}
+
+.dsh-git-changes__checkpoint-toggle {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0;
+  cursor: pointer;
+}
+
+.dsh-git-changes__checkpoint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dsh-git-changes__checkpoint-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dsh-git-changes__checkpoint-filter-option {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.dsh-git-changes__checkpoint-filter-option[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-selected, var(--dsw-alias-border-l2));
+}
+
+.dsh-git-changes__checkpoint-status {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__checkpoint-error,
+.dsh-git-changes__checkpoint-diff-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-changes__checkpoint-retry,
+.dsh-git-changes__checkpoint-diff-retry {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0;
+  cursor: pointer;
+}
+
+.dsh-git-changes__checkpoint-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dsh-git-changes__checkpoint-turn-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dsh-git-changes__checkpoint-turn-time,
+.dsh-git-changes__checkpoint-turn-count {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-changes__checkpoint-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  padding-left: 8px;
+}
+
+.dsh-git-changes__checkpoint-unavailable {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__checkpoint-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dsh-git-changes__checkpoint-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-markdown-code-font-family);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dsh-git-changes__checkpoint-file-path {
+  word-break: break-all;
+}
+
+.dsh-git-changes__checkpoint-file-counts {
+  flex-shrink: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-changes__checkpoint-diff {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  padding: 6px;
+}
+
+.dsh-git-changes__checkpoint-diff-status {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__checkpoint-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dsh-git-changes__checkpoint-restore {
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: none;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.dsh-git-changes__checkpoint-restore:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.dsh-git-changes__checkpoint-restore-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dsh-git-changes__checkpoint-restore-note {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+}
+
+.dsh-git-changes__checkpoint-restore-failed {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  word-break: break-all;
+}
+
+.dsh-git-changes__checkpoint-restore-dismiss {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--dsw-font-xxs-12-font-size);
+  padding: 0;
+  cursor: pointer;
+}
+
+/* 文件卡片归因徽标（[40] 四态——data-git-change-attribution 区分；仅上色不加语义）。 */
+.dsh-git-change-card__attribution[data-git-change-attribution='agent'] {
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-git-change-card__attribution[data-git-change-attribution='user'] {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-git-change-card__attribution[data-git-change-attribution='mixed'] {
+  color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-secondary));
+}
+
+.dsh-git-change-card__attribution[data-git-change-attribution='unknown'] {
+  color: var(--dsw-alias-label-secondary);
+  opacity: 0.7;
 }

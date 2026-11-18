@@ -241,6 +241,66 @@ class FakeRpc implements GitRpcFace {
     throw new Error('FakeRpc.prForBranch must not be called by the source')
   }
 
+  // V3 批次一冲突解决 4 方法（conflictList/conflictResolve/conflictMarkResolved/
+  // operationContinue）——状态源不消费；断言守卫桩（FakeRpc.status 同款）。
+  async conflictList(): Promise<never> {
+    throw new Error('FakeRpc.conflictList must not be called by the source')
+  }
+
+  async conflictResolve(): Promise<never> {
+    throw new Error('FakeRpc.conflictResolve must not be called by the source')
+  }
+
+  async conflictMarkResolved(): Promise<never> {
+    throw new Error('FakeRpc.conflictMarkResolved must not be called by the source')
+  }
+
+  async operationContinue(): Promise<never> {
+    throw new Error('FakeRpc.operationContinue must not be called by the source')
+  }
+
+  // V3 批次二 merge / rebase 2 方法（branchMerge/rebase）——状态源不消费；断言守卫桩
+  // （FakeRpc.status 同款）。
+  async branchMerge(): Promise<never> {
+    throw new Error('FakeRpc.branchMerge must not be called by the source')
+  }
+
+  async rebase(): Promise<never> {
+    throw new Error('FakeRpc.rebase must not be called by the source')
+  }
+
+  // V3 批次三 Agent 工具观测面（agentToolsStatus）——状态源不消费；断言守卫桩
+  // （FakeRpc.status 同款）。
+  async agentToolsStatus(): Promise<never> {
+    throw new Error('FakeRpc.agentToolsStatus must not be called by the source')
+  }
+
+  // V3 批次四检查点/归因面（checkpointList/checkpointDiff/checkpointRestore/
+  // attributionGet）——状态源不消费；断言守卫桩（GitRpcFace 方法对账的面补齐，
+  // v3-implementation-plan §6.3）。
+  async checkpointList(): Promise<never> {
+    throw new Error('FakeRpc.checkpointList must not be called by the source')
+  }
+
+  async checkpointDiff(): Promise<never> {
+    throw new Error('FakeRpc.checkpointDiff must not be called by the source')
+  }
+
+  async checkpointRestore(): Promise<never> {
+    throw new Error('FakeRpc.checkpointRestore must not be called by the source')
+  }
+
+  async attributionGet(): Promise<never> {
+    throw new Error('FakeRpc.attributionGet must not be called by the source')
+  }
+
+  // V3 批次五自动化观测面（automationStatus）——状态源不消费（header 菜单状态行走
+  // admin-face 直通）；断言守卫桩（GitRpcFace 方法对账的面补齐，
+  // v3-implementation-plan §7.3）。
+  async automationStatus(): Promise<never> {
+    throw new Error('FakeRpc.automationStatus must not be called by the source')
+  }
+
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
     this.gate = new Promise<void>((resolve) => { this.openGate = resolve })

@@ -126,13 +126,14 @@ describe('headerViewModel — C1 渲染决策', () => {
 })
 
 describe('headerMenuItems — V2 批次一菜单模型（同步占位转真 + 管理面扩行）', () => {
-  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行 + 批次二两新行 + 批次四创建 PR 行全部可点', () => {
+  it('仓库可用时：v1 的 sync 占位消失，推送/拉取/获取三真行 + 管理面扩行 + 批次二两新行 + 批次四创建 PR 行 + V3 批次二 merge/rebase 两行全部可点', () => {
     const view = headerViewModel(mkState({ status: mkSnapshot() }))
     const items = headerMenuItems(view)
     expect(items.map((item) => item.id)).toEqual([
       'open-changes', 'open-graph', 'commit', 'commit-push',
       'push', 'pull', 'fetch',
-      'branches', 'branch-compare', 'branch-reset', 'branch-create', 'tag-create', 'worktree',
+      'branches', 'branch-compare', 'branch-reset', 'branch-merge', 'branch-rebase',
+      'branch-create', 'tag-create', 'worktree',
       'pr-create', 'branch-delete',
     ])
     expect(items.every((item) => item.enabled)).toBe(true)

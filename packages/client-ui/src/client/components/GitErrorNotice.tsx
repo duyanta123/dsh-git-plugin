@@ -15,13 +15,15 @@ import type { GitErrorLike } from '../remote/mount.js'
 import type { ErrorAction } from '../error-map.js'
 import { errorNoticeView } from '../error-map.js'
 
-/** 动作按钮的词典键（error.action.* 组；V2 批次二 + abort——merge-conflict 面板）。 */
-const ACTION_KEYS: Record<ErrorAction, 'error.action.setUpstream' | 'error.action.fetch' | 'error.action.pull' | 'error.action.abort' | 'common.retry'> = {
+/** 动作按钮的词典键（error.action.* 组；V2 批次二 + abort——merge-conflict 面板；
+ *  V3 批次一 + resolve——merge-conflict 面板的「解决冲突…」入口）。 */
+const ACTION_KEYS: Record<ErrorAction, 'error.action.setUpstream' | 'error.action.fetch' | 'error.action.pull' | 'error.action.abort' | 'error.action.resolve' | 'common.retry'> = {
   retry: 'common.retry',
   'set-upstream': 'error.action.setUpstream',
   fetch: 'error.action.fetch',
   pull: 'error.action.pull',
   abort: 'error.action.abort',
+  resolve: 'error.action.resolve',
 }
 
 export interface GitErrorNoticeProps {

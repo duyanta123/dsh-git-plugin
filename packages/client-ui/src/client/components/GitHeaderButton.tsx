@@ -32,22 +32,48 @@
  *     失败静默不占位；菜单行是 button 不可嵌 anchor，链接打开面在推送对话框与
  *     PR 对话框的成功 URL）；
  *   - GitPushDialog 增 prFace（[69] 关联 anchor）与推送成功态「创建 PR…」引导。
+ *
+ * **V3 批次二（v3-implementation-plan §4.6）扩面**：
+ *   - 「合并到当前分支…」行（[28]）→ GitMergeDialog（branch picker + ff 三态单选 +
+ *     no-ff 时 message 编辑 + danger 恒档确认——合并提交是对外可见动作）；
+ *   - 「变基到…」行（[29]）→ GitRebaseDialog（upstream picker + onto 可选 + danger
+ *     恒档确认——重写历史语义文案明示）；冲突路径零新 UI（git/merge-conflict 错误
+ *     面板既有 abort/resolve 动作 + 变更 tab 冲突面板——op 徽标显示 merge/rebase）。
+ *
+ * **V3 批次三（v3-implementation-plan §5.7）扩面**：header 菜单「Agent 工具」状态行
+ * （[45]）——菜单开着即拉 admin.agentToolsStatus()（每次开菜单重取防陈旧），只读
+ * 展示无操作面（工具启停在 profile 配置层）；off（含 face 缺失降级档）显示关闭、
+ * on 显示 'readonly (N tools)' 形态。拉取失败/未拉取整行缺席（观测行不进错误卡
+ * 语义）；a11y 沿 P3-9 锚标准——原语 Menu label 行 role=presentation（非交互行不入
+ * menuitem 键盘走查），稳定行 id 'dsh-git-menu-agent-tools' 供组合断言。
+ *
+ * **V3 批次五（v3-implementation-plan §7.5）扩面**：header 菜单「自动化」状态行
+ * （[42][43]）——菜单开着即拉 admin.automationStatus()（Agent 工具观测态同款重取
+ * 防陈旧），只读观测无操作面（启停在 profile 配置层）。两行：开关态行（两模式档位
+ * 字面量——全 off 收敛单行「关闭」）+ 最近动作摘要行（lastActions 首条——host
+ * newest-first 环；空环整行缺席）。**tooltip 注记**：原语 MenuEntry 无 tooltip 通道
+ * （Menu.d.ts MenuLabel 只有 {type,id,text}；编译面 label 行 role=presentation 直出
+ * text，无 title 透传）——「最近动作摘要」以相邻 label 行落地（同 a11y 类：非交互
+ * 不入键盘走查），不引原语 children 自绘行（原语 children 契约 = role=menuitem
+ * 按钮行）。拉取失败整组缺席（观测行不进错误卡语义）；a11y 同 P3-9 锚标准——
+ * 稳定行 id 'dsh-git-menu-automation' / 'dsh-git-menu-automation-latest' 供组合断言。
  */
 
 import { useEffect, useState } from 'react'
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry, MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RefInfo } from 'dsh-gitkit/types'
+import type { AgentToolsStatusResult, AutomationStatusResult, RefInfo } from 'dsh-gitkit/types'
 import type { GitAdminFace } from '../admin-face.js'
 import { pushRoute } from '../admin-face.js'
+import { agentToolsStatusLine, automationStatusLines } from '../admin-view-model.js'
 import type { GitChangesOpsFace } from '../changes-ops-face.js'
 import type { GitPrFace } from '../pr-face.js'
 import { prLinkView } from '../pr-view-model.js'
 import type { HeaderMenuId, HeaderSubmenuEntry } from '../ui-model.js'
 import {
-  branchCompareEntries, branchDeleteEntries, branchResetEntries, branchSubmenuEntries,
-  headerMenuItems, headerViewModel,
+  branchCompareEntries, branchDeleteEntries, branchPickerEntries, branchResetEntries,
+  branchSubmenuEntries, headerMenuItems, headerViewModel,
 } from '../ui-model.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
@@ -56,8 +82,10 @@ import { GitCommitDialog } from './GitCommitDialog.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+import { GitMergeDialog } from './GitMergeDialog.js'
 import { GitPrDialog } from './GitPrDialog.js'
 import { GitPushDialog } from './GitPushDialog.js'
+import { GitRebaseDialog } from './GitRebaseDialog.js'
 import { GitResetDialog } from './GitResetDialog.js'
 import { GitTagCreateDialog } from './GitTagCreateDialog.js'
 import { GitWorktreeDialog } from './GitWorktreeDialog.js'
@@ -129,10 +157,17 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const [deleteAsk, setDeleteAsk] = useState<string | null>(null)
   // ── V2 批次二：reset 目标意图（[37]——soft/mixed/hard 与 hard danger 闸在对话框内）──
   const [resetAsk, setResetAsk] = useState<string | null>(null)
+  // ── V3 批次二：merge / rebase 对话框意图（[28]/[29]——picker/三态/danger 闸在对话框内）──
+  const [mergeIntent, setMergeIntent] = useState(false)
+  const [rebaseIntent, setRebaseIntent] = useState(false)
   // ── V2 批次四：创建 PR 对话框意图（[46]）+ [69] 分支关联 PR 徽标数据 ──
   const [prIntent, setPrIntent] = useState(false)
   const [prNumbers, setPrNumbers] = useState<Readonly<Record<string, number | null>>>({})
   const [branchList, setBranchList] = useState<readonly RefInfo[]>([])
+  // ── V3 批次三：Agent 工具观测态（[45]——null = 未拉取/拉取失败，状态行缺席）──
+  const [agentTools, setAgentTools] = useState<AgentToolsStatusResult | null>(null)
+  // ── V3 批次五：自动化观测态（[42][43]——null = 未拉取/拉取失败，状态行组缺席）──
+  const [automation, setAutomation] = useState<AutomationStatusResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
 
@@ -167,6 +202,32 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     })
     return () => { cancelled = true }
   }, [open, admin, pr])
+
+  // V3 批次三（[45]；plan §5.7）：菜单开着即拉 Agent 工具观测态（每次开菜单重取防
+  // 陈旧——Config.agentTools 是 fiber 构造期定值，重取主要覆盖 face 降级态漂移）。
+  // 失败静默降级：状态行整行缺席——观测行不进错误卡语义（错误卡是动作面）。
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void admin.agentToolsStatus().then((result) => {
+      if (cancelled) return
+      setAgentTools(result.ok ? result.value : null)
+    })
+    return () => { cancelled = true }
+  }, [open, admin])
+
+  // V3 批次五（[42][43]；plan §7.5）：菜单开着即拉自动化观测态（Agent 工具观测态
+  // 同款重取防陈旧——重取覆盖自动化动作环推进）。失败静默降级：状态行组整组缺席
+  // （观测行不进错误卡语义）。
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void admin.automationStatus().then((result) => {
+      if (cancelled) return
+      setAutomation(result.ok ? result.value : null)
+    })
+    return () => { cancelled = true }
+  }, [open, admin])
 
   /** 菜单直跑动作的错误折叠 + busy 闸（防双击重入）。 */
   const runAdmin = async (task: AdminTask): Promise<void> => {
@@ -250,6 +311,10 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     } else if (id === 'branch-create') setBranchCreateIntent(true)
     else if (id === 'tag-create') setTagCreateIntent(true)
     else if (id === 'worktree') setWorktreeIntent(true)
+    // V3 批次二（[28]/[29]）：merge / rebase 对话框拉起（branch/upstream picker 在
+    // 对话框内——直拉形，branch-create/tag-create/worktree 同款）。
+    else if (id === 'branch-merge') setMergeIntent(true)
+    else if (id === 'branch-rebase') setRebaseIntent(true)
     // branches / branch-delete：子菜单行本身不触发动作（原语只展开子菜单）。
   }
 
@@ -278,6 +343,12 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   }
 
   const label = t(view.labelKey, view.params)
+  // V3 批次三（[45]；plan §5.7）：状态行渲染模型（off/降级档 ⇒ 关闭行；on ⇒
+  // 'readonly (N tools)' 形态；null ⇒ 整行缺席）。
+  const agentToolsLine = agentToolsStatusLine(agentTools)
+  // V3 批次五（[42][43]；plan §7.5）：自动化状态行渲染模型（null ⇒ 开关态行与摘要
+  // 行整组缺席；latest = lastActions 首条——空环摘要行缺席）。
+  const automationLines = automationStatusLines(automation)
   // ── 菜单面（原语 Menu）：摘要/冲突 label 行 + 数据行（子菜单挂 branches /
   // branch-compare / branch-reset / branch-delete 四行；无可选分支时整行禁用）+
   // 页脚 label 行。
@@ -291,6 +362,8 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const deleteEntries = branchDeleteEntries({ branches: branchList, headName })
   const compareEntries = branchCompareEntries({ branches: branchList, headName })
   const resetEntries = branchResetEntries({ branches: branchList, headName })
+  // V3 批次二：merge/rebase 两行的候选清单（对话框内 picker 的同源数据；无候选整行禁用）。
+  const pickerEntries = branchPickerEntries({ branches: branchList, headName })
   const menuEntries: MenuEntry[] = [
     {
       type: 'label' as const,
@@ -304,6 +377,38 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
           type: 'label' as const,
           id: 'dsh-git-menu-conflicts',
           text: t('problems.conflicted', { count: view.conflicted }),
+        }]
+      : []),
+    // V3 批次三（[45]；plan §5.7）：「Agent 工具」状态行——只读展示，无操作面
+    // （工具启停在 profile 配置层）。原语 Menu label 行 = role=presentation 非交互
+    // 行（P3-9 锚标准：不入 menuitem 键盘走查；稳定 id 供组合断言）。
+    ...(agentToolsLine !== null
+      ? [{
+          type: 'label' as const,
+          id: 'dsh-git-menu-agent-tools',
+          text: t(agentToolsLine.labelKey, agentToolsLine.params),
+        }]
+      : []),
+    // V3 批次五（[42][43]；plan §7.5）：「自动化」状态行组——开关态行 + 最近动作
+    // 摘要行（lastActions 首条）。只读观测无操作面（启停在 profile 配置层）；原语
+    // MenuEntry 无 tooltip 通道，摘要以相邻 label 行落地（同 P3-9 非交互行，不入
+    // 键盘走查；稳定 id 供组合断言）。
+    ...(automationLines !== null
+      ? [{
+          type: 'label' as const,
+          id: 'dsh-git-menu-automation',
+          text: t(automationLines.status.labelKey, automationLines.status.params),
+        }]
+      : []),
+    ...(automationLines !== null && automationLines.latest !== null
+      ? [{
+          type: 'label' as const,
+          id: 'dsh-git-menu-automation-latest',
+          text: t('automation.status.latest', {
+            kind: t(automationLines.latest.kindKey),
+            outcome: t(automationLines.latest.ok ? 'automation.action.ok' : 'automation.action.fail'),
+            detail: automationLines.latest.detail,
+          }),
         }]
       : []),
     ...menu.map((item) => {
@@ -324,6 +429,14 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
       }
       if (item.id === 'branch-reset') {
         return { ...base, disabled: !item.enabled || resetEntries.length === 0, ...(resetEntries.length > 0 ? { submenu: resetEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
+      }
+      // V3 批次二（[28]/[29]）：merge/rebase 直拉行——无可选分支（无当前分支或只有
+      // 当前分支）整行禁用（branch-compare/reset 的「空清单禁用」同口径）。
+      if (item.id === 'branch-merge') {
+        return { ...base, disabled: !item.enabled || pickerEntries.length === 0 }
+      }
+      if (item.id === 'branch-rebase') {
+        return { ...base, disabled: !item.enabled || pickerEntries.length === 0 }
       }
       if (item.id === 'branch-delete') {
         return { ...base, disabled: !item.enabled || deleteEntries.length === 0, ...(deleteEntries.length > 0 ? { submenu: deleteEntries.map((entry) => toSubmenuItem(entry, t)) } : {}) }
@@ -462,6 +575,36 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
         face={admin}
         onDone={() => { refresh() }}
         onClose={() => { setResetAsk(null) }}
+      />
+      {/* V3 批次二 [28]/[29]：merge / rebase 对话框（branch/upstream picker + ff 三态
+          / onto + danger 恒档闸在对话框内；成功 → refresh()——HEAD 变更 → R5 manual
+          帧 → status/graph 重载链路，plan §4.6 keepMounted 回归）。冲突路径零新 UI：
+          git/merge-conflict 错误面板既有 abort/resolve 动作路由。 */}
+      <GitMergeDialog
+        open={mergeIntent}
+        t={t}
+        face={admin}
+        headName={headName}
+        headOid={branch?.oid ?? null}
+        branches={branchList}
+        onDone={() => {
+          setMergeIntent(false)
+          refresh()
+        }}
+        onClose={() => { setMergeIntent(false) }}
+      />
+      <GitRebaseDialog
+        open={rebaseIntent}
+        t={t}
+        face={admin}
+        headName={headName}
+        headOid={branch?.oid ?? null}
+        branches={branchList}
+        onDone={() => {
+          setRebaseIntent(false)
+          refresh()
+        }}
+        onClose={() => { setRebaseIntent(false) }}
       />
     </div>
   )

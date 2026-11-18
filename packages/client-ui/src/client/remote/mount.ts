@@ -58,20 +58,73 @@
  * auditLog 为 [66] 的 RPC 查询半（本插件无专属 UI——plan §6.6，client 面只保方法
  * 对账不消费）。[70]（合并策略约定段）在 host generatePrDescription 的 prompt 组装，
  * client 无落点。
+ *
+ * **V3 批次一（冲突解决，[清单 13]，2026-11-12）扩展**：host conflicts.ts 模块的
+ * 4 个新 @Remote 方法（conflictList/conflictResolve/conflictMarkResolved/
+ * operationContinue）同款四处同步（v3-implementation-plan §3.2/§3.3；wire 类型 =
+ * host types.ts v3 批次一段，import 面 `dsh-gitkit/types`）。语义注记：
+ * operationContinue 的**冲突是返回值不是错误**（done:false + conflicted——client
+ * 循环驱动需要，plan §3.2）；conflictResolve/conflictMarkResolved 的路径守卫 =
+ * `git/bad-request` reason 'path-not-conflicted'（复用既有 error.bad-request 插值，
+ * error-map 不加行）。
+ *
+ * **V3 批次二（merge / rebase，[清单 28/29]，2026-11-13）扩展**：host merge-rebase.ts
+ * 模块的 2 个新 @Remote 方法（branchMerge/rebase）同款四处同步（v3-implementation-plan
+ * §4.2/§4.3；wire 类型 = host types.ts v3 批次二段，import 面 `dsh-gitkit/types`）。
+ * 语义注记：branchMerge 的 `fastForward` 三态（'auto'/'ff-only'/'no-ff'——ff 场景
+ * newOid=目标 oid、fastForward=true；up-to-date 是幂等成功不是错误）；rebase 的
+ * `done` 恒 true——冲突走 git/merge-conflict 错误路径（op 'merge'|'rebase'），continue
+ * 由批次一 operationContinue 驱动（plan §4.2：rebase 引擎自身不做内循环）。零新域码
+ * （复用 unknown-revision / operation-in-progress / dirty-worktree / merge-conflict /
+ * bad-request——error-map 不加行，plan §4.4）。
+ *
+ * **V3 批次三（Agent 工具观测面，[清单 45]，2026-11-13）扩展**：host agent-tools.ts
+ * 模块的 1 个新 @Remote 方法（agentToolsStatus）同款四处同步（v3-implementation-plan
+ * §5.5；wire 类型 = host types.ts v3 批次三段，import 面 `dsh-gitkit/types`）。
+ * 观测方法只读不入审计环，registered 白名单面 = host agent-tools.ts §5.4 权威表
+ * （off 恒 [] / readonly 8 / readwrite 11）。同批 client 半的 §5.7 header 状态行 UI
+ * 落 admin-face.ts（agentToolsStatus 拉取）+ admin-view-model.ts（agentToolsStatusLine
+ * 渲染模型）+ GitHeaderButton.tsx（菜单 label 行），本文件只保方法对账。
+ *
+ * **V3 批次四（检查点 · 归因 · 聚合，[清单 39/40/41]，2026-11-14）扩展**：host
+ * session-watch.ts/checkpoints.ts 模块的 4 个新 @Remote 方法（checkpointList/
+ * checkpointDiff/checkpointRestore/attributionGet）同款四处同步（v3-implementation-plan
+ * §6.2/§6.3；wire 类型 = host types.ts v3 批次四段，import 面 `dsh-gitkit/types`）。
+ * 语义注记：checkpointList 的 summary = null 如实呈现 workspaceChanges 无记录（Host
+ * 重启/会话处置——DE=A 诚实降级，不伪造）；checkpointRestore 是 danger 写方法
+ * （acknowledged + baseRevision 乐观并发 + 逐文件部分成功语义）；checkpointDiff/
+ * Restore 对无记录 seq 抛 git/checkpoint-unavailable（error-map 新码行）。同批 client
+ * 半的 §6.6 时间线/归因徽标 UI 已落（store/checkpoint-store.ts + checkpoint-view.ts +
+ * components/GitCheckpointTimeline.tsx），本文件只保方法对账。
+ *
+ * **V3 批次五（自动化观测面，[清单 42/43]，2026-11-18）扩展**：host automation.ts
+ * 模块的 1 个新 @Remote 方法（automationStatus）同款四处同步（v3-implementation-plan
+ * §7.3/§7.5；wire 类型 = host types.ts v3 批次五段，import 面 `dsh-gitkit/types`）。
+ * 语义注记：只读观测面（零新域码——自动化失败不抛 RemoteError，结果经 lastActions +
+ * auditLog 双可查，plan §7.4）；lastActions 环 20 条 newest-first，detail = 白名单摘要
+ * （host 侧已单行化/消毒/200 上限——不落消息正文/stderr 原文）。同批 client 半的
+ * §7.5 header「自动化」状态行落 admin-face.ts（拉取面）+ admin-view-model.ts
+ * （automationStatusLines 渲染模型）+ GitHeaderButton.tsx（菜单状态行——无操作面，
+ * 启停在 profile 配置层），本文件只保方法对账。
  */
 
 // 生成产物（勿手编）：运行期 TypertRemoteInfo + declare module 合并（命名空间方法签名）。
 import gitRemote from 'dsh-gitkit/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import type {
-  AbortOperationResult, AuditLogOptions, AuditLogResult, BlameOptions, BlameResult,
+  AbortOperationResult, AgentToolsStatusResult, AttributionResult, AuditLogOptions, AuditLogResult,
+  AutomationStatusResult, BlameOptions, BlameResult,
   BranchCompareResult, BranchCreateOptions, BranchCreateResult, BranchDeleteOptions,
-  BranchDeleteResult, BranchSwitchResult, CherryPickOptions,
-  CommitDetail, CommitOptions, CommitResult, CommitScanResult, CompareOptions, DiffResult, DiffScope,
+  BranchDeleteResult, BranchMergeOptions, BranchMergeResult, BranchSwitchResult, CherryPickOptions,
+  CheckpointDiffOptions, CheckpointFileDiff, CheckpointListResult, CheckpointRestoreOptions, CheckpointRestoreResult,
+  CommitDetail, CommitOptions, CommitResult, CommitScanResult,
+  ConflictListResult, ConflictMarkOptions, ConflictMarkResult, ConflictResolveOptions,
+  ConflictResolveResult, CompareOptions, DiffResult, DiffScope,
   DiscardOptions, DiscardResult, FetchOptions, FetchResult, GeneratedCommitMessage,
   GitFollowCommand, GitIdentityResult, GitIdentityScope, GitPingResult, GitStatusFrame,
-  GitStatusSnapshot, InitResult, LogOptions, LogPage, PrCreateOptions, PrDescription, PrLinkResult,
-  PrResult, PullResult, PushOptions, PushResult, RefsSnapshot,
+  GitStatusSnapshot, InitResult, LogOptions, LogPage, OperationContinueResult,
+  PrCreateOptions, PrDescription, PrLinkResult,
+  PrResult, PullResult, PushOptions, PushResult, RebaseOptions, RebaseResult, RefsSnapshot,
   RemoteListResult, RepoDiagnostics, ResetOptions, RevertOptions, ShowOptions, StagePatchOptions,
   StagePatchResult, StageResult, StashDropOptions, StashListResult, StashOpResult,
   StashPopOptions, StashPushOptions, SubmoduleStatusResult, TagCreateOptions,
@@ -167,6 +220,29 @@ interface GitNamespaceFace {
   generatePrDescription(signal?: AbortSignal): Promise<RemoteResult<PrDescription>>
   createPr(options: PrCreateOptions, signal?: AbortSignal): Promise<RemoteResult<PrResult>>
   prForBranch(branch: string, signal?: AbortSignal): Promise<RemoteResult<PrLinkResult | null>>
+  /** V3 批次一冲突解决切片（host conflicts.ts 模块；v3-implementation-plan §3.3 的 4 方法签名）。
+   *  operationContinue 的冲突是返回值不是错误（done:false + conflicted——plan §3.2）。 */
+  conflictList(signal?: AbortSignal): Promise<RemoteResult<ConflictListResult>>
+  conflictResolve(options: ConflictResolveOptions, signal?: AbortSignal): Promise<RemoteResult<ConflictResolveResult>>
+  conflictMarkResolved(options: ConflictMarkOptions, signal?: AbortSignal): Promise<RemoteResult<ConflictMarkResult>>
+  operationContinue(signal?: AbortSignal): Promise<RemoteResult<OperationContinueResult>>
+  /** V3 批次二 merge / rebase 切片（host merge-rebase.ts 模块；v3-implementation-plan §4.3 的 2 方法签名）。
+   *  branchMerge.up-to-date 与 rebase done:true 都是幂等成功（plan §4.2）；冲突走
+   *  git/merge-conflict 错误路径（op 'merge'|'rebase'），continue 由批次一方法驱动。 */
+  branchMerge(options: BranchMergeOptions, signal?: AbortSignal): Promise<RemoteResult<BranchMergeResult>>
+  rebase(options: RebaseOptions, signal?: AbortSignal): Promise<RemoteResult<RebaseResult>>
+  /** V3 批次三 Agent 工具观测切片（host agent-tools.ts 模块；v3-implementation-plan §5.5）。 */
+  agentToolsStatus(signal?: AbortSignal): Promise<RemoteResult<AgentToolsStatusResult>>
+  /** V3 批次四检查点切片（host session-watch/checkpoints 模块；v3-implementation-plan §6.3 的 4 方法签名）。
+   *  checkpointList 的 summary = null 如实呈现 workspaceChanges 无记录（Host 重启/会话处置——DE=A）。 */
+  checkpointList(limit?: number | null, signal?: AbortSignal): Promise<RemoteResult<CheckpointListResult>>
+  checkpointDiff(options: CheckpointDiffOptions, signal?: AbortSignal): Promise<RemoteResult<CheckpointFileDiff>>
+  checkpointRestore(options: CheckpointRestoreOptions, signal?: AbortSignal): Promise<RemoteResult<CheckpointRestoreResult>>
+  attributionGet(signal?: AbortSignal): Promise<RemoteResult<AttributionResult>>
+  /** V3 批次五自动化观测切片（host automation.ts 模块；v3-implementation-plan §7.3）。
+   *  只读观测面：失败不抛 RemoteError（零新域码——结果经 lastActions 环 + auditLog
+   *  双可查，plan §7.4）。 */
+  automationStatus(signal?: AbortSignal): Promise<RemoteResult<AutomationStatusResult>>
 }
 
 /**
@@ -188,6 +264,16 @@ export const GIT_NAMESPACE_METHODS = [
   'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics',
   // V2 批次四体验集成（host admin-repo/submodule/audit/message-gen/pr；plan §6.3）。
   'initRepository', 'submoduleStatus', 'auditLog', 'generatePrDescription', 'createPr', 'prForBranch',
+  // V3 批次一冲突解决（host conflicts.ts 模块；v3-implementation-plan §3.3）。
+  'conflictList', 'conflictResolve', 'conflictMarkResolved', 'operationContinue',
+  // V3 批次二 merge / rebase（host merge-rebase.ts 模块；v3-implementation-plan §4.3）。
+  'branchMerge', 'rebase',
+  // V3 批次三 Agent 工具观测面（host agent-tools.ts 模块；v3-implementation-plan §5.5）。
+  'agentToolsStatus',
+  // V3 批次四检查点/归因/聚合（host session-watch/checkpoints 模块；v3-implementation-plan §6.3）。
+  'checkpointList', 'checkpointDiff', 'checkpointRestore', 'attributionGet',
+  // V3 批次五自动化观测面（host automation.ts 模块；v3-implementation-plan §7.3）。
+  'automationStatus',
 ] as const
 
 /** 本模块消费的 RPC 面（spec §3.2 GitRpcClient 全量 = host REMOTE_METHODS 镜像；store/组件按切片消费）。 */
@@ -240,6 +326,23 @@ export interface GitRpcFace {
   generatePrDescription(signal?: AbortSignal): Promise<RemoteResult<PrDescription>>
   createPr(options: PrCreateOptions, signal?: AbortSignal): Promise<RemoteResult<PrResult>>
   prForBranch(branch: string, signal?: AbortSignal): Promise<RemoteResult<PrLinkResult | null>>
+  /** V3 批次一冲突解决切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  conflictList(signal?: AbortSignal): Promise<RemoteResult<ConflictListResult>>
+  conflictResolve(options: ConflictResolveOptions, signal?: AbortSignal): Promise<RemoteResult<ConflictResolveResult>>
+  conflictMarkResolved(options: ConflictMarkOptions, signal?: AbortSignal): Promise<RemoteResult<ConflictMarkResult>>
+  operationContinue(signal?: AbortSignal): Promise<RemoteResult<OperationContinueResult>>
+  /** V3 批次二 merge / rebase 切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  branchMerge(options: BranchMergeOptions, signal?: AbortSignal): Promise<RemoteResult<BranchMergeResult>>
+  rebase(options: RebaseOptions, signal?: AbortSignal): Promise<RemoteResult<RebaseResult>>
+  /** V3 批次三 Agent 工具观测切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  agentToolsStatus(signal?: AbortSignal): Promise<RemoteResult<AgentToolsStatusResult>>
+  /** V3 批次四检查点切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  checkpointList(limit?: number | null, signal?: AbortSignal): Promise<RemoteResult<CheckpointListResult>>
+  checkpointDiff(options: CheckpointDiffOptions, signal?: AbortSignal): Promise<RemoteResult<CheckpointFileDiff>>
+  checkpointRestore(options: CheckpointRestoreOptions, signal?: AbortSignal): Promise<RemoteResult<CheckpointRestoreResult>>
+  attributionGet(signal?: AbortSignal): Promise<RemoteResult<AttributionResult>>
+  /** V3 批次五自动化观测切片（与 GitNamespaceFace 同形——store/组件按切片消费）。 */
+  automationStatus(signal?: AbortSignal): Promise<RemoteResult<AutomationStatusResult>>
 }
 
 /** 载波层异常的折叠码（spec §1.0.1：服务未就绪 → gateway/service-unavailable → UI 重试）。 */
@@ -579,6 +682,94 @@ export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>):
     async prForBranch(branch, signal) {
       try {
         return await (await namespace()).prForBranch(branch, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V3 批次一冲突解决（host conflicts.ts 模块；v3-implementation-plan §3.3）──
+    async conflictList(signal) {
+      try {
+        return await (await namespace()).conflictList(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async conflictResolve(options, signal) {
+      try {
+        return await (await namespace()).conflictResolve(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async conflictMarkResolved(options, signal) {
+      try {
+        return await (await namespace()).conflictMarkResolved(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async operationContinue(signal) {
+      try {
+        return await (await namespace()).operationContinue(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V3 批次二 merge / rebase（host merge-rebase.ts 模块；v3-implementation-plan §4.3）──
+    async branchMerge(options, signal) {
+      try {
+        return await (await namespace()).branchMerge(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async rebase(options, signal) {
+      try {
+        return await (await namespace()).rebase(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V3 批次三 Agent 工具观测面（host agent-tools.ts 模块；v3-implementation-plan §5.5）──
+    async agentToolsStatus(signal) {
+      try {
+        return await (await namespace()).agentToolsStatus(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    // ── V3 批次五自动化观测面（host automation.ts 模块；v3-implementation-plan §7.3）──
+    async automationStatus(signal) {
+      try {
+        return await (await namespace()).automationStatus(signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async checkpointList(limit, signal) {
+      try {
+        return await (await namespace()).checkpointList(limit, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async checkpointDiff(options, signal) {
+      try {
+        return await (await namespace()).checkpointDiff(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async checkpointRestore(options, signal) {
+      try {
+        return await (await namespace()).checkpointRestore(options, signal)
+      } catch (cause) {
+        return unavailableResult(cause)
+      }
+    },
+    async attributionGet(signal) {
+      try {
+        return await (await namespace()).attributionGet(signal)
       } catch (cause) {
         return unavailableResult(cause)
       }
