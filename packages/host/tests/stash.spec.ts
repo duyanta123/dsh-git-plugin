@@ -236,7 +236,7 @@ describe('stashPop — 默认与指定序号 + 冲突（[清单 14]）', () => {
     expect(rejection.code).toBe('git/merge-conflict')
     expect(rejection.details.op).toBe('stash-pop')
     expect(rejection.details.conflicted).toEqual(['a.txt'])
-    expect(rejection.details.abortable).toBe(false) // stash-pop 无中间态伪引用
+    expect(rejection.details.abortable).toBe(false) // 场景无中间态：共享 detectOperation 为 null（conflicts.ts 同口径）
     expect(worldUnmerged(repo)).toEqual(rejection.details.conflicted)
     // **git 语义：冲突时 stash 不丢**（world 重读 stash 仍在——§5.10 UI 明示依据）。
     expect(worldStashCount(repo)).toBe(1)

@@ -181,7 +181,16 @@ function normalizeManifestForPublishCompare(manifest) {
     for (const [name, range] of Object.entries(deps)) {
       if (typeof range !== 'string' || !range.startsWith('workspace:')) continue
       const rest = range.slice('workspace:'.length)
-      deps[name] = rest === '*' ? manifest.version : `${rest}${manifest.version}`
+      // pnpm publish 语义（pnpm.io/workspaces）：workspace:* / 裸 workspace: → 精确版本；
+      // workspace:^ / workspace:~ → ^版本 / ~版本；**其余 range 原样保留**（如
+      // workspace:1.2.3 → 1.2.3、workspace:^1.5.0 → ^1.5.0）——此前 `${rest}${version}`
+      // 会把字面量 range 拼成 "1.2.30.3.0"（代码评审修复；当前仓库仅用 workspace:*，
+      // 纯潜伏面）。错配方向 fail-loud（detective 报 MISMATCH），不产生假通过。
+      deps[name] = (rest === '*' || rest === '')
+        ? manifest.version
+        : (rest === '^' || rest === '~')
+          ? `${rest}${manifest.version}`
+          : rest
     }
   }
   return normalized

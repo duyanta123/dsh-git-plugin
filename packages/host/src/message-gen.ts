@@ -77,7 +77,7 @@ import type {
 import { TimeoutReason, deadline } from '@deepseek-ai/dsh-timeout'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { gitError, gitRunError, logFailure, logWrite } from './error-codes.ts'
+import { gitError, gitRunError, logFailure, logWrite, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import { DiffEngine } from './diff.ts'
 import type { GitRunner } from './git-runner.ts'
@@ -829,6 +829,18 @@ export class MessageGenEngine {
     if (result.exitCode === 128 && /does not have any commits yet|bad revision/i.test(result.stderr)) return []
     if (result.exitCode !== 0) {
       throw gitRunError('generatePrDescription(git log)', result.exitCode, result.stderr, result.truncated)
+    }
+    // 截断纪律（error-codes.ts assertGitOk 注/CLAUDE.md「truncated stdout is an error,
+    // never silently parsed」）：截断的 stdout 必须显式报错——record-terminator 守卫只
+    // 兜尾部丢失，首记录截断会产出残缺记录。实际不可达（10 条短记录 vs 8MiB 上限），
+    // 契约一致性兜底。
+    if (result.truncated) {
+      throw gitError('git/git-error', `git generatePrDescription(git log): stdout truncated; refusing to parse (truncation discipline)`, {
+        op: 'generatePrDescription(git log)',
+        exitCode: result.exitCode,
+        stderr: sanitizeStderr(result.stderr),
+        truncated: true,
+      })
     }
     const stdout = result.stdout
     if (stdout === '') return []

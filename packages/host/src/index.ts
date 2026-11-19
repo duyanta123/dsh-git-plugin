@@ -596,8 +596,10 @@ export class GitService extends TypertRemoteService {
     // registerAgentTools 即时尝试 + 'internal/service' 事件跟随 + 宽限期降级 warn
     // （agent-tools.ts 文件头时序注；ctx.tools 结构读取**绝不进 static inject**——
     // 未挂 tools 的部署整个 git 服务拒载是禁区）。写工具的 audit 双出口在工具体内
-    // （引擎层无 audit——agent-tools.ts 文件头审计注）。Config 热更 = 非 volatile
-    // 改动 ⇒ fiber 重载 ⇒ 构造期重挂（plan §5.5 天然满足）。
+    // （引擎层无 audit——agent-tools.ts 文件头审计注）；onWrite = 服务面 afterWrite
+    // （写工具成功后 status 失效 + R3 帧——automation.ts onWrite 同口径，与 RPC 写
+    // 同刷新纪律）。Config 热更 = 非 volatile 改动 ⇒ fiber 重载 ⇒ 构造期重挂
+    // （plan §5.5 天然满足）。
     this.agentToolsState = {
       mode: resolved.agentTools ?? 'off',
       toolsFaceAvailable: false,
@@ -626,6 +628,7 @@ export class GitService extends TypertRemoteService {
           readFace: () => GitService.readAgentToolsFace(ctx),
           logger: this.logger,
           state: this.agentToolsState,
+          onWrite: () => { this.afterWrite() },
         })
         return () => { registration.dispose() }
       })

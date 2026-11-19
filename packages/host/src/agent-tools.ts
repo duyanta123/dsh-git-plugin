@@ -214,6 +214,8 @@ export interface RegisterAgentToolsOptions {
   state: AgentToolsStatusState
   /** 宽限期毫秒（缺省 AGENT_TOOLS_GRACE_MS；测试可缩短）。 */
   graceMs?: number
+  /** 写后刷新回调（index.ts afterWrite——status 缓存作废 + R3 帧；写工具成功后触发，automation.ts onWrite 同口径——写后与 RPC 写同刷新）。 */
+  onWrite?: () => void
 }
 
 /** 注册句柄：dispose = 撤销全部注册与监听（ctx.effect 清理纪律）。 */
@@ -227,12 +229,12 @@ export interface AgentToolsRegistration {
  * plan §5.10）；同层重名同理（事件跟随的重注册先撤销旧面，重名不可能，防御性兜底）。
  */
 export function registerAgentTools(options: RegisterAgentToolsOptions): AgentToolsRegistration {
-  const { mode, blockShellGit, engines, audit, host, logger, state } = options
+  const { mode, blockShellGit, engines, audit, host, logger, state, onWrite } = options
   const graceMs = options.graceMs ?? AGENT_TOOLS_GRACE_MS
   const definitions = mode === 'readwrite'
-    ? buildAgentToolDefinitions(engines, audit)
+    ? buildAgentToolDefinitions(engines, audit, onWrite)
     : mode === 'readonly'
-      ? buildAgentToolDefinitions(engines, audit).filter((definition) => (READONLY_TOOL_NAMES as readonly string[]).includes(definition.name))
+      ? buildAgentToolDefinitions(engines, audit, onWrite).filter((definition) => (READONLY_TOOL_NAMES as readonly string[]).includes(definition.name))
       : []
   let boundFace: GitToolsFace | undefined
   let disposers: Array<() => void> = []
@@ -476,9 +478,11 @@ function makeTool(
 /**
  * 11 工具定义表（声明序 = 注册序 = READONLY_TOOL_NAMES/READWRITE_TOOL_NAMES 断言序）。
  * 每工具：parameters raw JSON Schema（requiredness 落 properties 旁的 required 数组）、
- * execute 直调引擎、失败收敛 `{ok:false,error,message}`。
+ * execute 直调引擎、失败收敛 `{ok:false,error,message}`。三个写工具成功路径尾部触发
+ * `onWrite`（index.ts afterWrite——status 失效 + R3 帧，automation.ts onWrite 同口径；
+ * 失败路径不触发——world 未变，watcher 无需惊动）。
  */
-export function buildAgentToolDefinitions(engines: AgentToolEngines, audit: AuditEngine): GitToolDefinition[] {
+export function buildAgentToolDefinitions(engines: AgentToolEngines, audit: AuditEngine, onWrite?: () => void): GitToolDefinition[] {
   return [
     // ── readonly 8 ──
     makeTool(
@@ -788,6 +792,7 @@ export function buildAgentToolDefinitions(engines: AgentToolEngines, audit: Audi
         try {
           const result = await engines.mutations.stage(args.paths as string[], signal)
           audit.record('git_stage', true, null, Date.now() - startedAt, { pathCount: result.staged })
+          onWrite?.()
           return { ok: true, staged: result.staged }
         } catch (cause) {
           const failure = toolError(cause)
@@ -815,6 +820,7 @@ export function buildAgentToolDefinitions(engines: AgentToolEngines, audit: Audi
         try {
           const result = await engines.mutations.unstage(args.paths as string[], signal)
           audit.record('git_unstage', true, null, Date.now() - startedAt, { pathCount: result.unstaged })
+          onWrite?.()
           return { ok: true, unstaged: result.unstaged }
         } catch (cause) {
           const failure = toolError(cause)
@@ -875,6 +881,7 @@ export function buildAgentToolDefinitions(engines: AgentToolEngines, audit: Audi
             ...(trailers !== undefined && trailers.length > 0 ? { trailers } : {}),
           }, signal)
           audit.record('git_commit', true, null, Date.now() - startedAt, { trailerCount: trailers?.length ?? 0 })
+          onWrite?.()
           return {
             ok: true,
             oid: result.oid,

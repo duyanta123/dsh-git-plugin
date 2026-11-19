@@ -247,8 +247,13 @@ export class RemoteOpsEngine {
     }
 
     // 执行：显式 remote + 全量 refspec（spec §1.5-3 B3；remote/远端分支名取 config
-    // 权威面，upstream 短名拆分回落——不用本地分支名，防本地名 ≠ 上游名推错目标）。
-    const refspec = `refs/heads/${remoteBranch}:refs/heads/${remoteBranch}`
+    // 权威面，upstream 短名拆分回落）。dst 用远端分支名——防本地名 ≠ 上游名推错目标；
+    // **src 必须用本地分支名**（代码评审修复）：src 是本地 ref 的匹配面，沿用远端名会在
+    // 本地名 ≠ 上游名（branch -m 重命名已推分支 / checkout -b X origin/Y / push -u
+    // HEAD:Y 等标准工作流）时匹配不到任何本地 ref，push 必然 'src refspec … does not
+    // match any' 且 throwPushFailure 无该分类、只落笼统 git-error。set-upstream 路径
+    // （上方）src/dst 同用本地名，语义即「上游名 = 本地名」——两路径口径本就不同。
+    const refspec = `refs/heads/${branch}:refs/heads/${remoteBranch}`
     const result = await this.gitNetwork.run(
       ['push', ...(options.force === true ? ['--force'] : []), remote, refspec],
       { cwd: repoRoot, op: 'push', signal: active(signal) },

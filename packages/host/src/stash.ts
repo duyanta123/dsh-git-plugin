@@ -17,8 +17,9 @@
  *   - pop：序号预检（`rev-parse --verify --quiet stash@{N}` exit 1 ⇒ stash-not-found）
  *     → `git stash pop stash@{N}`；应用冲突（输出含 CONFLICT）⇒ `git/merge-conflict`
  *     （op 'stash-pop'；**git 语义冲突时 stash 不丢**——world 可重读 stash list 仍在）；
- *     其余失败 ⇒ git-error 兜底。abortOperation 治愈不了 stash-pop 冲突
- *     （无中间态伪引用），abortable 如实探测（正常 false）。
+ *     其余失败 ⇒ git-error 兜底。abortable = 共享 detectOperation 在场（conflicts.ts
+ *     统一面——error-codes.ts「abortable = 中间态探测在场」契约口径；正常无中间态即
+ *     false，merge/rebase 停滞期 pop 冲突如实报 true——abortOperation 已扩面可治愈该态）。
  *   - drop：acknowledged danger 闸（**零命令**守卫，discard 同款）→ 序号预检 →
  *     `git stash drop stash@{N}`（删除不可恢复——danger 闸的语义依据）。
  *   - 序号合法性：非负整数守卫（bad-request 'invalid-options'）先行，越界在
@@ -30,6 +31,7 @@
  *     墓碑语义承载）。
  */
 
+import { detectOperation } from './conflicts.ts'
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { StatusEngine } from './status.ts'
@@ -247,8 +249,8 @@ export class StashEngine {
 
   /**
    * pop 非零退出 → 域错误映射：输出含 CONFLICT ⇒ git/merge-conflict（op 'stash-pop'，
-   * conflicted = diff-filter=U 回读、abortable = 中间态伪引用如实探测——stash-pop 冲突
-   * 通常无伪引用即 false）；其余 ⇒ git-error 兜底。
+   * conflicted = diff-filter=U -z 回读、abortable = 共享 detectOperation 在场——正常
+   * 无中间态即 false，merge/rebase 停滞期如实报 true）；其余 ⇒ git-error 兜底。
    */
   private async throwStashFailure(
     result: { exitCode: number | null; stdout: string; stderr: string; truncated: boolean },
@@ -258,34 +260,31 @@ export class StashEngine {
   ): Promise<never> {
     if (/CONFLICT/.test(result.stdout) || /CONFLICT/.test(result.stderr)) {
       const conflicted = await this.conflictedPaths(repoRoot, signal)
-      const pseudoHead = await this.detectPseudoHead(repoRoot, signal)
+      // 中间态探测走 conflicts.ts 共享 detectOperation（V3 统一面：rebase 目录 +
+      // CHERRY_PICK/REVERT/MERGE_HEAD 全覆盖——私有双头探测是 1ddaab5 统一前的遗留）。
+      const operation = await detectOperation(repoRoot, this.gitRead, signal)
       throw gitError('git/merge-conflict', `git stash pop: conflict applying the stash; the stash entry is kept (resolve the conflicts or reset)`, {
         op,
         conflicted,
-        abortable: pseudoHead !== null,
+        abortable: operation !== null,
       })
     }
     throw gitRunError('stashPop(git stash pop)', result.exitCode, result.stderr, result.truncated)
   }
 
-  /** 未合并路径回读（`diff --name-only --diff-filter=U`，time-travel.ts 同款）。 */
+  /**
+   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）：**-z 口径**——NUL 分隔、
+   * 路径原样字节不加引号（merge-rebase.ts/time-travel.ts 同款；评审收口补齐——本处是
+   * 1ddaab5「conflicted 回读 -z 口径统一」漏掉的第四处，原行分割口径在 core.quotepath
+   * 缺省下会把非 ASCII 路径 C-引号化，且路径内嵌换行会被拆行）。不 trim——`-z` 输出
+   * 无填充，条目即路径本身（路径尾空格合法）。
+   */
   private async conflictedPaths(repoRoot: string, signal?: AbortSignal): Promise<string[]> {
-    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U'], {
-      cwd: repoRoot, op: 'stash(diff --diff-filter=U)', signal: active(signal),
+    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U', '-z'], {
+      cwd: repoRoot, op: 'stash(diff --diff-filter=U -z)', signal: active(signal),
     })
-    assertGitOk(listing, 'stash(diff --diff-filter=U)')
-    return listing.stdout.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '')
-  }
-
-  /** 中间态伪引用探测（time-travel.ts 同款——abortable 的如实来源）。 */
-  private async detectPseudoHead(repoRoot: string, signal?: AbortSignal): Promise<string | null> {
-    for (const head of ['CHERRY_PICK_HEAD', 'REVERT_HEAD'] as const) {
-      const probed = await this.gitRead.run(['rev-parse', '--verify', '--quiet', head], {
-        cwd: repoRoot, op: `stash(rev-parse --verify ${head})`, signal: active(signal),
-      })
-      if (probed.exitCode === 0) return head
-    }
-    return null
+    assertGitOk(listing, 'stash(diff --diff-filter=U -z)')
+    return listing.stdout.split('\0').filter((entry) => entry !== '')
   }
 
   /** fresh status 扫描（守卫世界读取 + repoRoot；三态 error 就地抛出）。 */

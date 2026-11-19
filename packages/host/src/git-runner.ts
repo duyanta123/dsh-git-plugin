@@ -244,7 +244,8 @@ export function createGitRunners(subprocess: SubprocessFace, config: GitRunnerCo
     readonly: new GitRunner(subprocess, config.gitCommand, {
       timeoutMs: config.fastTimeoutMs, outputMaxBytes: config.outputMaxBytes,
     }, READONLY_PREFIX),
-    // B/C 级轻写：stage/unstage/discard/fetch —— 保留用户 hook 与正常锁
+    // B/C 级轻写：stage/unstage/discard —— 保留用户 hook 与正常锁（fetch 归 network
+    // 档——remote-ops.ts 执行纪律、本文件 network 注与 spec §1.0.2 同口径）
     write: new GitRunner(subprocess, config.gitCommand, {
       timeoutMs: config.fastTimeoutMs, outputMaxBytes: config.outputMaxBytes,
     }, WRITE_PREFIX),
@@ -262,10 +263,14 @@ export function createGitRunners(subprocess: SubprocessFace, config: GitRunnerCo
 /** git 可执行文件解析失败 → git/git-error op='resolve-git'（spec §1.0.7；[清单 54] 的来源）。 */
 function resolveGitFailed(op: string, cause: unknown): RemoteError {
   const reason = cause instanceof Error ? cause.message : cause === undefined ? 'git executable not found' : String(cause)
-  return gitError('git/git-error', `git executable could not be resolved for ${op}: ${reason}`, {
+  // stderr 脱敏纪律（spawn 失败路径同规）：resolve 失败文本可含宿主 shell/路径回显，
+  // 先 sanitizeStderr 再进 message/details——「绕过 sanitizeStderr 调用点的明文通道不留」
+  // 的收口（代码评审修复：此前本路径是唯一明文 stderr 通道）。
+  const clean = sanitizeStderr(reason)
+  return gitError('git/git-error', `git executable could not be resolved for ${op}: ${clean}`, {
     op: 'resolve-git',
     exitCode: null,
-    stderr: reason,
+    stderr: clean,
     truncated: false,
   })
 }

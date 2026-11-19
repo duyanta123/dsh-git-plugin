@@ -81,6 +81,5 @@
   "bugs": {
     "url": "https://github.com/duyanta123/dsh-git-plugin/issues"
   },
-  "homepage": "https://github.com/duyanta123/dsh-git-plugin#readme",
-  "prepack": "pnpm -w run build"
+  "homepage": "https://github.com/duyanta123/dsh-git-plugin#readme"
 }

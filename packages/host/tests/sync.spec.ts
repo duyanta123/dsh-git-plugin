@@ -300,6 +300,32 @@ describe('git.push — 上游三态与 set-upstream（spec §1.5）', () => {
       .toEqual(['push', 'origin', 'refs/heads/main:refs/heads/main'])
   })
 
+  it('normal 路径·本地名 ≠ 上游名：refspec src 用本地分支名、dst 用远端分支名（评审修复——src 沿用远端名会 src-refspec 不匹配，push 必败）', async () => {
+    const world = await makeWorld('normal-push-mismatched')
+    await world.harness.service.push({ setUpstream: true })
+    // 构造异名上游（插件自身建的上游恒同名；branch -m 重命名已推分支 / checkout -b X
+    // origin/Y / push -u HEAD:Y 等标准工作流产生）：裸 git 推 feature → bare 的
+    // feature-work，再落 branch.feature.merge = refs/heads/feature-work；fetch 建
+    // tracking 引用 origin/feature-work（三态 normal 的前提）。
+    git(world.repo, 'switch', '-qc', 'feature')
+    await commitFile(world.repo, 'f.txt', 'feature\n', 'feat: feature')
+    git(world.repo, 'push', '-q', 'origin', 'refs/heads/feature:refs/heads/feature-work')
+    git(world.repo, 'config', 'branch.feature.remote', 'origin')
+    git(world.repo, 'config', 'branch.feature.merge', 'refs/heads/feature-work')
+    git(world.repo, 'fetch', '-q', 'origin')
+    world.harness.record.length = 0
+
+    const result = await world.harness.service.push({ setUpstream: false })
+    expect(result).toEqual({ remote: 'origin', branch: 'feature', upstream: 'origin/feature-work', setUpstreamUsed: false })
+    // argv 断言：src = 本地分支名（feature），dst = 远端分支名（feature-work）——B3 仍是显式 remote + 全量 refspec。
+    const pushSpawn = findArgv(world.harness.record, 'refs/heads/feature:refs/heads/feature-work')
+    expect(pushSpawn).toBeDefined()
+    expect(pushSpawn!.argv.filter(arg => arg === 'push' || arg === 'origin' || arg.startsWith('refs/heads/')))
+      .toEqual(['push', 'origin', 'refs/heads/feature:refs/heads/feature-work'])
+    // world 重读：bare 的 feature-work 前进到本地 feature HEAD（修复前此处 src-refspec 失败、bare 不动）。
+    expect(refOid(world.bare, 'refs/heads/feature-work')).toBe(headOid(world.repo))
+  })
+
   it('diverged 拦截 [清单 67]：git/diverged 带 ahead/behind，bare 不变（零副作用）', async () => {
     const world = await makeWorld('diverged')
     await world.harness.service.push({ setUpstream: true })
