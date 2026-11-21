@@ -25,7 +25,7 @@ Run from the repository root. The README's `pnpm --dir dsh-git-plugin …` form 
 pnpm install                 # workspace install
 pnpm run typecheck           # build:host (typert generation) then tsc for root/host/client
 pnpm run build               # host bundle + typert artifacts + client bundle + git-bundle checks
-pnpm test                    # vitest run (65 spec files; 1044 cases = 1043 from the 2026-11-17 v0.3.0 final-check run +1 review-fix push-refspec case, re-measured 2026-11-19)
+pnpm test                    # vitest run (71 spec files; 1144 cases — re-measured 2026-11-21 via vitest list enumeration after the Phase 1-3 simplification batch; was 65 files / 1044 cases at v0.3.0)
 pnpm exec vitest run packages/host/tests/status.spec.ts   # one file
 pnpm exec vitest run -t "substring of test name"          # one test by name
 pnpm run check:locale        # zh/en key+placeholder parity and no bare JSX strings
@@ -102,7 +102,7 @@ The client bundle is not built by tsdown. `scripts/build-client.mjs` uses rolldo
 
 ## Tests and verification
 
-- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 65 files total (31 host, 32 client, 2 root compliance guards); the case count is **1044** — 1043 from the 2026-11-17 v0.3.0 final-check run +1 review-fix push-refspec case (full run re-measured 2026-11-19; the v0.2.0 figure 820 is superseded). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
+- `vitest.config.ts` includes `packages/*/tests/**/*.spec.ts` and `tests/**/*.spec.ts` — 71 files total (32 host, 37 client, 2 root compliance guards); the case count is **1144** — re-measured 2026-11-21 via `vitest list` enumeration after the Phase 1-3 simplification batch (six specs added: audit-snapshot / async-action-core / changes-ops-face / dialog-action-core / useAsyncAction / useDialogAction; previous figure 1044 = 1043 from the 2026-11-17 v0.3.0 final-check run +1 review-fix push-refspec case, re-measured 2026-11-19; the v0.2.0 figure 820 is superseded). It runs the Node environment with `maxWorkers` capped at 6 (`min(6, cores - 1)`; higher counts starve the real-git/timeout assertions) and a pre-transform plugin for TC39 decorators so `@Remote` sources parse.
 - Host tests create real temporary git repositories and assert the world by re-reading it (`packages/host/tests/support.ts` provides `scratchRepo`, `git`, a real-spawn `SubprocessFace`, and a chokidar-backed fs face). Client tests use fake RPC faces and view-model assertions.
 - `verify:load` covers the deep path (both packages installed, real host, RPC round-trips for status/commit/graph/AI negative path). `verify:install` is the release gate and runs **two phases**: `working-copy` (fresh `DSH_HOME`/profile → single `file:` git-bundle install → dump-config two id lines → web boot → `git/status` ready → served HTML contains both packages) and `clean-clone` (`git clone` of this repo at committed HEAD → `pnpm install --frozen-lockfile` + `pnpm run build` inside the clone → the same assertion chain; `DSH_VERIFY_INSTALL_SKIP_CLONE=1` skips it, which CI sets explicitly — the clean-clone phase stays a local release-gate concern). Both scripts take their column from `scripts/verify-target.mjs`: default = dev-tree column (CLI source entry from `DSH_TREE`, strict assertions), `DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm column (npm view probe + temp-prefix install, relaxed assertions with WARN), `DSH_BIN=<pkgRoot>/lib/bin.js` = prebuilt-binary column (setting both → exit 1); exit codes 0=pass / 1=fail / 2=skip (npm column: missing npm-cli.js or failed view/install without `DSH_VERIFY_ALLOW_SKIP=1`; with ALLOW the run exits 0 but the RESULT line reads `outcome=SKIPPED-ALLOWED` — a skip is never recorded as a pass). Both create a temporary `DSH_HOME`, kill host process trees, and clean up.
 
@@ -127,7 +127,8 @@ packages/host/src/        index.ts (service, @Remote, Config, REMOTE_METHODS)
                           conflicts.ts（v3 批次一） merge-rebase.ts（v3 批次二）
                           agent-tools.ts（v3 批次三） session-watch.ts checkpoints.ts（v3 批次四）
                           automation.ts（v3 批次五）
-packages/host/tests/      support.ts + 31 specs
+                          repo-root.ts op-guards.ts scan-fresh.ts shared.ts（Phase 1-3 收口共享模块）
+packages/host/tests/      support.ts + 32 specs（新增 audit-snapshot.spec.ts）
 packages/client-ui/src/client/  index.ts (apply), remote/mount.ts, locales.ts, ui-model.ts,
                           admin-face.ts admin-view-model.ts,
                           blame-view.ts graph-compare.ts graph-search.ts wip-node.ts（v2 批次二）,
@@ -135,10 +136,11 @@ packages/client-ui/src/client/  index.ts (apply), remote/mount.ts, locales.ts, u
                           init-empty-state.ts pr-face.ts pr-view-model.ts submodule-view-model.ts
                           commands-face.ts（v2 批次四）,
                           conflict-view-model.ts（v3 批次一）, checkpoint-view.ts（v3 批次四）,
-                          store/*, components/*, graph/*, diff/*, m13/*
+                          store/*（含 task-gate.ts）, components/*（含 GitInitCard/GitStashPanel/GitConflictBar/GitCrlfBar/GitDiffArea/branch-action-shell）, hooks/*, rpc-error.ts, graph/*, diff/*, redaction/*（原 m13/*，收尾更名）
 packages/client-ui/tests/ 32 specs
 scripts/                  build-client.mjs (bundle + git-bundle check) check-locale.mjs
                           verify-load.mjs verify-install.mjs verify-target.mjs verify-release-tarball.mjs
+                          verify-rpc.mjs（verify 系公共助手单源） hooks/post-typecheck.mjs（编辑后窄口径 tsc 钩子）
 tests/                    skeleton.spec.ts licenses.spec.ts
 docs/                     capability-spec.md feature-checklist.md host-capability-map.md
                           ported-sources/SOURCES.md
