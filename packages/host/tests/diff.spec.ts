@@ -16,20 +16,14 @@
 import { execFileSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// 本文件是真实 git 子进程风暴用例（每用例多次 execFileSync/spawn）。全仓并行跑时与
-// watcher 等真实定时器用例争 CPU，默认 5s 超时在本机并行负载下边缘超时
-// （client 地基模块全绿门禁实测 3/3 复现；单文件跑恒绿）。只放宽资源裕量，断言面不变。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { afterEach, describe, expect, it } from 'vitest'
 import type { SubprocessFace } from '../src/git-runner.ts'
 import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX } from '../src/git-runner.ts'
 import { DiffEngine, analyzeUntrackedPatch, assembleDiffFiles, parseNameStatus } from '../src/diff.ts'
 import { GitService } from '../src/index.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchDir, type SpawnRecord } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchDir, type SpawnRecord } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -65,15 +59,11 @@ function makeEngine(
 }
 
 function makeService(workspaceOverride: string, subprocess: SubprocessFace = localSubprocess()): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', subprocess)
-  return new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；自定义替身经 subprocess 设施键。
+  return makeGitService(workspaceOverride, {
     outputMaxBytes: 8 * 1024 * 1024,
-    workspaceOverride,
-  })
+    subprocess,
+  }).service
 }
 
 /** 跑一条预期非零退出的命令，返回真实退出码（execFileSync 的 error.status）。 */

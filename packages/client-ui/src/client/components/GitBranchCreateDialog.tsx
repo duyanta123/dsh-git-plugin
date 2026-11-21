@@ -11,8 +11,9 @@ import { Button, Checkbox, Input, Modal } from '@deepseek-ai/dsh-client-ui-primi
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { GitAdminFace } from '../admin-face.js'
+import type { BranchCreateResult } from 'dsh-gitkit/types'
 import { branchCreateDraft } from '../admin-view-model.js'
-import type { GitErrorLike } from '../remote/mount.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import type { NS } from '../locales.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 
@@ -31,33 +32,27 @@ export function GitBranchCreateDialog(props: GitBranchCreateDialogProps): ReactN
   const [name, setName] = useState('')
   const [from, setFrom] = useState('')
   const [checkout, setCheckout] = useState(true)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<GitErrorLike | null>(null)
 
   useEffect(() => {
     if (!open) return
     setName('')
     setFrom('')
     setCheckout(true)
-    setPending(false)
-    setError(null)
   }, [open])
 
   const draft = branchCreateDraft({ name, from, checkout })
 
+  // pending/error + open 重置（false→true 边沿清陈旧错误）+ 防重入 + 「先置
+  // pending=false 再调 onDone」时序，统一收敛到 useDialogAction。
+  const { pending, error, run } = useDialogAction<BranchCreateResult>({
+    open,
+    run: async () => face.branchCreate(draft.options!),
+    onDone,
+  })
+
   const onCreate = (): void => {
     if (!draft.valid || draft.options === null || pending) return
-    setPending(true)
-    setError(null)
-    void face.branchCreate(draft.options).then((result) => {
-      if (!result.ok) {
-        setPending(false)
-        setError(result.error)
-        return
-      }
-      setPending(false)
-      onDone()
-    })
+    void run()
   }
 
   return (

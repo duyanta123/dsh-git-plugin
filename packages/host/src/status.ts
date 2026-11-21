@@ -49,9 +49,10 @@
 
 import { resolve } from 'node:path'
 import type { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
-import { assertGitOk, gitError } from './error-codes.ts'
+import { assertGitOk } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
-import type { GitRunResult } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import { assembleStatus, numstatCounts, parseNumstat, parsePorcelainV1, parsePorcelainV2 } from './status-parser.ts'
 import type { ParsedStatus } from './status-parser.ts'
 import type { WorkspaceResolver } from './workspace.ts'
@@ -193,30 +194,23 @@ export class StatusEngine {
    * 封顶（刻意取舍：引擎级取消会以非域码错误连坐其余调用方）。
    */
   private async scan(workspaceRoot: string): Promise<StatusState> {
-    const engineSignal = neverAborted()
+    const engineSignal = signalOf()
     // 仓库发现：exit 128 + "not a git repository" → null 范式（forge git.ts:99-103）。
-    let probe: GitRunResult
+    // 共享实现 probeRepoRoot（repo-root.ts）抛 git/no-repository——此处接住折叠回
+    // not-repository 三态帧（error 即共享实现抛出的同一 RemoteError；resolve-git
+    // 失败照旧折叠 unavailable；其余错误原样穿透）。
+    let repoRoot: string
     try {
-      probe = await this.git.run(['rev-parse', '--show-toplevel'], {
-        cwd: workspaceRoot,
-        op: 'status(rev-parse --show-toplevel)',
-        signal: engineSignal,
-      })
+      repoRoot = resolve(workspaceRoot, await probeRepoRoot(this.git, workspaceRoot, 'status', engineSignal))
     } catch (cause) {
       if (isResolveGitError(cause)) {
         return { availability: 'unavailable', snapshot: null, error: cause }
       }
+      if ((cause as { code?: unknown }).code === 'git/no-repository') {
+        return { availability: 'not-repository', snapshot: null, error: cause as RemoteError }
+      }
       throw cause
     }
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      return {
-        availability: 'not-repository',
-        snapshot: null,
-        error: gitError('git/no-repository', `not a git repository: ${workspaceRoot}`, { probed: workspaceRoot }),
-      }
-    }
-    assertGitOk(probe, 'status(rev-parse --show-toplevel)')
-    const repoRoot = resolve(workspaceRoot, probe.stdout.trim())
 
     // 并发 numstat 双路（ZCode gitCliRepo.ts:871-892）：status 本体 + staged + worktree。
     const statusArgs = ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z']
@@ -267,8 +261,3 @@ export function isResolveGitError(cause: unknown): cause is RemoteError & { deta
   return code === 'git/git-error' && details?.op === 'resolve-git'
 }
 
-/** 引擎自有 signal：每次扫描一个内部 AbortController，永不触发（引擎层无取消源；调用方取消不进引擎）。 */
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

@@ -51,9 +51,12 @@
  * 恒 true（冲突走错误路径，continue 由批次一 operationContinue 驱动——§4.2 注记）。
  */
 
-import { assertGitOk, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
+import { gitError, sanitizeStderr } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { scanFresh } from './scan-fresh.ts'
 import { detectOperation } from './conflicts.ts'
+import { readHeadAfterOperation, throwOpFailure } from './op-guards.ts'
 import type { StatusEngine } from './status.ts'
 import type {
   BranchMergeOptions, BranchMergeResult, GitStatusSnapshot, RebaseOptions, RebaseResult,
@@ -113,10 +116,10 @@ export class MergeRebaseEngine {
     if (typeof options.message === 'string' && options.message !== '') args.push('-m', options.message)
     else args.push('--no-edit')
     const result = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'branchMerge(git merge)', signal: active(signal),
+      cwd: repoRoot, op: 'branchMerge(git merge)', signal: signalOf(signal),
     })
-    if (result.exitCode !== 0) await this.throwOpFailure(result, 'merge', repoRoot, signal)
-    const newOid = await this.readHead(repoRoot, op, signal)
+    if (result.exitCode !== 0) await throwOpFailure(this.gitRead, result, 'merge', 'merge-rebase', repoRoot, signal)
+    const newOid = await readHeadAfterOperation(this.gitRead, repoRoot, op, signal)
     // fastForward = HEAD 真移动且落在目标 oid（up-to-date 与 no-ff 合并提交均 false——
     // up-to-date 不谎报 ff；文件头注记）。
     const fastForward = newOid !== oldOid && newOid === targetOid
@@ -155,13 +158,13 @@ export class MergeRebaseEngine {
       ? ['rebase', '--onto', options.onto, options.upstream]
       : ['rebase', options.upstream]
     const result = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'rebase(git rebase)', signal: active(signal),
+      cwd: repoRoot, op: 'rebase(git rebase)', signal: signalOf(signal),
       // GIT_EDITOR=true：rebase 中途的编辑器拉起一律 no-op——挂起防护是正确性问题
       // （conflicts.ts operationContinue 同纪律；正常路径 git 不开编辑器，恒惰性）。
       env: { GIT_EDITOR: 'true' },
     })
-    if (result.exitCode !== 0) await this.throwOpFailure(result, 'rebase', repoRoot, signal)
-    const newOid = await this.readHead(repoRoot, op, signal)
+    if (result.exitCode !== 0) await throwOpFailure(this.gitRead, result, 'rebase', 'merge-rebase', repoRoot, signal)
+    const newOid = await readHeadAfterOperation(this.gitRead, repoRoot, op, signal)
     this.logger?.debug(`git ${op}: upstream=${options.upstream} onto=${options.onto ?? '(none)'} oldOid=${oldOid.slice(0, 12)} newOid=${newOid.slice(0, 12)} done=true`)
     // done 恒 true：冲突走错误路径，continue 由批次一 operationContinue 驱动（§4.2）。
     return { oldOid, newOid, done: true }
@@ -187,11 +190,7 @@ export class MergeRebaseEngine {
       })
     }
     // 守卫 2：fresh status 扫描（绕 TTL 缓存——此刻的世界；error 三态就地抛出）。
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    const snapshot = state.snapshot
-    const repoRoot = snapshot.repoRoot
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
+    const { repoRoot, snapshot } = await scanFresh(this.status, this.logger, op, signal)
     // 守卫 3：baseRevision 乐观并发（客户端视角的 HEAD 未变才许执行）。
     if (baseRevision !== null && baseRevision !== snapshot.branch.oid) {
       throw gitError('git/bad-request', `stale base revision: request was made against ${baseRevision}, HEAD is now ${snapshot.branch.oid ?? '(unborn)'}`, {
@@ -244,7 +243,7 @@ export class MergeRebaseEngine {
    */
   private async requireRevision(repoRoot: string, op: string, revision: string, signal?: AbortSignal): Promise<string> {
     const probed = await this.gitRead.run(['rev-parse', '--verify', '--quiet', `${revision}^{commit}`], {
-      cwd: repoRoot, op: `${op}(rev-parse --verify ^{commit})`, signal: active(signal),
+      cwd: repoRoot, op: `${op}(rev-parse --verify ^{commit})`, signal: signalOf(signal),
     })
     if (probed.exitCode !== 0) {
       throw gitError('git/unknown-revision', `git ${op}: revision '${revision}' could not be resolved`, {
@@ -263,61 +262,12 @@ export class MergeRebaseEngine {
   }
 
   /**
-   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）：**-z 口径**——NUL 分隔、
-   * 路径原样字节不加引号（conflicts.ts scanUnmerged 的 porcelain v2 -z 同口径；
-   * status-parser.ts「-z 下路径原样」纪律）。评审收口：原行分割口径在 core.quotepath
-   * 缺省下会把非 ASCII 路径 C-引号化（中文/空格路径失真），且路径内嵌换行会被拆行。
-   * 不 trim——`-z` 输出无填充，条目即路径本身（路径尾空格合法）。
+   * merge/rebase 非零退出 → 域错误映射（throwOpFailure）、未合并路径回读（-z 口径，
+   * conflictedPaths）与操作后 HEAD 回读（readHeadAfterOperation）已收口至 op-guards.ts
+   * 共享实现——time-travel ≡ merge-rebase 同款，行为逐字保真（op 词汇 'merge-rebase'
+   * 经参数保留）；**-z 口径**（conflictedPaths）：NUL 分隔、路径原样字节不加引号
+   * （conflicts.ts scanUnmerged 同口径；评审收口——原行分割口径在 core.quotepath 缺省
+   * 下会把非 ASCII 路径 C-引号化，且路径内嵌换行会被拆行）。
    */
-  private async conflictedPaths(repoRoot: string, signal?: AbortSignal): Promise<string[]> {
-    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U', '-z'], {
-      cwd: repoRoot, op: 'merge-rebase(diff --diff-filter=U -z)', signal: active(signal),
-    })
-    assertGitOk(listing, 'merge-rebase(diff --diff-filter=U -z)')
-    return listing.stdout.split('\0').filter((entry) => entry !== '')
-  }
-
-  /**
-   * merge/rebase 非零退出 → 域错误映射：输出含 CONFLICT ⇒ git/merge-conflict（conflicted
-   * = diff-filter=U 回读；abortable = 共享 detectOperation 在场——冲突路径恒 true，
-   * 防御性探测如实回值）；其余（--ff-only 不可 ff、空 rebase 等）⇒ git-error。
-   */
-  private async throwOpFailure(
-    result: { exitCode: number | null; stdout: string; stderr: string; truncated: boolean },
-    op: 'merge' | 'rebase',
-    repoRoot: string,
-    signal?: AbortSignal,
-  ): Promise<never> {
-    if (/CONFLICT/.test(result.stdout) || /CONFLICT/.test(result.stderr)) {
-      const conflicted = await this.conflictedPaths(repoRoot, signal)
-      const inProgress = await detectOperation(repoRoot, this.gitRead, signal)
-      throw gitError('git/merge-conflict', `git ${op}: conflict; the repository is left in an intermediate state (abort or resolve it)`, {
-        op,
-        conflicted,
-        abortable: inProgress !== null,
-      })
-    }
-    throw gitRunError(op, result.exitCode, result.stderr, result.truncated)
-  }
-
-  /** 操作后 HEAD 回读（`rev-parse --verify HEAD`；merge/rebase 成功路径均不产生 unborn）。 */
-  private async readHead(repoRoot: string, op: string, signal?: AbortSignal): Promise<string> {
-    const head = await this.gitRead.run(['rev-parse', '--verify', 'HEAD'], {
-      cwd: repoRoot, op: `${op}(rev-parse --verify HEAD)`, signal: active(signal),
-    })
-    assertGitOk(head, `${op}(rev-parse --verify HEAD)`)
-    const oid = head.stdout.trim()
-    if (oid === '') {
-      throw gitError('git/git-error', `git ${op}: empty HEAD after a successful operation`, {
-        op: `${op}(rev-parse --verify HEAD)`, exitCode: head.exitCode, stderr: '', truncated: false,
-      })
-    }
-    return oid
-  }
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

@@ -18,8 +18,9 @@ import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { GitAdminFace } from '../admin-face.js'
 import type { ResetKind } from '../admin-view-model.js'
+import type { TimeTravelResult } from 'dsh-gitkit/types'
 import { resetPlan } from '../admin-view-model.js'
-import type { GitErrorLike } from '../remote/mount.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import type { NS } from '../locales.js'
 import { confirmButtonEnabled } from '../ui-model.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
@@ -52,35 +53,33 @@ export function GitResetDialog(props: GitResetDialogProps): ReactNode {
   const { open, target, headOid, discardCount, t, face, onDone, onClose } = props
   const [kind, setKind] = useState<ResetKind>('mixed')
   const [acked, setAcked] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<GitErrorLike | null>(null)
 
-  // 每次打开重置草稿（上一轮的选择/勾选不延续）。
+  // 每次打开重置草稿（上一轮的选择/勾选不延续）；pending/error 的 open 重置
+  // （false→true 边沿清陈旧错误）+ 防重入 + 「先置 pending=false 再调 onDone」
+  // 时序统一收敛到 useDialogAction（Phase 2·client）。
   useEffect(() => {
     if (open) {
       setKind('mixed')
       setAcked(false)
-      setBusy(false)
-      setError(null)
     }
   }, [open])
 
+  // run 闭包在调用时读取当轮渲染的 plan（propsRef 每渲染捕获最新 props）。
+  const { pending, error, run } = useDialogAction<TimeTravelResult>({
+    open,
+    run: async () => face.reset(plan.options!),
+    onDone: () => {
+      onClose()
+      onDone()
+    },
+  })
+
   const plan = resetPlan({ kind, target: target ?? '', baseRevision: headOid, acked })
-  const enabled = plan.valid && plan.options !== null && !busy && confirmButtonEnabled(plan.severity, acked)
+  const enabled = plan.valid && plan.options !== null && !pending && confirmButtonEnabled(plan.severity, acked)
 
   const onConfirm = (): void => {
     if (!enabled || plan.options === null) return
-    setBusy(true)
-    setError(null)
-    void face.reset(plan.options).then((result) => {
-      setBusy(false)
-      if (!result.ok) {
-        setError(result.error)
-        return
-      }
-      onClose()
-      onDone()
-    })
+    void run()
   }
 
   return (

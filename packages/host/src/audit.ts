@@ -17,7 +17,7 @@
  * 单线程 node 无锁面。查询序 = newest-first（最近一条在前）。
  */
 
-import { gitError } from './error-codes.ts'
+import { fields, gitError } from './error-codes.ts'
 import type { AuditEntry, AuditLogResult, AuditLogOptions } from './types.ts'
 
 /** 环缓冲默认上限（Config auditMaxEntries 缺省——方案 §6.3 auditLog 行）。 */
@@ -35,13 +35,12 @@ export interface AuditEngineOptions {
   maxEntries?: number
 }
 
-/** `key=value` 摘要串（白名单标量字段；undefined 剔除——logWrite fields() 同形）。 */
-export function summarizeAuditFields(pairs: Readonly<Record<string, unknown>>): string {
-  return Object.entries(pairs)
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) => `${key}=${typeof value === 'string' ? value : String(value)}`)
-    .join(' ')
-}
+/**
+ * `key=value` 摘要串（白名单标量字段；undefined 剔除）——error-codes.ts fields() 的
+ * 同形副本收口（logWrite fields() 与审计摘要单源；本名字是 wire/测试面（audit.spec）
+ * 的既有导出名，以别名 re-export 保名不保副本）。
+ */
+export const summarizeAuditFields = fields
 
 export class AuditEngine {
   private readonly buffer: AuditEntry[] = []

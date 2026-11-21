@@ -16,7 +16,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { BranchCompareResult, CompareOptions } from 'dsh-gitkit/types'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
 import type { GitStatusSource } from './git-status-source.js'
 
 /** 对比面板数据快照（范式 A store 形状）。 */
@@ -51,15 +51,6 @@ export interface GitCompareStore {
   retry(): Promise<void>
   /** connection/reset：清全部缓存。 */
   reset(): void
-}
-
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }
 
 /** 创建分支对比数据缓存（工厂——模块级句柄禁止，map §3.4）。 */

@@ -30,6 +30,7 @@
 
 import type { GitSessionEventFace, GitSessionFace } from './workspace.ts'
 import type { GitLoggerFace } from './error-codes.ts'
+import { reasonKindOf, turnOf } from './shared.ts'
 import type { CheckpointFileDiff } from './types.ts'
 
 /** 环容量默认（Config checkpointMaxTurns 缺省——plan §6.2 拍板 50）。 */
@@ -96,12 +97,6 @@ export interface SessionWatchOptions {
   maxTurns?: number
   /** 可选 logger（降级跳过走 debug——不落事件内容，spec §1.0.6）。 */
   logger?: GitLoggerFace | undefined
-}
-
-/** 单事件载荷的最小判别形状（`workspace/changes` 与 `turn/end` 共用 `{ turn }` 骨架）。 */
-interface TurnEventData {
-  turn?: unknown
-  reason?: unknown
 }
 
 /**
@@ -260,18 +255,5 @@ export class SessionWatch {
   }
 }
 
-/** 载荷 `{ turn }` 骨架窄化（safe integer 才收）。 */
-function turnOf(data: unknown): number | null {
-  if (typeof data !== 'object' || data === null) return null
-  const turn = (data as TurnEventData).turn
-  return typeof turn === 'number' && Number.isSafeInteger(turn) && turn >= 0 ? turn : null
-}
-
-/** turn/end reason 的 kind 提取（dsh TurnEndReason = `{ kind: … }` 和型；未知形状 = null）。 */
-function reasonKindOf(data: unknown): string | null {
-  if (typeof data !== 'object' || data === null) return null
-  const kind = (data as TurnEventData).reason
-  if (typeof kind !== 'object' || kind === null) return null
-  const value = (kind as { kind?: unknown }).kind
-  return typeof value === 'string' ? value : null
-}
+// 载荷 `{ turn }` 窄化与 turn/end reason 的 kind 提取已收口至 shared.ts
+// （turnOf/reasonKindOf——本模块 ≡ automation.ts 同款私有副本收口；形状闸语义不变）。

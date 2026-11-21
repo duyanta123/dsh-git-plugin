@@ -3,65 +3,9 @@
  *
  * 错误码与分类规则：research/capability-spec.md §1.0.5（域码 = `git/<name>`，
  * 经 RemoteError 过线，client 按 code 判别不按 instanceof——map §2.4）。
- * 本模块新增 §1.0.5 之外的域码：`git/session-workspace-unresolved`（本模块
- * workspace.ts 的工作区解析失败；workflow 任务口径，spec §1.0.5 未列——见
- * ModuleResult.openIssues）。⑤ mutations/commit 模块（2026-10-31）续增三码
- * （同为 workflow 任务口径，spec §1.0.5 未列）：`git/no-paths`（stage/unstage/
- * discard 空路径数组）、`git/bad-request`（discard 三重守卫的守卫失败：未确认 /
- * baseRevision 过期 / 路由不可 discard 的路径）、`git/hook-failed`（commit 的
- * hook 失败分类——spec §1.4 落 git/git-error，任务口径单列以便 UI 可读展示
- * [清单 20/49]；details 形状与 git-error 同构）。
  *
- * M6 remote-ops 模块（2026-10-31）续增三码（同为 workflow 任务口径，spec §1.0.5
- * 未列）：`git/no-branch`（push/pull 在 detached/unborn 下的拒绝——git/no-upstream
- * 的 hint 'set-upstream' 对该态是误导动作）、`git/dirty-worktree`（pull 前置脏区
- * 拒绝）、`git/choose-remote`（多 remote 无默认远端——spec §1.5-1/§1.6 同场景落
- * git/no-remote，任务口径按「可选远端」语义单列；两者 details 同形 remotes: string[]）。
- *
- * v2 批次一（2026-11-08，docs/v2-implementation-plan.md §3.4）续增六码 + 一处联合扩展：
- * `git/branch-not-found` / `git/branch-not-merged` / `git/branch-exists`（refs-admin.ts
- * 的分支管理面，branch-exists 与 git/tag-exists 对称的「已存在」语义——方案评审修订轮
- * 定死）、`git/tag-exists` / `git/tag-not-found`（tag 管理面）、`git/worktree-failed`
- * （[清单 68] worktree 写面专用，details.stderr 过 sanitizeStderr）；
- * `git/bad-request` reason 联合 `+= 'force-unacknowledged'`（方案 §3.2：force push /
- * `-D` 删分支 / tag `-f` 共用）与 `+= 'invalid-options'`（worktreeAdd 的 branch/
- * newBranch 互斥与至少其一契约的守卫面——方案 §3.2 类型注记要求该契约生效，方案未指认
- * 承载码，取 bad-request 最贴近语义，登记为偏差）。
- *
- * v2 批次二（2026-11-08，docs/v2-implementation-plan.md §4.4）续增四码 + 一处联合扩展：
- * `git/blame-oversized`（blame 单次 50_000 行硬顶（D3=B），details.lineCount 引导
- * client 转 `-L` 区间分片）、`git/merge-conflict`（cherry-pick/revert/stash-pop 类
- * 冲突的结构化报错——details.op 定为 **string** 而非窄联合（方案 §4.4 注：批次三
- * stash-pop 复用此码时不再改类型），conflicted = `diff --name-only --diff-filter=U`
- * 回读、abortable = 中间态伪引用在场）、`git/unknown-revision`（compareBranches/log/
- * 时间旅行的修订解析失败）、`git/operation-in-progress`（时间旅行写前探测
- * CHERRY_PICK_HEAD/REVERT_HEAD 中间态，拒绝叠操作）；
- * `git/bad-request` reason 联合 `+= 'follow-without-path'`（方案 §4.2：`--follow`
- * 仅在 path 为单路径时合法）。
- *
- * v2 批次三（2026-11-08，docs/v2-implementation-plan.md §5.4）续增三码 + 一处联合扩展：
- * `git/stage-patch-failed`（stagePatch 的 `apply --cached` 失败/二进制·模式变更 hunk
- * 拒绝，details.stderr 过 sanitizeStderr）、`git/stash-not-found`（stashPop/stashDrop
- * 的序号越界与空 stash 预检）、`git/commit-blocked`（提交护栏 [21][22]：violations
- * 过线 + overridable 按 D5=A 语义——违规集中无 secret 类才可豁免，secret 硬阻断）；
- * `git/bad-request` reason 联合 `+= 'malformed-trailer'`（方案 §5.2：CommitOptions
- * trailers 条目不合法）。
- *
- * v2 批次四（2026-11-08，docs/v2-implementation-plan.md §6.4）续增三码：
- * `git/init-failed`（initRepository 前置复核失败——已是仓库 / `git init` 自身失败，
- * details.path + reason）、`git/pr-tool-missing`（gh CLI 不可用——ghCommand 解析失败
- * 或 `gh auth status` 未过，details.tool='gh'）、`git/pr-create-failed`（gh pr
- * create/pr view 的 API 侧失败，details.stderr 过 sanitizeStderr）。
- *
- * v3 批次一（2026-11-12，docs/v3-implementation-plan.md §3.2/§3.5）零新码 + 两处联合
- * 扩展：`git/operation-in-progress` details.op 联合 `+= 'merge' | 'rebase'`（探测面
- * 扩 MERGE_HEAD 与 .git/rebase-merge|rebase-apply——conflicts.ts detectOperation 提
- * 共享）、`git/bad-request` reason 联合 `+= 'path-not-conflicted' | 'conflicts-remaining'`
- * （conflictResolve/conflictMarkResolved 与 operationContinue 的守卫面）。
- *
- * v3 批次四（2026-11-14，docs/v3-implementation-plan.md §6.2/§6.5）续增一码：
- * `git/checkpoint-unavailable`（checkpointDiff/checkpointRestore 对无记录 seq 的显式
- * 拒绝——listing 侧不抛错只置 null，操作侧硬失败防误恢复，details.seq）。
+ * 各批次域码增补史（⑤ mutations·commit 三码 / M6 三码 / v2 批次一~四 / v3 批次一·四的
+ * 续增域码与 reason/op 联合扩展原文）已迁 docs/host-wiring-notes.md §2。
  *
  * 声明合并形态（模块说明符）照 dsh 树内
  * packages/experimental/client-ui-cot-translation/src/types.ts:23-28 原文：
@@ -305,8 +249,30 @@ export interface GitLoggerFace {
   error(message: string): void
 }
 
-/** `key=value` 字段串（logger 用法对齐树内：单条字符串消息，字段并入消息）。 */
-function fields(pairs: Readonly<Record<string, unknown>>): string {
+/**
+ * 引擎内 logFailure 的空实现兜底（logger 可选注入的引擎——commit.ts ≡ message-gen.ts
+ * 同款私有 nullLogger 收口；`this.logger ?? nullLogger` 的调用点语义不变）。
+ */
+export const nullLogger: GitLoggerFace = { debug() {}, info() {}, warn() {}, error() {} }
+
+/**
+ * 域错误码提取（index.ts 私有 errorCodeOf ≡ automation.ts codeOf 同形副本收口；
+ * agent-tools.ts ToolErrorValue.error 注记的同口径）：cause 带 string `code` 字段
+ * （RemoteError 形状）取之，其余（含原生 Error/gateway 折叠）按 'gateway/internal'。
+ */
+export function errorCodeOf(cause: unknown): string {
+  if (typeof cause === 'object' && cause !== null && typeof (cause as { code?: unknown }).code === 'string') {
+    return (cause as { code: string }).code
+  }
+  return 'gateway/internal'
+}
+
+/**
+ * `key=value` 字段串（logger 用法对齐树内：单条字符串消息，字段并入消息）。
+ * audit.ts summarizeAuditFields（审计摘要）= 本函数同形副本收口——audit.ts 以
+ * `summarizeAuditFields` 名字 re-export（wire/测试面名字不变，实现单源）。
+ */
+export function fields(pairs: Readonly<Record<string, unknown>>): string {
   return Object.entries(pairs)
     .filter(([, value]) => value !== undefined)
     .map(([key, value]) => `${key}=${typeof value === 'string' ? value : String(value)}`)

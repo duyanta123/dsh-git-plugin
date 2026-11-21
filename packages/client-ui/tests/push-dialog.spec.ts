@@ -1,6 +1,8 @@
 /**
  * 推送对话框纯视图模型测试（V2 批次一 [27][57]；plan §3.7 client 纯函数范式）：
- *   - remote picker 可见性纯函数（needsPushDialog：remotes>1 开对话框，≤1 直推）；
+ *   - remote picker 可见性路由纯函数（pushRoute：remotes>1 走对话框，≤1 直推——
+ *     原 needsPushDialog 已删除（测试消费的死代码），本 spec 改测语义相同的
+ *     admin-face.pushRoute，GitHeaderButton 运行期消费同一函数）；
  *   - force→danger 闸状态机（pushDialogView.forceGate：force 勾选 → 确认转 danger
  *     二次确认；勾选闸过 → options 组装 force+acknowledged——host 守卫的双闸 UI 半）；
  *   - setUpstream 提示行、分支可用闸、options 组装（remote 目标直传）。
@@ -8,8 +10,9 @@
 
 import { describe, expect, it } from 'vitest'
 import type { RemoteInfo } from 'dsh-gitkit/types'
-import { needsPushDialog, pushDialogView } from '../src/client/admin-view-model.ts'
+import { pushDialogView } from '../src/client/admin-view-model.ts'
 import type { PushDialogInput } from '../src/client/admin-view-model.ts'
+import { pushRoute } from '../src/client/admin-face.ts'
 
 function remote(name: string): RemoteInfo {
   return { name, url: `https://example.com/${name}.git`, pushUrl: null }
@@ -27,12 +30,12 @@ function input(overrides: Partial<PushDialogInput> = {}): PushDialogInput {
   }
 }
 
-describe('needsPushDialog — remote picker 可见性纯函数', () => {
-  it('remotes>1 ⇒ 开对话框（remote picker）；remotes≤1 ⇒ 一步直推（v1 行为不回归）', () => {
-    expect(needsPushDialog(2)).toBe(true)
-    expect(needsPushDialog(3)).toBe(true)
-    expect(needsPushDialog(1)).toBe(false)
-    expect(needsPushDialog(0)).toBe(false)
+describe('pushRoute — remote picker 可见性路由纯函数（原 needsPushDialog 的语义等价断言面）', () => {
+  it("remotes>1 ⇒ 'dialog'（开 remote picker）；remotes≤1 ⇒ 'direct'（一步直推，v1 行为不回归）", () => {
+    expect(pushRoute(2)).toBe('dialog')
+    expect(pushRoute(3)).toBe('dialog')
+    expect(pushRoute(1)).toBe('direct')
+    expect(pushRoute(0)).toBe('direct')
   })
 })
 

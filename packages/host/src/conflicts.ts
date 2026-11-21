@@ -64,6 +64,8 @@ import { resolve } from 'node:path'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import { parsePorcelainV2, UNMERGED_CODES } from './status-parser.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type {
@@ -145,7 +147,7 @@ export async function detectOperation(
 ): Promise<OperationInProgressOp | null> {
   for (const marker of REBASE_MARKERS) {
     const probe = await gitRead.run(['rev-parse', '--git-path', marker], {
-      cwd: repoRoot, op: `conflicts(rev-parse --git-path ${marker})`, signal: active(signal),
+      cwd: repoRoot, op: `conflicts(rev-parse --git-path ${marker})`, signal: signalOf(signal),
     })
     assertGitOk(probe, `conflicts(rev-parse --git-path ${marker})`)
     const markerPath = probe.stdout.trim()
@@ -153,7 +155,7 @@ export async function detectOperation(
   }
   for (const { head, op } of OPERATION_HEADS) {
     const probed = await gitRead.run(['rev-parse', '--verify', '--quiet', head], {
-      cwd: repoRoot, op: `conflicts(rev-parse --verify ${head})`, signal: active(signal),
+      cwd: repoRoot, op: `conflicts(rev-parse --verify ${head})`, signal: signalOf(signal),
     })
     if (probed.exitCode === 0) return op
     if (probed.exitCode !== 1) {
@@ -251,7 +253,7 @@ export class ConflictsEngine {
         const steps = RESOLUTION_MATRIX[entry.code][choice.resolution]
         for (const step of steps) {
           const result = await this.gitWrite.run(resolveStepArgs(step, choice.path), {
-            cwd: repoRoot, op: `conflictResolve(git ${resolveStepOp(step)})`, signal: active(signal),
+            cwd: repoRoot, op: `conflictResolve(git ${resolveStepOp(step)})`, signal: signalOf(signal),
           })
           assertGitOk(result, `conflictResolve(git ${resolveStepOp(step)})`)
         }
@@ -301,7 +303,7 @@ export class ConflictsEngine {
         const missing = !existsSync(resolve(repoRoot, path))
         const args = missing ? ['rm', '--', path] : ['add', '--', path]
         const result = await this.gitWrite.run(args, {
-          cwd: repoRoot, op: `conflictMarkResolved(git ${missing ? 'rm' : 'add'})`, signal: active(signal),
+          cwd: repoRoot, op: `conflictMarkResolved(git ${missing ? 'rm' : 'add'})`, signal: signalOf(signal),
         })
         assertGitOk(result, `conflictMarkResolved(git ${missing ? 'rm' : 'add'})`)
         resolved.push(path)
@@ -340,7 +342,7 @@ export class ConflictsEngine {
       })
     }
     const result = await this.gitWrite.run([operation, '--continue'], {
-      cwd: repoRoot, op: `operationContinue(git ${operation} --continue)`, signal: active(signal),
+      cwd: repoRoot, op: `operationContinue(git ${operation} --continue)`, signal: signalOf(signal),
       // GIT_EDITOR=true：sequencer 的 continue 面会拉起编辑器确认提交信息——挂起防护
       // 是正确性问题非性能问题（§3.10；GIT_TERMINAL_PROMPT=0 不覆盖编辑器拉起）。
       env: { GIT_EDITOR: 'true' },
@@ -361,7 +363,7 @@ export class ConflictsEngine {
    */
   private async scanUnmerged(repoRoot: string, signal?: AbortSignal): Promise<UnmergedEntry[]> {
     const status = await this.gitRead.run(['status', '--porcelain=v2', '--untracked-files=all', '-z'], {
-      cwd: repoRoot, op: 'conflicts(status --porcelain=v2)', signal: active(signal),
+      cwd: repoRoot, op: 'conflicts(status --porcelain=v2)', signal: signalOf(signal),
     })
     assertGitOk(status, 'conflicts(status --porcelain=v2)')
     const parsed = parsePorcelainV2(status.stdout)
@@ -374,19 +376,10 @@ export class ConflictsEngine {
     return entries
   }
 
-  /** repo 发现（stash.ts resolveRepoRoot 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: active(signal),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
@@ -416,8 +409,3 @@ function rethrowWithResolvedPartial(error: unknown, resolved: readonly string[])
   throw new RemoteError('git/git-error', remote.message, { ...remote.details, resolved: [...resolved] })
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

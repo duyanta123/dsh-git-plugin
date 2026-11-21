@@ -14,7 +14,8 @@
  *
  * 写操作错误以状态承载（mutationError），由面板渲染 GitErrorNotice + 重试；
  * diff 读取错误落在对应缓存槽（error 态可重试，ready/loading 不重复请求），
- * in-flight 按 key 去重。
+ * in-flight 按 key 去重（去重/代际/finally 骨架由 store/task-gate.ts 承接——
+ * Phase 2·client 收敛；本 store 的失效口径不变，见上）。
  */
 
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
@@ -23,7 +24,8 @@ import type {
   DiffFile, DiffResult, DiffScope, DiscardOptions, DiscardResult, StageResult, UnstageResult,
 } from 'dsh-gitkit/types'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
+import { createTaskGate } from './task-gate.js'
 import type { GitStatusSource } from './git-status-source.js'
 
 /** 一个 (rev, path, scope) 的 diff 加载状态（spec §3.2 DiffEntryState；'idle' 由「键缺席」表达）。 */
@@ -93,21 +95,13 @@ export function diffCacheKey(revision: number, path: string, scope: DiffScope): 
   return `${revision}:${path}:${scope}`
 }
 
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
-
 /** 创建变更面板数据缓存（工厂——模块级句柄禁止，map §3.4）。 */
 export function createGitChangesStore(rpc: GitChangesRpcFace, status: GitChangesStatusFace): GitChangesStore {
   const store = createSnapshotStore<GitChangesState>({ diffs: {}, mutationError: null })
-  let generation = 0
   let revision = status.store.getSnapshot().revision
-  const pending = new Map<string, Promise<void>>()
+  // in-flight 去重 + 代际丢弃 + finally 清理的骨架闸（store/task-gate.ts——Phase 2·client
+  // 收敛）：代际计数与在途登记由闸自持，本 store 只决定 bump/forget 的时机与失效范围。
+  const gate = createTaskGate()
 
   // revision 变化整体失效：订阅状态源，任何被接受的帧（含错误帧——状态源对
   // 错误帧也递增 revision）都清空 diff 缓存并递增代际。
@@ -115,15 +109,14 @@ export function createGitChangesStore(rpc: GitChangesRpcFace, status: GitChanges
     const next = status.store.getSnapshot().revision
     if (next === revision) return
     revision = next
-    generation += 1
+    gate.bump()
     store.update((draft) => {
       draft.diffs = {}
     })
   })
 
   function forgetGeneration(): void {
-    generation += 1
-    pending.clear()
+    gate.forget()
   }
 
   async function loadDiff(scope: DiffScope, path: string): Promise<void> {
@@ -132,33 +125,28 @@ export function createGitChangesStore(rpc: GitChangesRpcFace, status: GitChanges
     const key = diffCacheKey(revision, path, scope)
     const existing = store.getSnapshot().diffs[key]
     if (existing !== undefined && existing.state !== 'error') return
-    const inFlight = pending.get(key)
-    if (inFlight !== undefined) return inFlight
-    const gen = generation
-    store.update((draft) => {
-      draft.diffs[key] = { state: 'loading' }
-    })
-    const task = (async () => {
-      const result = await rpc.diff(scope, path)
-      if (gen !== generation) return // 代际已换代：迟到的响应丢弃
+    return gate.run(key, (stale) => {
       store.update((draft) => {
-        if (result.ok) {
-          const file = result.value.files[0]
-          draft.diffs[key] = file === undefined ? { state: 'ready' } : { state: 'ready', file }
-        } else {
-          draft.diffs[key] = { state: 'error', error: result.error }
-        }
+        draft.diffs[key] = { state: 'loading' }
       })
-    })().catch((cause: unknown) => {
-      if (gen !== generation) return
-      store.update((draft) => {
-        draft.diffs[key] = { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) } }
+      return (async () => {
+        const result = await rpc.diff(scope, path)
+        if (stale()) return // 代际已换代：迟到的响应丢弃
+        store.update((draft) => {
+          if (result.ok) {
+            const file = result.value.files[0]
+            draft.diffs[key] = file === undefined ? { state: 'ready' } : { state: 'ready', file }
+          } else {
+            draft.diffs[key] = { state: 'error', error: result.error }
+          }
+        })
+      })().catch((cause: unknown) => {
+        if (stale()) return
+        store.update((draft) => {
+          draft.diffs[key] = { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) } }
+        })
       })
-    }).finally(() => {
-      if (pending.get(key) === task) pending.delete(key)
     })
-    pending.set(key, task)
-    return task
   }
 
   async function mutate<R extends StageResult | UnstageResult | DiscardResult>(

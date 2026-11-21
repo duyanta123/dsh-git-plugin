@@ -7,8 +7,8 @@
  *   WorkspaceDiffHunk（@deepseek-ai/dsh-workspace-changes/types，字段同形）换成本包
  *   自有 PatchHunk（我们的 diff 过线形状是 unified patch 文本，由 parsePatch 解析产
  *   出同形 hunk）；逐行逻辑保持原样（含 renderedHunks 的预算递减与截断判定）。
- *   parsePatch / markConflictRows 为本模块自研（后者消费 m13/conflict-markers 的
- *   行级分类器——[清单 6] B4 修订的「标记」半边消费者）。
+ *   parsePatch / markConflictRows 为本模块自研（后者消费 redaction/conflict-markers
+ *   （原 m13/，收尾更名）的行级分类器——[清单 6] B4 修订的「标记」半边消费者）。
  * SPDX-License-Identifier: MIT
  */
 
@@ -18,8 +18,8 @@
  * 无全局态、同输入同输出（tests/diff-view.spec.ts）。
  */
 
-import type { ConflictLineKind } from '../m13/conflict-markers.js'
-import { classifyConflictLine } from '../m13/conflict-markers.js'
+import type { ConflictLineKind } from '../redaction/conflict-markers.js'
+import { classifyConflictLine } from '../redaction/conflict-markers.js'
 
 /** 单次渲染的最大行数预算（超出截断，FileDiffView 显示占位）。 */
 export const MAX_RENDERED_LINES = 5000

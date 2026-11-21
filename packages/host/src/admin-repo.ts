@@ -26,6 +26,8 @@
 import { resolve } from 'node:path'
 import { gitError, sanitizeStderr } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { isNotARepositoryProbe } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { InitResult } from './types.ts'
 
@@ -63,7 +65,7 @@ export class AdminRepoEngine {
     // 前置复核：非仓库态（§6.5 括注）。exit 128 + not a git repository = 预期放行；
     // exit 0 = 已是仓库（或位于仓库之内）⇒ init-failed；其余失败如实穿透。
     const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: root, op: 'initRepository(rev-parse --show-toplevel)', signal: active(signal),
+      cwd: root, op: 'initRepository(rev-parse --show-toplevel)', signal: signalOf(signal),
     })
     if (probe.exitCode === 0) {
       const existing = probe.stdout.trim()
@@ -72,14 +74,14 @@ export class AdminRepoEngine {
         reason: 'already-a-repository',
       })
     }
-    if (!(probe.exitCode === 128 && /not a git repository/i.test(probe.stderr))) {
+    if (!isNotARepositoryProbe(probe)) {
       throw gitError('git/init-failed', `git initRepository: repository probe failed for '${root}' (exit ${String(probe.exitCode)})`, {
         path: root,
         reason: 'repository-probe-failed',
       })
     }
     const init = await this.gitWrite.run(['init'], {
-      cwd: root, op: 'initRepository(git init)', signal: active(signal),
+      cwd: root, op: 'initRepository(git init)', signal: signalOf(signal),
     })
     if (init.exitCode !== 0) {
       // message 内嵌 stderr 先过全仓统一脱敏面（sanitizeStderr——凭证形键值/URL
@@ -91,7 +93,7 @@ export class AdminRepoEngine {
     }
     // 回读（world 而非自述）：repoRoot 与初始分支。init 刚成功仍探不出仓库 = 契约破坏要响。
     const repoRoot = resolve(root, (await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: root, op: 'initRepository(rev-parse --show-toplevel re-read)', signal: active(signal),
+      cwd: root, op: 'initRepository(rev-parse --show-toplevel re-read)', signal: signalOf(signal),
     })).stdout.trim())
     const branch = await this.currentBranch(repoRoot, signal)
     this.logger?.debug(`git initRepository: branch=${branch}`)
@@ -101,7 +103,7 @@ export class AdminRepoEngine {
   /** 当前分支短名（symbolic-ref --quiet --short HEAD；unborn 分支也有符号引用）。 */
   private async currentBranch(cwd: string, signal?: AbortSignal): Promise<string> {
     const probe = await this.gitRead.run(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
-      cwd, op: 'initRepository(symbolic-ref HEAD)', signal: active(signal),
+      cwd, op: 'initRepository(symbolic-ref HEAD)', signal: signalOf(signal),
     })
     if (probe.exitCode === 0) {
       const name = probe.stdout.trim()
@@ -119,8 +121,3 @@ export class AdminRepoEngine {
   }
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

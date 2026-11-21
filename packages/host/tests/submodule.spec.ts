@@ -15,13 +15,14 @@
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GitService } from '../src/index.ts'
 import { assembleSubmoduleEntries, parseSubmoduleLines } from '../src/submodule.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
+import { git, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
+// submodule 递归夹具慢（真仓嵌套 add/deinit/推进）——90s 文件级放宽高于全局基线，
+// 非 60s 重复，保留（vi.setConfig 收敛任务的豁免面）。
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 90_000 })
 
 const cleanups: Array<() => Promise<unknown>> = []
@@ -30,13 +31,8 @@ afterEach(async () => {
 })
 
 function makeService(workspaceOverride: string): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  return new GitService(ctx, {
-    gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000,
-    workspaceOverride, autoFetchIntervalMs: 0,
-  })
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return makeGitService(workspaceOverride, { commitTimeoutMs: 15_000, autoFetchIntervalMs: 0 }).service
 }
 
 function worldGit(cwd: string, ...args: string[]): string {

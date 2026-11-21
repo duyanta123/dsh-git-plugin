@@ -28,7 +28,8 @@ import type { CommitDetail, CommitInfo, LogOptions, LogPage, RefsSnapshot, ShowO
 import { normalizeSearchFilter, searchLogOptions } from '../graph-search.js'
 import type { GraphSearchFilter } from '../graph-search.js'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
+import { createTaskGate } from './task-gate.js'
 import type { GitStatusSource } from './git-status-source.js'
 
 /** client 每页条数（spec §1.0.2 logDefaultLimit 默认值；host 侧仍有 logMaxLimit 钳制兜底）。 */
@@ -130,15 +131,6 @@ const INITIAL_LOG = {
   error: null as GitErrorLike | null,
 }
 
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
-
 /** 创建提交图数据缓存（工厂——模块级句柄禁止，map §3.4）。 */
 export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatusFace): GitGraphStore {
   const store = createSnapshotStore<GitGraphState>({
@@ -148,13 +140,15 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     details: {},
     filter: { ...EMPTY_LOG_FILTER },
   })
-  let generation = 0
   /**
    * 最近一次触发 reload 的 branch.oid（undefined = 尚未见过任何 status 帧——
    * 创建时不加载：没有快照就没有可比的游标，等第一帧真实状态再拉图）。
    */
   let lastBranchOid: string | null | undefined = undefined
-  const detailPending = new Map<string, Promise<void>>()
+  // in-flight 去重 + 代际丢弃 + finally 清理的骨架闸（store/task-gate.ts——Phase 2·client
+  // 收敛）：代际计数与 showCommit 的详情在途登记由闸承接；reloadLog/refreshRefs/loadMore
+  // 无 key 化去重（single-writer 闸/无条件任务），代际捕获走 gate.guard()。
+  const gate = createTaskGate()
 
   /**
    * log 命令入参装配（V2 批次二）：搜索两维走 searchLogOptions（null 维不产键——
@@ -184,7 +178,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
   reconcile()
 
   async function reloadLog(): Promise<void> {
-    const gen = generation
+    const stale = gate.guard()
     store.update((draft) => {
       draft.log = { ...INITIAL_LOG, commits: [], refreshing: true }
       // 失败详情槽一并清理（P2 卡死修复的配套半）：清窗重载 = 详情的重新拉取机会——
@@ -199,13 +193,13 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     try {
       page = await rpc.log(logOptions(0))
     } catch (cause) {
-      if (gen !== generation) return
+      if (stale()) return
       store.update((draft) => {
         draft.log = { ...INITIAL_LOG, commits: [], error: { code: causeCode(cause), message: causeMessage(cause) } }
       })
       return
     }
-    if (gen !== generation) return
+    if (stale()) return
     store.update((draft) => {
       if (page.ok) {
         draft.log = {
@@ -223,18 +217,18 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
   }
 
   async function refreshRefs(): Promise<void> {
-    const gen = generation
+    const stale = gate.guard()
     let result: RemoteResult<RefsSnapshot>
     try {
       result = await rpc.refs()
     } catch (cause) {
-      if (gen !== generation) return
+      if (stale()) return
       store.update((draft) => {
         draft.refsError = { code: causeCode(cause), message: causeMessage(cause) }
       })
       return
     }
-    if (gen !== generation) return
+    if (stale()) return
     store.update((draft) => {
       if (result.ok) {
         draft.refs = result.value
@@ -248,7 +242,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
   async function loadMore(): Promise<void> {
     const snapshot = store.getSnapshot()
     if (snapshot.log.loadMoreInFlight || !snapshot.log.hasMore) return
-    const gen = generation
+    const stale = gate.guard()
     const skip = snapshot.log.loadedCount
     store.update((draft) => {
       draft.log.loadMoreInFlight = true
@@ -257,14 +251,14 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
     try {
       page = await rpc.log(logOptions(skip))
     } catch (cause) {
-      if (gen !== generation) return
+      if (stale()) return
       store.update((draft) => {
         draft.log.loadMoreInFlight = false
         draft.log.error = { code: causeCode(cause), message: causeMessage(cause) }
       })
       return
     }
-    if (gen !== generation) return
+    if (stale()) return
     store.update((draft) => {
       draft.log.loadMoreInFlight = false
       if (page.ok) {
@@ -292,66 +286,61 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
       const file = baseSlot.detail.files.find((item) => item.path === path)
       if (file !== undefined && (file.patch !== null || file.binary || file.oversized)) return
     }
-    const gen = generation
     const key = `${oid}|${path ?? ''}`
-    const existing = detailPending.get(key)
-    if (existing !== undefined) return existing
-    if (baseOnly) {
-      const cached = store.getSnapshot().details[oid]
-      if (cached !== undefined && cached.state !== 'error') return
-      store.update((draft) => {
-        draft.details[oid] = { state: 'loading', pendingPath: null }
-      })
-    } else {
-      store.update((draft) => {
-        const slot = draft.details[oid]
-        draft.details[oid] = slot?.state === 'ready' && slot.detail !== undefined
-          ? { state: 'ready', detail: slot.detail, pendingPath: path ?? null }
-          : { state: 'loading', pendingPath: null }
-      })
-    }
-    const task = (async () => {
-      let result: RemoteResult<CommitDetail>
-      try {
-        result = await rpc.getCommitDetail({ oid, path: path ?? null })
-      } catch (cause) {
-        if (gen !== generation) return
+    return gate.run(key, (stale) => {
+      if (baseOnly) {
+        const cached = store.getSnapshot().details[oid]
+        if (cached !== undefined && cached.state !== 'error') return Promise.resolve()
+        store.update((draft) => {
+          draft.details[oid] = { state: 'loading', pendingPath: null }
+        })
+      } else {
         store.update((draft) => {
           const slot = draft.details[oid]
-          draft.details[oid] = slot?.detail !== undefined
-            ? { state: 'ready', detail: slot.detail, pendingPath: null }
-            : { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) }, pendingPath: null }
+          draft.details[oid] = slot?.state === 'ready' && slot.detail !== undefined
+            ? { state: 'ready', detail: slot.detail, pendingPath: path ?? null }
+            : { state: 'loading', pendingPath: null }
         })
-        return
       }
-      if (gen !== generation) return
-      store.update((draft) => {
-        const slot = draft.details[oid]
-        const base = slot?.detail
-        if (!result.ok) {
-          // path 态失败 = 保住基座（文件行回落 loadFailed 占位）；基座态失败 = error 槽。
-          draft.details[oid] = base !== undefined
-            ? { state: 'ready', detail: base, pendingPath: null }
-            : { state: 'error', error: result.error, pendingPath: null }
+      return (async () => {
+        let result: RemoteResult<CommitDetail>
+        try {
+          result = await rpc.getCommitDetail({ oid, path: path ?? null })
+        } catch (cause) {
+          if (stale()) return
+          store.update((draft) => {
+            const slot = draft.details[oid]
+            draft.details[oid] = slot?.detail !== undefined
+              ? { state: 'ready', detail: slot.detail, pendingPath: null }
+              : { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) }, pendingPath: null }
+          })
           return
         }
-        const value = result.value
-        if (baseOnly || base === undefined) {
-          draft.details[oid] = { state: 'ready', detail: value, pendingPath: null }
-          return
-        }
-        // path 态 splice：带 patch 的文件并回列表缓存（其余文件与 refs 不动）。
-        const incoming = value.files.find((item) => item.path === path)
-        const files = incoming !== undefined
-          ? base.files.map((item) => item.path === path ? incoming : item)
-          : base.files
-        draft.details[oid] = { state: 'ready', detail: { ...base, files }, pendingPath: null }
-      })
-    })().finally(() => {
-      if (detailPending.get(key) === task) detailPending.delete(key)
+        if (stale()) return
+        store.update((draft) => {
+          const slot = draft.details[oid]
+          const base = slot?.detail
+          if (!result.ok) {
+            // path 态失败 = 保住基座（文件行回落 loadFailed 占位）；基座态失败 = error 槽。
+            draft.details[oid] = base !== undefined
+              ? { state: 'ready', detail: base, pendingPath: null }
+              : { state: 'error', error: result.error, pendingPath: null }
+            return
+          }
+          const value = result.value
+          if (baseOnly || base === undefined) {
+            draft.details[oid] = { state: 'ready', detail: value, pendingPath: null }
+            return
+          }
+          // path 态 splice：带 patch 的文件并回列表缓存（其余文件与 refs 不动）。
+          const incoming = value.files.find((item) => item.path === path)
+          const files = incoming !== undefined
+            ? base.files.map((item) => item.path === path ? incoming : item)
+            : base.files
+          draft.details[oid] = { state: 'ready', detail: { ...base, files }, pendingPath: null }
+        })
+      })()
     })
-    detailPending.set(key, task)
-    return task
   }
 
   return {
@@ -379,8 +368,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
       void reloadLog()
     },
     reset() {
-      generation += 1
-      detailPending.clear()
+      gate.forget()
       lastBranchOid = undefined
       store.update((draft) => {
         draft.refs = null
@@ -392,8 +380,7 @@ export function createGitGraphStore(rpc: GitGraphRpcFace, status: GitGraphStatus
       reconcile()
     },
     dispose() {
-      generation += 1
-      detailPending.clear()
+      gate.forget()
       unsubscribe()
     },
   }

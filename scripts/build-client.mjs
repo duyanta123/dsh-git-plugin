@@ -163,8 +163,10 @@ const [hostPkg, clientPkg, bundlePkg, bundlePatchRaw] = await Promise.all([
   readFile(join(bundleDir, 'package.json'), 'utf8').catch(() => null),
   readFile(join(bundleDir, 'cordis.patch.yml'), 'utf8').catch(() => null),
 ])
-const hostName = JSON.parse(hostPkg).name
-const clientName = JSON.parse(clientPkg).name
+const hostManifest = JSON.parse(hostPkg)
+const clientManifest = JSON.parse(clientPkg)
+const hostName = hostManifest.name
+const clientName = clientManifest.name
 if (bundlePkg === null || bundlePatchRaw === null) {
   throw new Error('git-bundle thin package missing: expected git-bundle/package.json + cordis.patch.yml at the repo root')
 }
@@ -176,8 +178,8 @@ if (bundleManifest.name !== 'dsh-gitkit-bundle') throw new Error(`git-bundle man
 // 在这里被拒。根 package.json 读取在原 bundle-version 断言处已存在（复用其 parse，
 // 零额外文件 IO）；hostPkg/clientPkg 在上方已读取；README 为新增读取。
 const rootManifest = JSON.parse(await readFile(join(here, '..', 'package.json'), 'utf8'))
-const hostVersion = JSON.parse(hostPkg).version
-const clientVersion = JSON.parse(clientPkg).version
+const hostVersion = hostManifest.version
+const clientVersion = clientManifest.version
 if (bundleManifest.version !== rootManifest.version) {
   throw new Error('git-bundle version drifted from the repo root version')
 }

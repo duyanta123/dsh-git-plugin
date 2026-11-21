@@ -50,9 +50,9 @@ import type { GitLlmFace, MessageGenEngineOptions } from '../src/message-gen.ts'
 import { DiffEngine } from '../src/diff.ts'
 import { createGitRunners } from '../src/git-runner.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
-// 并行负载下的资源裕量（真实 git 子进程；M6 集成 spec 同款先例）。
+// 30s 文件级收紧（低于全局 60s 基线——本文件用例为确定性夹具，无需全局裕量），非重复键，保留。
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
 // ---------- LLM stub（prepareCall 面：记录 config/options，流式按模式产出） ----------
@@ -132,20 +132,15 @@ function makeService(
     llmMaxInputBytes?: number
   } = {},
 ): ServiceHarness {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  if (overrides.llm !== undefined) face.provide('llm', overrides.llm)
-  const service = new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；llm 的构造前注入经
+  // provides（时序不变）；ctx 透传（request/header 捕获路由的 emit 通道）。
+  return makeGitService(workspaceOverride, {
     outputMaxBytes: 1_048_576,
-    workspaceOverride,
     llmProvider: overrides.llmProvider ?? '',
     llmModel: overrides.llmModel ?? '',
     llmMaxInputBytes: overrides.llmMaxInputBytes ?? DEFAULT_LLM_MAX_INPUT_BYTES,
+    ...(overrides.llm !== undefined ? { provides: [['llm', overrides.llm] as const] } : {}),
   })
-  return { service, ctx }
 }
 
 /** 引擎直构（engine 级用例：超时/取消/llm 缺席——不经服务 schema 的 1s 超时下限）。 */

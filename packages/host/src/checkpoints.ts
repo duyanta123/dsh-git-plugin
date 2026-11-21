@@ -34,9 +34,11 @@
 
 import { stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import { assertGitOk, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
+import { gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { StatusEngine } from './status.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { CheckpointIndexEntry, GitWorkspaceChangesFace } from './session-watch.ts'
@@ -224,7 +226,7 @@ export class CheckpointsEngine {
     if (index >= summary.files.length) throw invalidOptions(`index ${index} is out of range (the summary lists ${summary.files.length} files)`)
     let diff: CheckpointFileDiff | undefined
     try {
-      diff = await face.diff(resolved.sessionId, seq, index, signal ?? neverAborted())
+      diff = await face.diff(resolved.sessionId, seq, index, signalOf(signal))
     } catch (cause) {
       // workspace-changes diff 契约：live Session 的快照读取失败会抛宿主错误（非域码）——
       // 收编为 git/git-error（message 通道脱敏，不裸抛非 JSON 安全的宿主异常）。
@@ -336,7 +338,7 @@ export class CheckpointsEngine {
     if (face === undefined) return fail('the workspaceChanges service disappeared mid-restore')
     let diff: CheckpointFileDiff | undefined
     try {
-      diff = await face.diff(sessionId, seq, index, signal ?? neverAborted())
+      diff = await face.diff(sessionId, seq, index, signalOf(signal))
     } catch (cause) {
       return fail(sanitizeStderr(cause instanceof Error ? cause.message : String(cause)).trim().slice(-FAILURE_REASON_MAX_CHARS))
     }
@@ -362,7 +364,7 @@ export class CheckpointsEngine {
     const result = await this.gitWrite.run(args, {
       cwd: repoRoot,
       op: 'checkpointRestore(git apply -R)',
-      signal: signal ?? neverAborted(),
+      signal: signalOf(signal),
       stdin: patch,
     })
     if (result.exitCode !== 0) {
@@ -435,19 +437,10 @@ export class CheckpointsEngine {
     return { entries: out }
   }
 
-  /** repo 发现（staging-patch 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 
   /** HEAD 基线回读：exit 128 = unborn/broken HEAD ⇒ null（乐观并发按不匹配处理）；其余失败抛域错误。 */
@@ -455,7 +448,7 @@ export class CheckpointsEngine {
     const probe = await this.gitRead.run(['rev-parse', '--verify', 'HEAD'], {
       cwd: repoRoot,
       op: 'checkpointRestore(rev-parse --verify HEAD)',
-      signal: signal ?? neverAborted(),
+      signal: signalOf(signal),
     })
     if (probe.exitCode === 0 && !probe.truncated) return probe.stdout.trim()
     if (probe.exitCode === 128) return null
@@ -518,7 +511,3 @@ function projectFileDiff(file: CheckpointFileDiff): CheckpointFileDiff {
   return { kind: file.kind, path: file.path, display: file.display }
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

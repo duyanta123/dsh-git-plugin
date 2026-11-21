@@ -18,18 +18,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, afterAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, afterAll, describe, expect, it } from 'vitest'
 import { AdminRepoEngine } from '../src/admin-repo.ts'
 import { GitService } from '../src/index.ts'
 import { createGitRunners } from '../src/git-runner.ts'
 import type { SubprocessFace } from '../src/git-runner.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
 import type { GitStatusFrame } from '../src/types.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -37,13 +34,8 @@ afterEach(async () => {
 })
 
 function makeService(workspaceOverride: string): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  return new GitService(ctx, {
-    gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000,
-    workspaceOverride, autoFetchIntervalMs: 0,
-  })
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return makeGitService(workspaceOverride, { commitTimeoutMs: 15_000, autoFetchIntervalMs: 0 }).service
 }
 
 /** Windows %TEMP% 8.3 短名/大小写规范化（support.ts scratchDir 同款纪律——git 输出同形）。 */

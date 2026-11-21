@@ -18,14 +18,14 @@
  * 装配到 GitPrDialog）。prFace/onCreatePr 双可选：缺席时行为与批次一完全一致。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Checkbox, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
-import type { RemoteInfo } from 'dsh-gitkit/types'
+import type { PushResult, RemoteInfo } from 'dsh-gitkit/types'
 import type { GitAdminFace } from '../admin-face.js'
-import type { GitErrorLike } from '../remote/mount.js'
 import { pushDialogView } from '../admin-view-model.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import type { NS } from '../locales.js'
 import type { GitPrFace } from '../pr-face.js'
 import { prLinkView } from '../pr-view-model.js'
@@ -73,11 +73,32 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null)
   const [force, setForce] = useState(false)
   const [dangerAsk, setDangerAsk] = useState(false)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<GitErrorLike | null>(null)
   // ── V2 批次四：推送成功态 + [69] 关联 PR（prFace 缺席时恒 null——批次一行为）──
   const [pushed, setPushed] = useState(false)
   const [link, setLink] = useState<PrLinkView | null>(null)
+  // runPush 点击时组装的终态入参（useDialogAction 的 run 闭包经 ref 读取——
+  // options 组装依赖点击时的 acked/danger 闸终态）。
+  const pushOptionsRef = useRef<Parameters<GitAdminFace['push']>[0] | null>(null)
+  // [69] 当前分支可用名（branch 不可用 ⇒ null——prFace 缺席/分支不可用不查）。
+  const linkBranchName = branch !== null && !branch.unborn && !branch.detached ? branch.name : null
+
+  // pending/error 的 open 重置（false→true 边沿清陈旧错误）+ 防重入 + 「先置
+  // pending=false 再消费成功面」时序收敛到 useDialogAction；成功不关框——
+  // onDone 转 pushed 终态（V2 批次四行为）。
+  const { pending, error, run, setError } = useDialogAction<PushResult>({
+    open,
+    run: async () => face.push(pushOptionsRef.current!),
+    onDone: () => {
+      // V2 批次四：推送成功停成功态（「推送完成」+ [69] 关联 PR anchor 重查——
+      // upstream 刚建立/更新，此时查 prForBranch 最准）+ 「创建 PR…」引导。
+      setPushed(true)
+      if (prFace !== undefined && linkBranchName !== null) {
+        void prFace.prLink(linkBranchName).then((value) => {
+          setLink(prLinkView({ ok: true, value }))
+        })
+      }
+    },
+  })
 
   // 开框重置 + 取远端清单（失败进错误条，picker 空——可取消重开）。
   useEffect(() => {
@@ -87,8 +108,6 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
     setPickerOpen(false)
     setForce(false)
     setDangerAsk(false)
-    setPending(false)
-    setError(null)
     setPushed(false)
     setLink(null)
     let cancelled = false
@@ -106,7 +125,6 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
 
   // [69] 开框即查当前分支关联 PR（静默降级：无关联/失败 ⇒ null 不占位；
   // 分支不可用/prFace 缺席 ⇒ 不查——批次一行为不回归）。
-  const linkBranchName = branch !== null && !branch.unborn && !branch.detached ? branch.name : null
   useEffect(() => {
     if (!open) return
     if (prFace === undefined || linkBranchName === null) {
@@ -125,27 +143,12 @@ export function GitPushDialog(props: GitPushDialogProps): ReactNode {
   const view = useMemo(() => pushDialogView({ remotes, selectedRemote, branch, force, forceAcked: false, pending }), [remotes, selectedRemote, branch, force, pending])
 
   const runPush = (acked: boolean): void => {
-    // acked = danger 勾选闸已过（force 路径）或非 force 直推；组装终态入参。
-    const final = pushDialogView({ remotes, selectedRemote, branch, force, forceAcked: acked, pending })
+    // acked = danger 勾选闸已过（force 路径）或非 force 直推；组装终态入参
+    // （pending 不影响 options 组装——canConfirm 语义由视图面承担）。
+    const final = pushDialogView({ remotes, selectedRemote, branch, force, forceAcked: acked, pending: false })
     if (final.options === null) return
-    setPending(true)
-    setError(null)
-    void face.push(final.options).then((result) => {
-      if (!result.ok) {
-        setPending(false)
-        setError(result.error)
-        return
-      }
-      setPending(false)
-      // V2 批次四：推送成功停成功态（「推送完成」+ [69] 关联 PR anchor 重查——
-      // upstream 刚建立/更新，此时查 prForBranch 最准）+ 「创建 PR…」引导。
-      setPushed(true)
-      if (prFace !== undefined && linkBranchName !== null) {
-        void prFace.prLink(linkBranchName).then((value) => {
-          setLink(prLinkView({ ok: true, value }))
-        })
-      }
-    })
+    pushOptionsRef.current = final.options
+    void run()
   }
 
   const onConfirm = (): void => {

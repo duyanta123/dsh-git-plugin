@@ -2,8 +2,9 @@
  * dsh-gitkit-ui — V2 批次一管理面纯视图模型（推送对话框 / 分支创建 / 标签创建 /
  * worktree 管理的渲染决策；plan §3.6）。组件只做 t/订阅/事件——渲染决策全部收敛为
  * 纯函数（spec §6 纯函数单测纪律；ui-model.ts / commit-view-model.ts 同款收敛），
- * 断言面 = tests/push-dialog.spec.ts（推送对话框：remote picker 可见性 + force→danger
- * 闸状态机）与 tests/admin-view-model.spec.ts（分支/标签/worktree 草稿与移除闸）。
+ * 断言面 = tests/push-dialog.spec.ts（推送对话框：force→danger 闸状态机；remote picker
+ * 可见性路由 = admin-face.pushRoute 纯函数，同 spec 亦断言）与
+ * tests/admin-view-model.spec.ts（分支/标签/worktree 草稿与移除闸）。
  *
  * danger 双闸复用：force push / 脏 worktree 强制移除的「确认勾选闸」即
  * GitConfirmDialog severity='danger'（勾选前确认禁用，纯逻辑 confirmButtonEnabled
@@ -25,14 +26,6 @@ import type {
 import type { GitLocaleKey } from './locales.js'
 
 // ── 推送对话框（[27][57]）────────────────────────────────────────────────────
-
-/**
- * 推送对话框可见性（plan §3.6：remotes 数 > 1 时开对话框；≤1 一步直推）。
- * `needsForceDialog` 参数预留 force 诉求入口（v1 直推无 force 入口，恒走远端数）。
- */
-export function needsPushDialog(remoteCount: number): boolean {
-  return remoteCount > 1
-}
 
 /** 推送对话框输入（组件持有的全部决策相关状态）。 */
 export interface PushDialogInput {

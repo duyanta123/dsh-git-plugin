@@ -20,8 +20,10 @@
 
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
+import { configGetScalar } from './op-guards.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { RepoDiagnostics } from './types.ts'
 
@@ -64,7 +66,7 @@ export class DiagnosticsEngine {
    *   git/git-error（config 失败兜底）。
    */
   async repoDiagnostics(signal?: AbortSignal): Promise<RepoDiagnostics> {
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const repoRoot = await this.resolveRepoRoot('repoDiagnostics', active)
     const autocrlf = await this.configGet(repoRoot, 'core.autocrlf', active)
     const coreEol = await this.configGet(repoRoot, 'core.eol', active)
@@ -78,17 +80,18 @@ export class DiagnosticsEngine {
     }
   }
 
-  /** 单键 `git config --get`（identity.configGet 同口径：0=有值/空串按缺失、1=null、其余 git-error）。 */
+  /**
+   * 单键 `git config --get`（identity.configGet 同口径：0=有值/空串按缺失、1=null、
+   * 其余 git-error）——共享实现在 op-guards.ts configGetScalar（四份同语义实现收口）。
+   */
   private async configGet(repoRoot: string, key: 'core.autocrlf' | 'core.eol', signal: AbortSignal): Promise<string | null> {
-    const result = await this.gitRead.run(['config', '--get', key], {
-      cwd: repoRoot, op: `repoDiagnostics(config --get ${key})`, signal,
-    })
-    if (result.exitCode === 0) {
-      const value = result.stdout.trim()
-      return value === '' ? null : value
-    }
-    if (result.exitCode === 1) return null
-    throw gitRunError(`repoDiagnostics(config --get ${key})`, result.exitCode, result.stderr, result.truncated)
+    return configGetScalar(
+      this.gitRead,
+      repoRoot,
+      ['config', '--get', key],
+      `repoDiagnostics(config --get ${key})`,
+      signal,
+    )
   }
 
   /** 顶层文本文件 CRLF 抽样（node fs；单文件读取失败按未含 CRLF 处理——如实降级）。 */
@@ -126,19 +129,10 @@ export class DiagnosticsEngine {
     return { crlfCount, mixedFiles }
   }
 
-  /** repo 发现（blame.ts 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
@@ -148,7 +142,3 @@ function isTextSuffix(name: string): boolean {
   return TEXT_SUFFIXES.some((suffix) => lower.endsWith(suffix))
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

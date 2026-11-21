@@ -24,7 +24,7 @@ import type { BlameOptions, BlameResult } from 'dsh-gitkit/types'
 import { expandBlameRuns, mergeBlameRuns, oversizedPlan } from '../blame-view.js'
 import type { BlameRun } from '../blame-view.js'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
 
 /** 一个 path 的 blame 槽位（git-blame-store.byPath 值）。 */
 export interface BlameSlotState {
@@ -70,15 +70,6 @@ export interface GitBlameStore {
   ensureRange(path: string, start: number, end: number): Promise<void>
   /** connection/reset：清全部槽位。 */
   reset(): void
-}
-
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }
 
 /** pending 键（区间在途去重）。 */

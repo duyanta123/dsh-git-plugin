@@ -209,6 +209,15 @@ import {
   npmInstallToPrefix,
   resolveTarget,
 } from './verify-target.mjs'
+import {
+  assert,
+  exchangeTokenForCookie,
+  extractJsonAfter,
+  killTree,
+  rpcCall,
+  tail,
+  tokenQueryCookie,
+} from './verify-rpc.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(here, '..')
@@ -223,9 +232,10 @@ const fail = (message) => {
   console.error(`[verify] FAIL: ${message}`)
 }
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message)
-}
+// assert / killTree / tail / extractJsonAfter / rpcCall / tokenQueryCookie /
+// exchangeTokenForCookie 收口至 ./verify-rpc.mjs（verify 系公共助手单源；本脚本为
+// load 列语义——无信号 fetch，extractJsonAfter 缺失消息 'not found'，cookie 助手的
+// step 行经本模块 step 落 '[verify]' 前缀）。
 
 /** spawn once, capture output, enforce a timeout, kill the tree on timeout.
  *  shell 透传与 install 同构（本脚本现无 shell 调用点，保留同形签名）；spawn 失败
@@ -253,14 +263,7 @@ function run(cmd, args, { cwd, env, timeoutMs, shell }) {
   })
 }
 
-/** Windows process-tree kill (runbook §6.9: taskkill /PID /T /F). */
-function killTree(pid) {
-  if (!pid) return
-  try {
-    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    killer.on('error', () => { /* best effort */ })
-  } catch { /* best effort */ }
-}
+// killTree（Windows 进程树 taskkill，runbook §6.9）收口至 ./verify-rpc.mjs。
 
 /** Spawn the dsh web host once（R 断言两相复用）；output 经回调累积（诊断尾打印）。 */
 function spawnHost(env, onOutput) {
@@ -308,34 +311,18 @@ async function stopHost(child) {
   })
 }
 
-/** Extract a balanced-brace JSON object starting at the first `{` after `marker`. */
-function extractJsonAfter(text, marker) {
-  const at = text.indexOf(marker)
-  assert(at >= 0, `marker ${JSON.stringify(marker)} not found`)
-  const start = text.indexOf('{', at)
-  assert(start >= 0, `no object after ${JSON.stringify(marker)}`)
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') inString = true
-    else if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return JSON.parse(text.slice(start, i + 1))
-    }
-  }
-  throw new Error(`unbalanced JSON after ${JSON.stringify(marker)}`)
-}
+// extractJsonAfter（balanced-brace JSON 提取）收口至 ./verify-rpc.mjs。
 
-async function main() {
+/**
+ * Phase 2 拆分（main → 阶段函数）：断言链 A–T 各段提为具名 phase* 函数，跨阶段状态
+ * （宿主句柄/累积输出、origin/token/cookie、夹具路径与 world 重读助手、commit oid）
+ * 经共享 ctx 对象传递；main() 收缩为编排 + 退出码/RESULT 收口。硬约束：退出码 0/1/2
+ * 纪律、RESULT 行格式、各 [verify] 步骤行文本逐字节不变——各阶段体即原 main() 内
+ * 对应段落（仅跨阶段变量改经 ctx / 顶部解构，段内原文不动）。
+ */
+
+/** 阶段①（§0 前置检查，读侧断言：失败属仓库/宿主破损，直接抛出 → FAIL；观测列不吞）。 */
+function phasePrecheck(ctx) {
   // ── 0. 前置检查（读侧断言：失败属仓库/宿主破损，直接抛出 → FAIL；观测列不吞）──
   assert(target.cli !== null && target.cliArgs !== null && target.cliCwd !== null,
     `verify target CLI unresolved (kind=${target.kind}) — npm column install step missing?`)
@@ -355,11 +342,19 @@ async function main() {
   assert(existsSync(hostTypert), `generated host typert artifact missing: ${hostTypert} — run \`pnpm build\` first`)
   assert(existsSync(hostRemoteClient), `generated remote-client artifact missing: ${hostRemoteClient} — run \`pnpm build\` first`)
   assert(readFileSync(hostPatch, 'utf8').includes("name: 'dsh-gitkit'"), 'host cordis.patch.yml mismatch')
+  ctx.hostPkgDir = hostPkgDir
+  ctx.clientPkg = clientPkg
   step(`dsh target: ${target.label}; repo: ${REPO}`)
+}
 
-  // status/commit 往返夹具：临时真仓库 + 本地身份 + 一笔种子提交（M11 全断言：
-  // 分支字段全量可断言 —— unborn 空仓库断言（④-E H 段）按 ask ④ 的「ready + 分支
-  // 字段」口径替换；unborn 形状仍由 host tests/status.spec [清单 64] 真仓库覆盖）。
+/**
+ * 阶段①②（夹具铸造）：status/commit 往返夹具：临时真仓库 + 本地身份 + 一笔种子提交
+ * （M11 全断言：分支字段全量可断言——unborn 空仓库断言（④-E H 段）按 ask ④ 的
+ * 「ready + 分支字段」口径替换；unborn 形状仍由 host tests/status.spec [清单 64]
+ * 真仓库覆盖）。world 重读助手（原 §5.95 段定义）提升至此——M/N/O/P/Q/R2 跨阶段
+ * 消费（ctx.fixtureNorm/worldGit/worldStatusPorcelain/worldStaged/pseudoHeadExists）。
+ */
+function phaseFixture(ctx) {
   const fixtureRepo = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dshgit-verify-ws-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fixtureRepo, stdio: 'ignore' })
   execFileSync('git', ['config', 'user.name', 'verify-user'], { cwd: fixtureRepo, stdio: 'ignore' })
@@ -376,17 +371,140 @@ async function main() {
   // （都放夹具仓库旁的固定派生名，finally 统一清理——不进 mkdtemp 随机名以保持可读诊断）。
   const fixtureBare = `${fixtureRepo}-origin.git`
   const fixtureWt = `${fixtureRepo}-wt`
+  // world 重读助手（原 §5.95 段与 §5.9 段的同款定义，提升至此；fixtureRepo 闭包）。
+  const fixtureNorm = (p) => String(p).replaceAll('\\', '/').toLowerCase()
+  const worldGit = (...args) => execFileSync('git', args, { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const worldStatusPorcelain = () => execFileSync('git', ['status', '--porcelain'], { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const worldStaged = () => worldStatusPorcelain().split('\n').filter((line) => line.startsWith('M ') || line.startsWith('A ') || line.startsWith('D '))
+  const pseudoHeadExists = (head) => {
+    try {
+      execFileSync('git', ['rev-parse', '--verify', '--quiet', head], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
+      return true
+    } catch {
+      return false
+    }
+  }
+  ctx.fixtureRepo = fixtureRepo
+  ctx.seedOid = seedOid
+  ctx.fixtureBare = fixtureBare
+  ctx.fixtureWt = fixtureWt
+  ctx.fixtureNorm = fixtureNorm
+  ctx.worldGit = worldGit
+  ctx.worldStatusPorcelain = worldStatusPorcelain
+  ctx.worldStaged = worldStaged
+  ctx.pseudoHeadExists = pseudoHeadExists
 
   const home = mkdtempSync(join(process.env.TEMP ?? '/tmp', 'dsh-git-verify-'))
-  const env = { ...process.env, DSH_HOME: home }
-  const profileDir = join(home, 'profiles', PROFILE)
+  ctx.home = home
+  ctx.env = { ...process.env, DSH_HOME: home }
+  ctx.profileDir = join(home, 'profiles', PROFILE)
+}
 
-  let host = null
+async function main() {
+  // 共享断言面上下文（阶段函数间的可变状态；见文件头 Phase 2 拆分注记）。
+  const ctx = {
+    host: null,
+    hostOutput: '',
+    origin: null,
+    token: null,
+    apiCookie: null,
+    hostPkgDir: null,
+    clientPkg: null,
+    fixtureRepo: null,
+    fixtureBare: null,
+    fixtureWt: null,
+    seedOid: null,
+    home: null,
+    env: null,
+    profileDir: null,
+    profilePatchPath: null,
+    commitOid: null,
+    fixtureNorm: null,
+    worldGit: null,
+    worldStatusPorcelain: null,
+    worldStaged: null,
+    pseudoHeadExists: null,
+  }
   let outcome = 'FAIL'
   let exitCode = EXIT_FAIL
-  let hostOutput = ''
+  // §0 前置检查与夹具铸造在 try 外（原位：读侧断言失败冒泡到模块级 catch → fail(error?.stack)）。
+  phasePrecheck(ctx)
+  phaseFixture(ctx)
   try {
-    // ── 1. 通道 A 安装（runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）──
+    await phaseInstall(ctx)
+    await phaseBoot(ctx)
+    await phaseBundle(ctx)
+    await phasePing(ctx)
+    await phaseAgentToolsOff(ctx)
+    await phaseIdentity(ctx)
+    await phaseStatus(ctx)
+    await phaseCommit(ctx)
+    await phaseRefs(ctx)
+    await phaseHistory(ctx)
+    await phaseCommitGuards(ctx)
+    await phaseExperience(ctx)
+    await phaseConflicts(ctx)
+    await phaseMergeRebase(ctx)
+    await phaseCheckpoints(ctx)
+    await phaseAutomationOff(ctx)
+    await phaseStrictTypert(ctx)
+    await phaseNegative(ctx)
+    await phaseRestartReadonly(ctx)
+    outcome = 'PASS'
+    exitCode = EXIT_PASS
+    step('ALL CHECKS PASSED')
+  } catch (error) {
+    if (error instanceof SkipError) {
+      ({ outcome, exit: exitCode } = applySkipDiscipline(error, '[verify]'))
+    } else if (target.observation) {
+      // 观测列：KNOWN-UNSUPPORTED 行改纯记录式（报告 §2.3）——不预设失败形态，
+      // 记录实际失败与宿主输出尾部；exit 0（观测列 KNOWN-UNSUPPORTED 亦 0）。
+      console.warn(`[verify] KNOWN-UNSUPPORTED（观测列纯记录，双结局合法）: ${error?.message ?? String(error)}`)
+      if (ctx.hostOutput) console.warn(`---- host output tail ----\n${tail(ctx.hostOutput, 4000)}`)
+      outcome = 'KNOWN-UNSUPPORTED'
+      exitCode = EXIT_PASS
+    } else {
+      fail(error?.message ?? String(error))
+      if (ctx.hostOutput) console.error(`---- host output tail ----\n${tail(ctx.hostOutput, 4000)}`)
+      outcome = 'FAIL'
+      exitCode = EXIT_FAIL
+    }
+  } finally {
+    // ── 7. 清理（runbook §6.9）──
+    if (ctx.host?.pid && ctx.host.exitCode === null) {
+      step(`stopping host pid ${ctx.host.pid} (taskkill /T /F)`)
+      await stopHost(ctx.host)
+    }
+    try {
+      rmSync(ctx.home, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+      step(`removed temp DSH_HOME ${ctx.home}`)
+    } catch (error) {
+      console.warn(`[verify] WARN: could not remove temp home ${ctx.home}: ${error?.message ?? error}`)
+    }
+    try {
+      rmSync(ctx.fixtureRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+      step(`removed identity fixture repo ${ctx.fixtureRepo}`)
+    } catch (error) {
+      console.warn(`[verify] WARN: could not remove fixture repo ${ctx.fixtureRepo}: ${error?.message ?? error}`)
+    }
+    for (const derived of [ctx.fixtureWt, ctx.fixtureBare]) {
+      try {
+        if (existsSync(derived)) {
+          rmSync(derived, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
+          step(`removed fixture sibling ${derived}`)
+        }
+      } catch (error) {
+        console.warn(`[verify] WARN: could not remove fixture sibling ${derived}: ${error?.message ?? error}`)
+      }
+    }
+  }
+  return { outcome, exit: exitCode }
+}
+
+/** 阶段①（§1 通道 A 安装 + §1.5 profile 层补丁；runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）。 */
+async function phaseInstall(ctx) {
+  const { env, profileDir, fixtureRepo, hostPkgDir, clientPkg } = ctx
+  // ── 1. 通道 A 安装（runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）──
     for (const [label, dir] of [['host dsh-gitkit', hostPkgDir], ['client dsh-gitkit-ui', clientPkg]]) {
       step(`installing ${label}: dsh plugin --profile ${PROFILE} add file:${dir.replaceAll('\\', '/')}`)
       const spec = `file:${dir.replaceAll('\\', '/')}`
@@ -428,6 +546,7 @@ async function main() {
     //        Config 是唯一可编程面——解析不到 ⇒ git/pr-tool-missing）。
     //        Windows 路径写成正斜杠，避开 YAML 反斜杠转义。
     const profilePatchPath = join(profileDir, 'cordis.patch.yml')
+    ctx.profilePatchPath = profilePatchPath
     const ghFixtureCommand = 'dshgit-fixture-no-such-gh'
     const overrideRow = [
       '# verify-load.mjs: pin the git service workspace to the fixture repository; pin ghCommand to an unresolvable fixture name (batch-four negative paths)',
@@ -453,43 +572,51 @@ async function main() {
         : `${existingPatch}\n${overrideRow}`)
       step('profile cordis.patch.yml: workspaceOverride row appended')
     }
+}
 
+/** 阶段②（§2 启动真实 web 宿主；host 句柄/累积输出/origin/token 落 ctx）。 */
+async function phaseBoot(ctx) {
     // ── 2. 启动真实 web 宿主。CLI 语法（apps/cli/src/args.ts:9-13 实读）：
     //        `dsh web` 是 `--profile web` 的缩写；显式 --profile dbg 时不能再写 'web' 词
     //        （它会变成内层 app 参数 → "too many arguments"——首跑实测踩坑），
     //        app 由 profile 的 dsh-web-app bundle 层挂载，--no-open/--port 是内层 app flags。──
     step('starting dsh web host…')
-    host = spawnHost(env, (chunk) => { hostOutput += chunk })
-    const bootLine = await waitBootLine(host, () => hostOutput)
+    ctx.host = spawnHost(ctx.env, (chunk) => { ctx.hostOutput += chunk })
+    const bootLine = await waitBootLine(ctx.host, () => ctx.hostOutput)
     const base = new URL(bootLine)
     const token = base.searchParams.get('token')
+    ctx.origin = base.origin
+    ctx.token = token
     step(`host booted: ${base.origin} (token acquired)`)
 
     // ── 3. 断言 B：无装载失败标记（runbook §5.4 反向判据）──
-    assert(!/entry did not activate/.test(hostOutput), `host log reports "did not activate":\n${tail(hostOutput)}`)
-    assert(!/failed to import/.test(hostOutput), `host log reports "failed to import":\n${tail(hostOutput)}`)
+    assert(!/entry did not activate/.test(ctx.hostOutput), `host log reports "did not activate":\n${tail(ctx.hostOutput)}`)
+    assert(!/failed to import/.test(ctx.hostOutput), `host log reports "failed to import":\n${tail(ctx.hostOutput)}`)
     // 激活 marker 按列（P3）：dev-tree 全串严格（打点整串来自插件自身
     // packages/host/src/index.ts:253 的 process.stdout.write 字面量）；npm/bin 列
     // 降级 'GitService active' 子串 + WARN（宿主可能改写 stdout 行格式）。
-    const fullMarker = hostOutput.includes('[dsh-plugin-git] GitService active')
+    const fullMarker = ctx.hostOutput.includes('[dsh-plugin-git] GitService active')
     if (target.strictActivationMarker) {
       assert(fullMarker, 'GitService activation marker missing from host stdout — plugin did not activate')
       step('host load marker "[dsh-plugin-git] GitService active": present')
     } else {
-      assert(hostOutput.includes('GitService active'),
+      assert(ctx.hostOutput.includes('GitService active'),
         'GitService activation marker missing from host stdout — plugin did not activate（npm/bin 列降级子串判据仍失败）')
       if (!fullMarker) {
         console.warn('[verify] WARN: full marker "[dsh-plugin-git] GitService active" not found — degraded to "GitService active" substring（npm/bin 列）')
       }
       step(`host load marker: ${fullMarker ? 'full' : 'degraded substring'} "GitService active": present`)
     }
+}
 
+/** 阶段③（§4 断言 C：client 半进入 boot 花名册 + bundle 被服务；tokenQueryCookie 经 ctx.origin/token）。 */
+async function phaseBundle(ctx) {
     // ── 4. 断言 C：client 半进入 boot 花名册 + bundle 被服务 ──
     // 浏览器 cookie 与 API cookie 是两种凭据（browser-auth.ts 实读）：index 的
     // 浏览器 cookie 由 GET /?token= 铸造（authorizeIndex → 303）；/api 的操作员
     // cookie 由 GET /connect?token= 铸造（version 2）。
-    const browserCookie = await tokenQueryCookie(base.origin, token)
-    const indexResponse = await fetch(base.origin, { headers: { cookie: browserCookie }, redirect: 'manual' })
+    const browserCookie = await tokenQueryCookie(ctx.origin, ctx.token, { step })
+    const indexResponse = await fetch(ctx.origin, { headers: { cookie: browserCookie }, redirect: 'manual' })
     assert(indexResponse.status === 200, `authenticated index returned ${indexResponse.status}`)
     const indexHtml = await indexResponse.text()
     const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__')
@@ -504,7 +631,7 @@ async function main() {
       && clientEntry.inject.includes('@deepseek-ai/dsh-client-ui-commands'),
     `client entry inject edges missing the batch-four services (shortcuts/ui-commands): ${JSON.stringify(clientEntry.inject)}`)
     step(`boot graph: client entry present (rev ${clientEntry.rev}), inject edges: ${JSON.stringify(clientEntry.inject)}`)
-    const bundleResponse = await fetch(new URL(clientEntry.url, base.origin), { headers: { cookie: browserCookie } })
+    const bundleResponse = await fetch(new URL(clientEntry.url, ctx.origin), { headers: { cookie: browserCookie } })
     assert(bundleResponse.status === 200, `client bundle fetch ${clientEntry.url} → ${bundleResponse.status}`)
     const bundleBody = await bundleResponse.text()
     assert(bundleBody.includes('__ModuleLoader__'), 'served client bundle lacks the closure-factory marker')
@@ -576,17 +703,25 @@ async function main() {
     assert(bundleBody.includes('初始化 Git 仓库') && bundleBody.includes('子模块详情') && bundleBody.includes('关联 PR'),
       'client bundle lacks the batch-four zh dictionary entries (menu.initRepo / submodule.details / pr.linkLabel)')
     step(`client bundle served (${bundleBody.length} bytes, closure factory + header registration + generated remote descriptors + locale verified)`)
+}
 
+/** 阶段④（§5 断言 D：ping RPC 往返；API 操作员 cookie 铸造落 ctx.apiCookie）。 */
+async function phasePing(ctx) {
     // ── 5. 断言 D：ping RPC 往返（runbook §2.3 token fence → API cookie）──
-    const apiCookie = await exchangeTokenForCookie(base.origin, token)
-    const pingResult = await rpcCall(base.origin, apiCookie, 'git/ping', {})
+    const apiCookie = await exchangeTokenForCookie(ctx.origin, ctx.token, { step })
+    ctx.apiCookie = apiCookie
+    const pingResult = await rpcCall(ctx.origin, apiCookie, 'git/ping', {})
     assert(pingResult.ok === true, `git/ping failed: ${JSON.stringify(pingResult)}`)
     const gitVersion = pingResult.value?.gitVersion
     assert(typeof gitVersion === 'string' && /^git version \S+/.test(gitVersion),
       `git/ping returned unexpected value: ${JSON.stringify(pingResult)}`)
     const localGit = await run('git', ['--version'], { cwd: REPO, env: process.env, timeoutMs: 15_000 })
     step(`ping RPC round-trip OK: gitVersion=${JSON.stringify(gitVersion)} (local \`git --version\`: ${localGit.out.trim()})`)
+}
 
+/** 阶段⑤（§5.1 断言 R 第一相：agentToolsStatus off 档形状）。 */
+async function phaseAgentToolsOff(ctx) {
+  const { apiCookie } = ctx
     // ── 5.1 断言 R 第一相（v3 批次三 §5.8）：agentToolsStatus off 档形状。默认
     //        Config（profile 补丁未设 agentTools）⇒ mode='off' + registered 深等 []
     //        （off 档零注册——plan §5.4/§5.5）；toolsFaceAvailable 是观测面（off 档
@@ -594,7 +729,7 @@ async function main() {
     //        场（spike 结论：base bundle 透传 tools 行）；false = 部署未挂载 ⇒ WARN
     //        登记（spike verifyForm：未挂载分支绝不 fail——其他部署的 overlay 可能
     //        禁用该行）。readonly 数量断言在第二相（R 第二相，主链收口后重启）。──
-    const agentStatusOff = await rpcCall(base.origin, apiCookie, 'git/agentToolsStatus', {})
+    const agentStatusOff = await rpcCall(ctx.origin, apiCookie, 'git/agentToolsStatus', {})
     assert(agentStatusOff.ok === true, `git/agentToolsStatus failed: ${JSON.stringify(agentStatusOff)}`)
     assert(agentStatusOff.value?.mode === 'off',
       `agentToolsStatus.mode should be 'off' (default config, no profile patch): ${JSON.stringify(agentStatusOff)}`)
@@ -608,9 +743,13 @@ async function main() {
       console.warn('[verify] WARN: toolsFaceAvailable=false at mode=off — the dsh-tools face was not observed on this deployment（降级口径，非失败——spike verifyForm：未挂载分支 WARN 登记）')
       step('agentToolsStatus off-shape OK: mode=off, registered=[] (tools face not observed — degraded, see WARN)')
     }
+}
 
+/** 阶段⑥（§5.5 断言 E：identity RPC 往返——带参方法；workspaceOverride → 夹具仓库本地身份）。 */
+async function phaseIdentity(ctx) {
+  const { apiCookie, fixtureRepo } = ctx
     // ── 5.5 断言 E：identity RPC 往返（带参方法；workspaceOverride → 夹具仓库本地身份）。
-    const identity = await rpcCall(base.origin, apiCookie, 'git/identity', {})
+    const identity = await rpcCall(ctx.origin, apiCookie, 'git/identity', {})
     assert(identity.ok === true, `git/identity (no args) failed: ${JSON.stringify(identity)}`)
     assert(identity.value?.name === 'verify-user' && identity.value?.email === 'verify@example.com',
       `git/identity returned unexpected identity: ${JSON.stringify(identity)}`)
@@ -624,17 +763,21 @@ async function main() {
     step(`identity RPC round-trip OK: name=verify-user email=verify@example.com workspace=${identity.value.workspace}`)
 
     // scope 参数显式过线（strict 描述符 codec：z.literal 联合）。
-    const identityLocal = await rpcCall(base.origin, apiCookie, 'git/identity', { scope: 'local' })
+    const identityLocal = await rpcCall(ctx.origin, apiCookie, 'git/identity', { scope: 'local' })
     assert(identityLocal.ok === true && identityLocal.value?.name === 'verify-user' && identityLocal.value?.email === 'verify@example.com',
       `git/identity(scope=local) failed: ${JSON.stringify(identityLocal)}`)
     step('identity RPC scope=local OK (parameter traversed the wire)')
+}
 
+/** 阶段⑦（§5.7 断言 K：status RPC 往返 = 状态源数据面真值 + ready 快照分支字段全量断言）。 */
+async function phaseStatus(ctx) {
+  const { apiCookie, fixtureRepo, seedOid } = ctx
     // ── 5.7 断言 K（④-K 提交对话框模块，M11 全断言）：status RPC 往返 = 状态源的
     //        数据面真值 + 提交链路闭环。夹具仓库带一笔种子提交 ⇒ 快照 ready（ok:true
     //        ——wire 为裸 GitStatusSnapshot，无 {kind} 包装，见文件头注记），分支字段
     //        全量断言：main / 40hex oid / 7 位短 oid / 无 upstream / ahead=behind=null /
     //        非 detached / 非 unborn / clean。
-    const status = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    const status = await rpcCall(ctx.origin, apiCookie, 'git/status', {})
     assert(status.ok === true, `git/status failed: ${JSON.stringify(status)}`)
     const snapshot = status.value ?? {}
     const branch = snapshot.branch ?? {}
@@ -653,18 +796,23 @@ async function main() {
       && Array.isArray(snapshot.conflicted) && snapshot.conflicted.length === 0,
       `seeded fixture repo should start clean: ${JSON.stringify(snapshot)}`)
     assert(snapshot.clean === true, `seeded fixture repo should be clean: ${JSON.stringify(snapshot)}`)
+    const fixtureReal = fixtureRepo.replaceAll('\\', '/')
     assert(typeof snapshot.repoRoot === 'string'
       && snapshot.repoRoot.toLowerCase().replace(/\\/g, '/') === fixtureReal.toLowerCase().replace(/\\/g, '/'),
       `git/status repoRoot should be the pinned fixture repo: ${JSON.stringify(snapshot.repoRoot)} vs ${fixtureReal}`)
     assert(branch.oid === seedOid, `branch.oid should equal the world-read seed HEAD: ${branch.oid} vs ${seedOid}`)
     step(`status RPC round-trip OK: ready snapshot on 'main' @ ${branch.abbrevOid}, clean, repoRoot=${snapshot.repoRoot}`)
+}
 
+/** 阶段⑧（§5.8 K 链路半：stage → AI 负往返 → commit → world 重读 → status → 空 staged 守卫 → log）；K 链提交 oid 落 ctx.commitOid。 */
+async function phaseCommit(ctx) {
+  const { apiCookie, fixtureRepo } = ctx
     // ── 5.8 K 链路半：stage → AI 负往返（无路由）→ commit → world 重读 → status →
     //        空 staged 守卫 → log(limit:1)（amend 预填数据面）。
     writeFileSync(join(fixtureRepo, 'chain.txt'), 'dsh verify-load commit chain\n')
-    const staged = await rpcCall(base.origin, apiCookie, 'git/stage', { paths: ['chain.txt'] })
+    const staged = await rpcCall(ctx.origin, apiCookie, 'git/stage', { paths: ['chain.txt'] })
     assert(staged.ok === true && staged.value?.staged === 1, `git/stage failed: ${JSON.stringify(staged)}`)
-    const stagedStatus = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    const stagedStatus = await rpcCall(ctx.origin, apiCookie, 'git/status', {})
     assert(stagedStatus.ok === true && stagedStatus.value?.staged?.length === 1 && stagedStatus.value?.clean === false,
       `post-stage status should show 1 staged entry and clean=false: ${JSON.stringify(stagedStatus.value)}`)
     step('stage RPC round-trip OK: world-visible staged entry (clean=false)')
@@ -672,7 +820,7 @@ async function main() {
     // AI 生成负往返：本环境无 llm 路由（Config.llmProvider/llmModel 空 + 无 request/header
     // 捕获），nothing-staged 前置已过（有 staged diff）⇒ 确定性 git/llm-route-unresolved
     // ——证明端点被真实派发且域错误过线（M7 路由解析链的真宿主面）。
-    const generate = await rpcCall(base.origin, apiCookie, 'git/generateCommitMessage', {})
+    const generate = await rpcCall(ctx.origin, apiCookie, 'git/generateCommitMessage', {})
     assert(generate.ok === false, `git/generateCommitMessage unexpectedly succeeded: ${JSON.stringify(generate)}`)
     assert(generate.error?.code === 'git/llm-route-unresolved',
       `expected git/llm-route-unresolved (no LLM route in this environment), got ${JSON.stringify(generate.error)}`)
@@ -682,11 +830,12 @@ async function main() {
     // gateway/arguments-invalid 报文实测口径），client 代理由 typert 运行时折算；
     // 本脚本的裸 RPC 直接给 { options: CommitOptions }。
     const commitMessage = 'feat: verify-load commit chain'
-    const commit = await rpcCall(base.origin, apiCookie, 'git/commit', {
+    const commit = await rpcCall(ctx.origin, apiCookie, 'git/commit', {
       options: { message: commitMessage, amend: false, skipHooks: false },
     })
     assert(commit.ok === true, `git/commit failed: ${JSON.stringify(commit)}`)
     const commitValue = commit.value ?? {}
+    ctx.commitOid = commitValue.oid
     assert(typeof commitValue.oid === 'string' && /^[0-9a-f]{40}$/.test(commitValue.oid),
       `commit result should carry a full oid: ${JSON.stringify(commitValue)}`)
     assert(commitValue.branch === 'main' && commitValue.amended === false,
@@ -710,14 +859,14 @@ async function main() {
       `world re-read mismatch: git log says ${worldOid} ${JSON.stringify(worldSubject)}, RPC said ${commitValue.oid} ${JSON.stringify(commitValue.message)}`)
     step(`commit RPC round-trip OK: ${commitValue.shortOid} on 'main', world re-read matches (git log -1)`)
 
-    const afterCommit = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    const afterCommit = await rpcCall(ctx.origin, apiCookie, 'git/status', {})
     assert(afterCommit.ok === true && afterCommit.value?.clean === true
       && afterCommit.value?.branch?.oid === commitValue.oid,
       `post-commit status should be clean at the new oid: ${JSON.stringify(afterCommit.value)}`)
     step(`status after commit OK: clean at ${afterCommit.value?.branch?.abbrevOid} (R3 失效后新快照)`)
 
     // [清单 11] 空提交守卫的真宿主面：clean 仓库上 commit ⇒ git/nothing-staged。
-    const emptyCommit = await rpcCall(base.origin, apiCookie, 'git/commit', {
+    const emptyCommit = await rpcCall(ctx.origin, apiCookie, 'git/commit', {
       options: { message: 'feat: should never land', amend: false, skipHooks: false },
     })
     assert(emptyCommit.ok === false && emptyCommit.error?.code === 'git/nothing-staged',
@@ -726,25 +875,30 @@ async function main() {
 
     // amend 预填数据面：log({limit:1}) 返回新 HEAD（client headCommit 折算的数据源）。
     // wire 形状同 git/commit：参数名 options（命名参数封装）。
-    const headPage = await rpcCall(base.origin, apiCookie, 'git/log', { options: { limit: 1, skip: 0 } })
+    const headPage = await rpcCall(ctx.origin, apiCookie, 'git/log', { options: { limit: 1, skip: 0 } })
     assert(headPage.ok === true && headPage.value?.commits?.length === 1
       && headPage.value.commits[0]?.oid === commitValue.oid
       && headPage.value.commits[0]?.subject === commitMessage,
       `git/log(limit:1) should return the new HEAD: ${JSON.stringify(headPage)}`)
     step('log(limit:1) OK: amend-prefill data plane returns the new HEAD commit')
+}
 
+/** 阶段⑨（§5.9 断言 L：refs 管理面九方法各一条真宿主往返 + force 双闸负往返；fixtureNorm/world 重读助手经 ctx）。 */
+async function phaseRefs(ctx) {
+  const { apiCookie, fixtureRepo, fixtureBare, fixtureWt, fixtureNorm } = ctx
+  // K 链提交的 oid（phaseCommit 落 ctx.commitOid——以 commitValue.oid 形状别名保持段内原文）。
+  const commitValue = { oid: ctx.commitOid }
     // ── 5.9 断言 L（v2 批次一 §3.7 verify-load 扩展）：refs 管理面九方法各一条真宿主
     //        往返 + force 双闸负往返。world 重读纪律同 K：每个写断言后用独立 git 进程
     //        重读 refs/HEAD/tag/目录，不信 RPC 自述。夹具仓库当前 HEAD = commitValue.oid
     //        （main，clean）。
-    const fixtureNorm = (p) => String(p).replaceAll('\\', '/').toLowerCase()
     // bare 目录须先存在——spawnSync 的 cwd 不存在会以 ENOENT 报错（首跑踩坑：误报
     // "spawnSync git ENOENT"，与 git 可执行文件无关）。
     mkdirSync(fixtureBare, { recursive: true })
     execFileSync('git', ['init', '--bare', '-q', '-b', 'main'], { cwd: fixtureBare, stdio: 'ignore' })
     execFileSync('git', ['remote', 'add', 'origin', fixtureBare], { cwd: fixtureRepo, stdio: 'ignore' })
 
-    const remoteList = await rpcCall(base.origin, apiCookie, 'git/remoteList', {})
+    const remoteList = await rpcCall(ctx.origin, apiCookie, 'git/remoteList', {})
     assert(remoteList.ok === true, `git/remoteList failed: ${JSON.stringify(remoteList)}`)
     assert(Array.isArray(remoteList.value?.remotes) && remoteList.value.remotes.length === 1,
       `git/remoteList should list exactly the origin remote: ${JSON.stringify(remoteList.value)}`)
@@ -754,7 +908,7 @@ async function main() {
       `git/remoteList origin entry wrong: ${JSON.stringify(remoteList.value.remotes[0])}`)
     step(`remoteList RPC round-trip OK: origin → ${remoteList.value.remotes[0].url} (pushUrl null = 未显式配置)`)
 
-    const branchCreate = await rpcCall(base.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
+    const branchCreate = await rpcCall(ctx.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
     assert(branchCreate.ok === true, `git/branchCreate failed: ${JSON.stringify(branchCreate)}`)
     assert(branchCreate.value?.name === 'verify-branch' && branchCreate.value?.oid === commitValue.oid
       && branchCreate.value?.checkedOut === false,
@@ -763,12 +917,12 @@ async function main() {
     assert(worldBranch === commitValue.oid, `world re-read refs/heads/verify-branch mismatch: ${worldBranch}`)
     step(`branchCreate RPC round-trip OK: verify-branch @ ${String(branchCreate.value.oid).slice(0, 7)}, world re-read matches`)
 
-    const branchExists = await rpcCall(base.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
+    const branchExists = await rpcCall(ctx.origin, apiCookie, 'git/branchCreate', { options: { name: 'verify-branch' } })
     assert(branchExists.ok === false && branchExists.error?.code === 'git/branch-exists',
       `duplicate branchCreate should be git/branch-exists: ${JSON.stringify(branchExists)}`)
     step('branchCreate duplicate OK: git/branch-exists (typed pre-check on the real host)')
 
-    const worktreeAdd = await rpcCall(base.origin, apiCookie, 'git/worktreeAdd', { options: { path: fixtureWt, newBranch: 'verify-wt' } })
+    const worktreeAdd = await rpcCall(ctx.origin, apiCookie, 'git/worktreeAdd', { options: { path: fixtureWt, newBranch: 'verify-wt' } })
     assert(worktreeAdd.ok === true, `git/worktreeAdd failed: ${JSON.stringify(worktreeAdd)}`)
     assert(worktreeAdd.value?.branch === 'verify-wt' && /^[0-9a-f]{40}$/.test(worktreeAdd.value?.head ?? ''),
       `git/worktreeAdd value wrong: ${JSON.stringify(worktreeAdd.value)}`)
@@ -776,7 +930,7 @@ async function main() {
     assert(worldWtBranch === 'verify-wt', `world re-read worktree HEAD mismatch: ${worldWtBranch}`)
     step(`worktreeAdd RPC round-trip OK: ${worktreeAdd.value.path} on verify-wt, world re-read matches`)
 
-    const worktreeList = await rpcCall(base.origin, apiCookie, 'git/worktreeList', {})
+    const worktreeList = await rpcCall(ctx.origin, apiCookie, 'git/worktreeList', {})
     assert(worktreeList.ok === true && Array.isArray(worktreeList.value?.worktrees) && worktreeList.value.worktrees.length === 2,
       `git/worktreeList should list main + new worktree: ${JSON.stringify(worktreeList.value)}`)
     const wtEntry = worktreeList.value.worktrees.find((entry) => fixtureNorm(entry?.path) === fixtureNorm(fixtureWt))
@@ -787,14 +941,14 @@ async function main() {
       `worktreeList entry for the main worktree wrong: ${JSON.stringify(mainEntry)}`)
     step('worktreeList RPC round-trip OK: main + verify-wt entries with branch/head/bare/detached/locked fields')
 
-    const branchSwitch = await rpcCall(base.origin, apiCookie, 'git/branchSwitch', { name: 'verify-branch' })
+    const branchSwitch = await rpcCall(ctx.origin, apiCookie, 'git/branchSwitch', { name: 'verify-branch' })
     assert(branchSwitch.ok === true && branchSwitch.value?.from === 'main' && branchSwitch.value?.to === 'verify-branch',
       `git/branchSwitch failed: ${JSON.stringify(branchSwitch)}`)
     const worldHeadBranch = execFileSync('git', ['-C', fixtureRepo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim()
     assert(worldHeadBranch === 'verify-branch', `world re-read HEAD after switch mismatch: ${worldHeadBranch}`)
     step('branchSwitch RPC round-trip OK: main → verify-branch, world re-read matches')
 
-    const tagCreate = await rpcCall(base.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag', message: 'verify annotated tag' } })
+    const tagCreate = await rpcCall(ctx.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag', message: 'verify annotated tag' } })
     assert(tagCreate.ok === true && tagCreate.value?.name === 'verify-tag' && tagCreate.value?.annotated === true
       && /^[0-9a-f]{40}$/.test(tagCreate.value?.oid ?? ''),
       `git/tagCreate failed: ${JSON.stringify(tagCreate)}`)
@@ -802,12 +956,12 @@ async function main() {
     assert(worldTagType === 'tag', `world re-read tag object type mismatch: ${worldTagType}`)
     step(`tagCreate RPC round-trip OK: annotated verify-tag peeled @ ${String(tagCreate.value.oid).slice(0, 7)}, world re-read matches`)
 
-    const tagExists = await rpcCall(base.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag' } })
+    const tagExists = await rpcCall(ctx.origin, apiCookie, 'git/tagCreate', { options: { name: 'verify-tag' } })
     assert(tagExists.ok === false && tagExists.error?.code === 'git/tag-exists',
       `duplicate tagCreate should be git/tag-exists: ${JSON.stringify(tagExists)}`)
     step('tagCreate duplicate OK: git/tag-exists')
 
-    const switchBack = await rpcCall(base.origin, apiCookie, 'git/branchSwitch', { name: 'main' })
+    const switchBack = await rpcCall(ctx.origin, apiCookie, 'git/branchSwitch', { name: 'main' })
     assert(switchBack.ok === true && switchBack.value?.to === 'main',
       `git/branchSwitch back to main failed: ${JSON.stringify(switchBack)}`)
     assert(execFileSync('git', ['-C', fixtureRepo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { encoding: 'utf8' }).trim() === 'main',
@@ -815,7 +969,7 @@ async function main() {
     step('branchSwitch back to main OK')
 
     // verify-branch 与 main 同指（K 链提交后未再前进）⇒ -d 可删（wasMerged=true）。
-    const branchDelete = await rpcCall(base.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
+    const branchDelete = await rpcCall(ctx.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
     assert(branchDelete.ok === true && branchDelete.value?.deleted === 'verify-branch' && branchDelete.value?.wasMerged === true,
       `git/branchDelete failed: ${JSON.stringify(branchDelete)}`)
     let branchGone = false
@@ -827,12 +981,12 @@ async function main() {
     assert(branchGone, 'world re-read: refs/heads/verify-branch should be gone after delete')
     step('branchDelete RPC round-trip OK: verify-branch deleted (wasMerged=true), world re-read gone')
 
-    const branchMissing = await rpcCall(base.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
+    const branchMissing = await rpcCall(ctx.origin, apiCookie, 'git/branchDelete', { options: { name: 'verify-branch' } })
     assert(branchMissing.ok === false && branchMissing.error?.code === 'git/branch-not-found',
       `deleting a missing branch should be git/branch-not-found: ${JSON.stringify(branchMissing)}`)
     step('branchDelete missing OK: git/branch-not-found')
 
-    const tagDelete = await rpcCall(base.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
+    const tagDelete = await rpcCall(ctx.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
     assert(tagDelete.ok === true && tagDelete.value?.deleted === 'verify-tag',
       `git/tagDelete failed: ${JSON.stringify(tagDelete)}`)
     let tagGone = false
@@ -844,14 +998,14 @@ async function main() {
     assert(tagGone, 'world re-read: verify-tag should be gone after delete')
     step('tagDelete RPC round-trip OK: verify-tag deleted, world re-read gone')
 
-    const tagMissing = await rpcCall(base.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
+    const tagMissing = await rpcCall(ctx.origin, apiCookie, 'git/tagDelete', { name: 'verify-tag' })
     assert(tagMissing.ok === false && tagMissing.error?.code === 'git/tag-not-found',
       `deleting a missing tag should be git/tag-not-found: ${JSON.stringify(tagMissing)}`)
     step('tagDelete missing OK: git/tag-not-found')
 
     // force 双闸 host 半的真宿主面：force=true 无 acknowledged ⇒ git/bad-request
     // 'force-unacknowledged'（守卫最前，零命令——夹具此时连 upstream 都没有也不影响）。
-    const forceUnack = await rpcCall(base.origin, apiCookie, 'git/push', {
+    const forceUnack = await rpcCall(ctx.origin, apiCookie, 'git/push', {
       options: { setUpstream: false, force: true, acknowledged: false },
     })
     assert(forceUnack.ok === false && forceUnack.error?.code === 'git/bad-request',
@@ -860,38 +1014,33 @@ async function main() {
       `force-unacknowledged reason should cross the wire: ${JSON.stringify(forceUnack.error)}`)
     step('push force guard OK: force without acknowledged rejected as git/bad-request force-unacknowledged')
 
-    const worktreeRemove = await rpcCall(base.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
+    const worktreeRemove = await rpcCall(ctx.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
     assert(worktreeRemove.ok === true && fixtureNorm(worktreeRemove.value?.removed) === fixtureNorm(fixtureWt),
       `git/worktreeRemove failed: ${JSON.stringify(worktreeRemove)}`)
     assert(!existsSync(fixtureWt), `worktree directory should be gone after remove: ${fixtureWt}`)
-    const worktreeListAfter = await rpcCall(base.origin, apiCookie, 'git/worktreeList', {})
+    const worktreeListAfter = await rpcCall(ctx.origin, apiCookie, 'git/worktreeList', {})
     assert(worktreeListAfter.ok === true && worktreeListAfter.value?.worktrees?.length === 1,
       `worktreeList should fall back to the main worktree only: ${JSON.stringify(worktreeListAfter.value)}`)
     step('worktreeRemove RPC round-trip OK: directory gone, worktreeList back to 1 entry')
 
-    const worktreeMissing = await rpcCall(base.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
+    const worktreeMissing = await rpcCall(ctx.origin, apiCookie, 'git/worktreeRemove', { options: { path: fixtureWt } })
     assert(worktreeMissing.ok === false && worktreeMissing.error?.code === 'git/worktree-failed',
       `removing a missing worktree should be git/worktree-failed: ${JSON.stringify(worktreeMissing)}`)
     step('worktreeRemove missing OK: git/worktree-failed')
+}
 
+/** 阶段⑩（§5.95 断言 M：历史面六方法各一条真宿主往返 + 时间旅行冲突真宿主形状；world 重读助手经 ctx——定义提升至 phaseFixture）。 */
+async function phaseHistory(ctx) {
+  const { apiCookie, fixtureRepo, worldGit, worldStatusPorcelain, worldStaged, pseudoHeadExists } = ctx
+  // K 链提交的 oid（phaseCommit 落 ctx.commitOid——以 commitValue.oid 形状别名保持段内原文）。
+  const commitValue = { oid: ctx.commitOid }
     // ── 5.95 断言 M（v2 批次二 §4.7 verify-load 扩展）：历史面六方法各一条真宿主
     //        往返 + 时间旅行冲突真宿主形状。world 重读纪律同 K/L：每个写断言后用独立
     //        git 进程重读 HEAD/refs/工作区，不信 RPC 自述。夹具当前 HEAD = main @
     //        commitValue.oid（K 链提交），clean。
-    const worldGit = (...args) => execFileSync('git', args, { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-    const worldStatusPorcelain = () => execFileSync('git', ['status', '--porcelain'], { cwd: fixtureRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
-    const worldStaged = () => worldStatusPorcelain().split('\n').filter((line) => line.startsWith('M ') || line.startsWith('A ') || line.startsWith('D '))
-    const pseudoHeadExists = (head) => {
-      try {
-        execFileSync('git', ['rev-parse', '--verify', '--quiet', head], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
-        return true
-      } catch {
-        return false
-      }
-    }
 
     // M-1 blame：chain.txt（K 链提交的单行文件）→ world 首段 oid 对照。
-    const blame = await rpcCall(base.origin, apiCookie, 'git/blame', { options: { path: 'chain.txt' } })
+    const blame = await rpcCall(ctx.origin, apiCookie, 'git/blame', { options: { path: 'chain.txt' } })
     assert(blame.ok === true, `git/blame failed: ${JSON.stringify(blame)}`)
     assert(blame.value?.truncated === false && blame.value?.lineCount === 1
       && Array.isArray(blame.value?.ranges) && blame.value.ranges.length === 1
@@ -911,7 +1060,7 @@ async function main() {
     worldGit('add', 'cmp.txt')
     worldGit('commit', '-q', '-m', 'chore: verify-load compare commit')
     const cmpOid = worldGit('rev-parse', 'HEAD')
-    const compare = await rpcCall(base.origin, apiCookie, 'git/compareBranches', { options: { base: 'verify-cmp', compare: 'main' } })
+    const compare = await rpcCall(ctx.origin, apiCookie, 'git/compareBranches', { options: { base: 'verify-cmp', compare: 'main' } })
     assert(compare.ok === true, `git/compareBranches failed: ${JSON.stringify(compare)}`)
     assert(compare.value?.aheadCount === 1 && compare.value?.behindCount === 0
       && Array.isArray(compare.value?.ahead) && compare.value.ahead.length === 1
@@ -928,7 +1077,7 @@ async function main() {
     worldGit('add', 'cmp2.txt')
     worldGit('commit', '-q', '-m', 'chore: verify-load reset commit')
     const cmp2Oid = worldGit('rev-parse', 'HEAD')
-    const resetSoft = await rpcCall(base.origin, apiCookie, 'git/reset', {
+    const resetSoft = await rpcCall(ctx.origin, apiCookie, 'git/reset', {
       options: { kind: 'soft', target: 'HEAD~1', acknowledged: true, baseRevision: cmp2Oid },
     })
     assert(resetSoft.ok === true && resetSoft.value?.op === 'reset'
@@ -938,7 +1087,7 @@ async function main() {
       `after reset --soft the world should be HEAD=cmpOid with 1 staged entry (got porcelain ${JSON.stringify(worldStatusPorcelain())})`)
     step('reset soft RPC OK: HEAD stepped back, cmp2.txt staged (world re-read)')
 
-    const resetHard = await rpcCall(base.origin, apiCookie, 'git/reset', {
+    const resetHard = await rpcCall(ctx.origin, apiCookie, 'git/reset', {
       options: { kind: 'hard', target: null, acknowledged: true, baseRevision: cmpOid },
     })
     assert(resetHard.ok === true && resetHard.value?.op === 'reset' && resetHard.value?.newOid === cmpOid,
@@ -948,7 +1097,7 @@ async function main() {
     step('reset hard RPC OK: index and worktree reset, world clean')
 
     // 无 acknowledged ⇒ git/bad-request 'unacknowledged'（零命令——HEAD 不动）。
-    const resetUnack = await rpcCall(base.origin, apiCookie, 'git/reset', {
+    const resetUnack = await rpcCall(ctx.origin, apiCookie, 'git/reset', {
       options: { kind: 'hard', target: null, acknowledged: false, baseRevision: cmpOid },
     })
     assert(resetUnack.ok === false && resetUnack.error?.code === 'git/bad-request'
@@ -959,7 +1108,7 @@ async function main() {
 
     writeFileSync(join(fixtureRepo, 'cmp3.txt'), 'dsh verify-load mixed seed\n')
     worldGit('add', 'cmp3.txt')
-    const resetMixed = await rpcCall(base.origin, apiCookie, 'git/reset', {
+    const resetMixed = await rpcCall(ctx.origin, apiCookie, 'git/reset', {
       options: { kind: 'mixed', target: null, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
     })
     assert(resetMixed.ok === true && resetMixed.value?.op === 'reset',
@@ -980,7 +1129,7 @@ async function main() {
     worldGit('add', 'seed.md')
     worldGit('commit', '-q', '-m', 'chore: verify-load main edit')
     const mainEditOid = worldGit('rev-parse', 'HEAD')
-    const cpConflict = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+    const cpConflict = await rpcCall(ctx.origin, apiCookie, 'git/cherryPick', {
       options: { oid: cpOid, acknowledged: true, baseRevision: mainEditOid },
     })
     assert(cpConflict.ok === false && cpConflict.error?.code === 'git/merge-conflict',
@@ -996,20 +1145,20 @@ async function main() {
     assert(worldGit('rev-parse', 'HEAD') === mainEditOid, 'HEAD should not advance on a conflicted pick')
     step('cherryPick conflict OK: git/merge-conflict real-host shape (conflicted world-matched, abortable)')
 
-    const cpOverlap = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+    const cpOverlap = await rpcCall(ctx.origin, apiCookie, 'git/cherryPick', {
       options: { oid: cpOid, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
     })
     assert(cpOverlap.ok === false && cpOverlap.error?.code === 'git/operation-in-progress'
       && cpOverlap.error?.details?.op === 'cherry-pick',
     `overlapping cherryPick during an in-progress pick should be git/operation-in-progress: ${JSON.stringify(cpOverlap)}`)
-    const resetOverlap = await rpcCall(base.origin, apiCookie, 'git/reset', {
+    const resetOverlap = await rpcCall(ctx.origin, apiCookie, 'git/reset', {
       options: { kind: 'soft', target: null, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
     })
     assert(resetOverlap.ok === false && resetOverlap.error?.code === 'git/operation-in-progress',
       `reset during an in-progress pick should be git/operation-in-progress: ${JSON.stringify(resetOverlap)}`)
     step('operation-in-progress OK: overlapping cherryPick and reset both rejected (CHERRY_PICK_HEAD present)')
 
-    const abort = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    const abort = await rpcCall(ctx.origin, apiCookie, 'git/abortOperation', {})
     assert(abort.ok === true && abort.value?.aborted === 'cherry-pick',
       `git/abortOperation failed: ${JSON.stringify(abort)}`)
     assert(worldGit('rev-parse', 'HEAD') === mainEditOid && !pseudoHeadExists('CHERRY_PICK_HEAD')
@@ -1018,7 +1167,7 @@ async function main() {
     'world re-read after abort: HEAD restored, intermediate state cleared, worktree clean, seed.md back to the main edit')
     step('abortOperation OK: world restored to the pre-pick HEAD (CHERRY_PICK_HEAD cleared)')
 
-    const abortAgain = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    const abortAgain = await rpcCall(ctx.origin, apiCookie, 'git/abortOperation', {})
     assert(abortAgain.ok === true && abortAgain.value?.aborted === null,
       `idempotent abortOperation should return aborted=null: ${JSON.stringify(abortAgain)}`)
     step('abortOperation idempotent OK: aborted=null with no intermediate state')
@@ -1030,7 +1179,7 @@ async function main() {
     worldGit('commit', '-q', '-m', 'chore: verify-load cp file')
     const cpFileOid = worldGit('rev-parse', 'HEAD')
     worldGit('checkout', '-q', 'main')
-    const cpOk = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+    const cpOk = await rpcCall(ctx.origin, apiCookie, 'git/cherryPick', {
       options: { oid: cpFileOid, acknowledged: true, baseRevision: worldGit('rev-parse', 'HEAD') },
     })
     assert(cpOk.ok === true && cpOk.value?.op === 'cherry-pick' && cpOk.value?.oldOid === mainEditOid
@@ -1042,7 +1191,7 @@ async function main() {
     step('cherryPick success RPC OK: HEAD advanced, cpfile.txt landed (world re-read)')
 
     // M-6 revert：逆向摘到的提交（文件消失，world HEAD 前进）；空 revert ⇒ git-error op revert。
-    const revert = await rpcCall(base.origin, apiCookie, 'git/revert', {
+    const revert = await rpcCall(ctx.origin, apiCookie, 'git/revert', {
       options: { oid: pickedOid, acknowledged: true, baseRevision: pickedOid },
     })
     assert(revert.ok === true && revert.value?.op === 'revert' && revert.value?.oldOid === pickedOid,
@@ -1051,7 +1200,7 @@ async function main() {
       && worldGit('rev-parse', 'HEAD') === revert.value?.newOid,
     'world re-read after revert: cpfile.txt gone, worktree clean, HEAD advanced to the revert commit')
     const revertHead = worldGit('rev-parse', 'HEAD')
-    const emptyRevert = await rpcCall(base.origin, apiCookie, 'git/revert', {
+    const emptyRevert = await rpcCall(ctx.origin, apiCookie, 'git/revert', {
       options: { oid: pickedOid, acknowledged: true, baseRevision: revertHead },
     })
     assert(emptyRevert.ok === false && emptyRevert.error?.code === 'git/git-error'
@@ -1060,7 +1209,11 @@ async function main() {
     assert(worldGit('rev-parse', 'HEAD') === revertHead && worldStatusPorcelain() === '' && !pseudoHeadExists('REVERT_HEAD'),
       'world re-read after the empty revert: HEAD unchanged, no intermediate state left')
     step('revert RPC OK: picked commit reverted (world re-read) + empty revert ⇒ git-error op=revert')
+}
 
+/** 阶段⑪（§5.97 断言 N：提交链路与护栏七方法各一条真宿主往返 + 密钥硬阻断真宿主形状）。 */
+async function phaseCommitGuards(ctx) {
+  const { apiCookie, fixtureRepo, worldGit, worldStatusPorcelain } = ctx
     // ── 5.97 断言 N（v2 批次三 §5.7 verify-load 扩展）：提交链路与护栏七方法各一条
     //        真宿主往返 + 密钥硬阻断真宿主形状。world 重读纪律同 K/L/M。夹具当前
     //        HEAD = main @ revertHead（M 链收尾），clean。──
@@ -1068,7 +1221,7 @@ async function main() {
     const restoreStaged = (...paths) => execFileSync('git', ['restore', '--staged', '--', ...paths], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
 
     // N-1 stagePatch：对 chain.txt 的单 hunk patch → world 重读 staged diff 只含选中行。
-    const stagePatch = await rpcCall(base.origin, apiCookie, 'git/stagePatch', {
+    const stagePatch = await rpcCall(ctx.origin, apiCookie, 'git/stagePatch', {
       options: {
         path: 'chain.txt',
         patch: [
@@ -1095,7 +1248,7 @@ async function main() {
     //     commit 密钥硬阻断（D5=A overridable:false，world 零提交）。
     writeFileSync(join(fixtureRepo, 'secret-sample.txt'), 'aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n')
     execFileSync('git', ['add', '--', 'secret-sample.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
-    const scanStaged = await rpcCall(base.origin, apiCookie, 'git/scanStaged', {})
+    const scanStaged = await rpcCall(ctx.origin, apiCookie, 'git/scanStaged', {})
     assert(scanStaged.ok === true && scanStaged.value?.blocked === true,
       `git/scanStaged should block the staged secret: ${JSON.stringify(scanStaged)}`)
     const secretViolation = (scanStaged.value?.violations ?? []).find((v) => v.kind === 'secret' && v.path === 'secret-sample.txt')
@@ -1105,7 +1258,7 @@ async function main() {
     `secret violation should carry a redacted match without plaintext: ${JSON.stringify(secretViolation)}`)
     step('scanStaged RPC OK: secret blocked, redactedMatch masked (no plaintext crossing the wire)')
     const commitsBeforeBlock = worldCommitCount()
-    const blockedCommit = await rpcCall(base.origin, apiCookie, 'git/commit', {
+    const blockedCommit = await rpcCall(ctx.origin, apiCookie, 'git/commit', {
       options: { message: 'feat: sneak the key', amend: false, skipHooks: false },
     })
     assert(blockedCommit.ok === false && blockedCommit.error?.code === 'git/commit-blocked',
@@ -1121,7 +1274,7 @@ async function main() {
     rmSync(join(fixtureRepo, 'secret-sample.txt'), { force: true })
 
     // N-3 repoDiagnostics：夹具钉死 autocrlf=false（§1 步）→ config 回读 + 抽样形状。
-    const repoDiagnostics = await rpcCall(base.origin, apiCookie, 'git/repoDiagnostics', {})
+    const repoDiagnostics = await rpcCall(ctx.origin, apiCookie, 'git/repoDiagnostics', {})
     assert(repoDiagnostics.ok === true, `git/repoDiagnostics failed: ${JSON.stringify(repoDiagnostics)}`)
     assert(repoDiagnostics.value?.autocrlf === 'false' && repoDiagnostics.value?.coreEol === null
       && Number.isInteger(repoDiagnostics.value?.worktreeCrlfCount)
@@ -1132,7 +1285,7 @@ async function main() {
     // N-4 stashPush/stashList/stashPop 全链（D4=B 缺省含 untracked）：world 重读。
     writeFileSync(join(fixtureRepo, 'stash-file.txt'), 'dsh verify-load stash payload\n')
     const worldStashCount = () => worldGit('stash', 'list', '--format=%H').split('\n').filter((line) => line !== '').length
-    const stashPush = await rpcCall(base.origin, apiCookie, 'git/stashPush', {
+    const stashPush = await rpcCall(ctx.origin, apiCookie, 'git/stashPush', {
       options: { includeUntracked: true, message: 'verify stash' },
     })
     assert(stashPush.ok === true && stashPush.value?.index === 0,
@@ -1142,7 +1295,7 @@ async function main() {
     `world after stashPush: stash listed, worktree clean, untracked gone (porcelain ${JSON.stringify(worldStatusPorcelain())})`)
     step('stashPush RPC round-trip OK: untracked included (D4=B), world re-read clean with 1 stash entry')
 
-    const stashList = await rpcCall(base.origin, apiCookie, 'git/stashList', {})
+    const stashList = await rpcCall(ctx.origin, apiCookie, 'git/stashList', {})
     assert(stashList.ok === true && Array.isArray(stashList.value?.stashes) && stashList.value.stashes.length === 1,
       `git/stashList failed: ${JSON.stringify(stashList)}`)
     const stashEntry = stashList.value.stashes[0]
@@ -1153,7 +1306,7 @@ async function main() {
     `stashList entry wrong vs world re-read: ${JSON.stringify(stashEntry)} vs ${worldStashOid}`)
     step('stashList RPC round-trip OK: index/oid world-matched, message/authoredAt shaped')
 
-    const stashPop = await rpcCall(base.origin, apiCookie, 'git/stashPop', { options: {} })
+    const stashPop = await rpcCall(ctx.origin, apiCookie, 'git/stashPop', { options: {} })
     assert(stashPop.ok === true && stashPop.value?.index === 0,
       `git/stashPop failed: ${JSON.stringify(stashPop)}`)
     assert(readFileSync(join(fixtureRepo, 'stash-file.txt'), 'utf8') === 'dsh verify-load stash payload\n'
@@ -1167,12 +1320,12 @@ async function main() {
     execFileSync('git', ['add', '--', 'conflict-stash.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
     execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load stash conflict base'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
     writeFileSync(join(fixtureRepo, 'conflict-stash.txt'), 'stashed\n')
-    const conflictStash = await rpcCall(base.origin, apiCookie, 'git/stashPush', { options: { includeUntracked: true, message: 'conflict stash' } })
+    const conflictStash = await rpcCall(ctx.origin, apiCookie, 'git/stashPush', { options: { includeUntracked: true, message: 'conflict stash' } })
     assert(conflictStash.ok === true, `git/stashPush (conflict fixture) failed: ${JSON.stringify(conflictStash)}`)
     writeFileSync(join(fixtureRepo, 'conflict-stash.txt'), 'mainline\n')
     execFileSync('git', ['add', '--', 'conflict-stash.txt'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
     execFileSync('git', ['commit', '-q', '-m', 'chore: verify-load stash conflict mainline'], { cwd: fixtureRepo, stdio: ['ignore', 'pipe', 'pipe'] })
-    const stashPopConflict = await rpcCall(base.origin, apiCookie, 'git/stashPop', { options: {} })
+    const stashPopConflict = await rpcCall(ctx.origin, apiCookie, 'git/stashPop', { options: {} })
     assert(stashPopConflict.ok === false && stashPopConflict.error?.code === 'git/merge-conflict',
       `conflicting stashPop should be git/merge-conflict: ${JSON.stringify(stashPopConflict)}`)
     const worldUnmergedStash = worldGit('diff', '--name-only', '--diff-filter=U').split('\n').filter((line) => line !== '')
@@ -1188,23 +1341,27 @@ async function main() {
     // N-6 stashDrop danger 闸：无 acknowledged ⇒ git/bad-request 'unacknowledged'
     //     （零命令——stash 仍在）；acknowledged ⇒ 删除（world 重读清空）；再删 ⇒
     //     git/stash-not-found。
-    const stashDropUnack = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: false } })
+    const stashDropUnack = await rpcCall(ctx.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: false } })
     assert(stashDropUnack.ok === false && stashDropUnack.error?.code === 'git/bad-request'
       && stashDropUnack.error?.details?.reason === 'unacknowledged',
     `stashDrop without acknowledgement should be git/bad-request unacknowledged: ${JSON.stringify(stashDropUnack)}`)
     assert(worldStashCount() === 1, 'rejected stashDrop should execute zero commands (stash entry unchanged)')
     step('stashDrop guard OK: unacknowledged rejected (zero commands)')
-    const stashDrop = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
+    const stashDrop = await rpcCall(ctx.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
     assert(stashDrop.ok === true && stashDrop.value?.index === 0,
       `git/stashDrop failed: ${JSON.stringify(stashDrop)}`)
     assert(worldStashCount() === 0, 'world re-read: stash list empty after the acknowledged drop')
     step('stashDrop RPC round-trip OK: stash entry dropped (world re-read)')
-    const stashDropMissing = await rpcCall(base.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
+    const stashDropMissing = await rpcCall(ctx.origin, apiCookie, 'git/stashDrop', { options: { index: 0, acknowledged: true } })
     assert(stashDropMissing.ok === false && stashDropMissing.error?.code === 'git/stash-not-found'
       && stashDropMissing.error?.details?.index === 0,
     `dropping a missing stash should be git/stash-not-found: ${JSON.stringify(stashDropMissing)}`)
     step('stashDrop missing OK: git/stash-not-found (typed pre-check on the real host)')
+}
 
+/** 阶段⑫（§5.985 断言 O：体验集成六方法各一条真宿主断言——createPr/prForBranch 只断负路径）。 */
+async function phaseExperience(ctx) {
+  const { apiCookie, fixtureRepo, fixtureBare, worldGit, fixtureNorm } = ctx
     // ── 5.985 断言 O（v2 批次四 §6.7 verify-load 扩展）：体验集成六方法各一条真宿主
     //        断言。createPr/prForBranch 只断负路径（评审定案：ghCommand 已在 profile
     //        补丁钉到解析不到的固件名 dshgit-fixture-no-such-gh）。world 重读纪律同
@@ -1214,7 +1371,7 @@ async function main() {
     //     admin-repo.spec.ts 真临时目录承载（单宿主单 Config 无法在本列给出非仓库
     //     工作区——§6.7 的现实约束，见文件头 O 段注记）。
     const headBeforeInit = worldGit('rev-parse', 'HEAD')
-    const initFailed = await rpcCall(base.origin, apiCookie, 'git/initRepository', {})
+    const initFailed = await rpcCall(ctx.origin, apiCookie, 'git/initRepository', {})
     assert(initFailed.ok === false && initFailed.error?.code === 'git/init-failed',
       `initRepository on the pinned existing repository should be git/init-failed: ${JSON.stringify(initFailed)}`)
     assert(initFailed.error?.details?.reason === 'already-a-repository'
@@ -1230,7 +1387,7 @@ async function main() {
     //     `git ls-files -s` 对照。
     worldGit('push', '-q', 'origin', 'main')
     worldGit('-c', 'protocol.file.allow=always', 'submodule', 'add', fixtureBare, 'verify-sub')
-    const subStatus = await rpcCall(base.origin, apiCookie, 'git/submoduleStatus', {})
+    const subStatus = await rpcCall(ctx.origin, apiCookie, 'git/submoduleStatus', {})
     assert(subStatus.ok === true && Array.isArray(subStatus.value?.submodules) && subStatus.value.submodules.length === 1,
       `git/submoduleStatus should list the freshly added submodule: ${JSON.stringify(subStatus)}`)
     const subEntry = subStatus.value.submodules[0]
@@ -1245,7 +1402,7 @@ async function main() {
     // O-3 auditLog 正路径：A–N 链全部写操作的环内记录——newest-first 时序、双出口
     //     （成功 ok:true/code=null 与失败 ok:false+code 并存，§6.5）、字段形状、
     //     **summary 不含 commit message 正文与文件内容的负断言**（§6.10）、since/limit。
-    const auditLog = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: {} })
+    const auditLog = await rpcCall(ctx.origin, apiCookie, 'git/auditLog', { options: {} })
     assert(auditLog.ok === true && Array.isArray(auditLog.value?.entries) && auditLog.value.entries.length >= 10,
       `git/auditLog should surface the accumulated write-op ring: ${JSON.stringify(auditLog)}`)
     const auditEntries = auditLog.value.entries
@@ -1271,10 +1428,10 @@ async function main() {
     const auditDump = JSON.stringify(auditEntries)
     assert(!auditDump.includes('feat: verify-load commit chain'), 'audit summaries must not carry commit message bodies')
     assert(!auditDump.includes('dsh verify-load stash payload'), 'audit summaries must not carry file contents')
-    const auditFuture = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: { since: new Date(Date.now() + 60_000).toISOString() } })
+    const auditFuture = await rpcCall(ctx.origin, apiCookie, 'git/auditLog', { options: { since: new Date(Date.now() + 60_000).toISOString() } })
     assert(auditFuture.ok === true && auditFuture.value?.entries?.length === 0,
       `auditLog with a future since should be empty: ${JSON.stringify(auditFuture)}`)
-    const auditLimited = await rpcCall(base.origin, apiCookie, 'git/auditLog', { options: { limit: 1 } })
+    const auditLimited = await rpcCall(ctx.origin, apiCookie, 'git/auditLog', { options: { limit: 1 } })
     assert(auditLimited.ok === true && auditLimited.value?.entries?.length === 1
       && auditLimited.value.entries[0]?.at === auditEntries[0]?.at,
     `auditLog limit=1 should return the newest entry: ${JSON.stringify(auditLimited)}`)
@@ -1282,18 +1439,18 @@ async function main() {
 
     // O-4 generatePrDescription 负路径：无 LLM 路由 ⇒ git/llm-route-unresolved（同
     //     generateCommitMessage 既有负往返形态——本环境无路由，确定性）。
-    const prDesc = await rpcCall(base.origin, apiCookie, 'git/generatePrDescription', {})
+    const prDesc = await rpcCall(ctx.origin, apiCookie, 'git/generatePrDescription', {})
     assert(prDesc.ok === false && prDesc.error?.code === 'git/llm-route-unresolved',
       `generatePrDescription without an LLM route should be git/llm-route-unresolved: ${JSON.stringify(prDesc)}`)
     step('generatePrDescription negative round-trip OK: git/llm-route-unresolved (endpoint served, domain error crosses the wire)')
 
     // O-5 createPr 只断负路径（评审定案 §6.7/§6.10）：无 acknowledged ⇒ bad-request
     //     'unacknowledged'（零命令，先于 gh 解析）；ghCommand 固件名 ⇒ git/pr-tool-missing。
-    const createUnack = await rpcCall(base.origin, apiCookie, 'git/createPr', { options: { title: 't', body: 'b', acknowledged: false } })
+    const createUnack = await rpcCall(ctx.origin, apiCookie, 'git/createPr', { options: { title: 't', body: 'b', acknowledged: false } })
     assert(createUnack.ok === false && createUnack.error?.code === 'git/bad-request'
       && createUnack.error?.details?.reason === 'unacknowledged',
     `createPr without acknowledgement should be git/bad-request unacknowledged: ${JSON.stringify(createUnack)}`)
-    const createMissing = await rpcCall(base.origin, apiCookie, 'git/createPr', {
+    const createMissing = await rpcCall(ctx.origin, apiCookie, 'git/createPr', {
       options: { title: 'verify-load cannot create', body: 'blocked by fixture ghCommand', base: 'main', draft: false, acknowledged: true },
     })
     assert(createMissing.ok === false && createMissing.error?.code === 'git/pr-tool-missing'
@@ -1303,12 +1460,16 @@ async function main() {
 
     // O-6 prForBranch 负路径：ghCommand 固件名 ⇒ git/pr-tool-missing（成功/null 降级
     //     形状由 pr.spec transport 切片单测承载）。
-    const prBranch = await rpcCall(base.origin, apiCookie, 'git/prForBranch', { branch: 'main' })
+    const prBranch = await rpcCall(ctx.origin, apiCookie, 'git/prForBranch', { branch: 'main' })
     assert(prBranch.ok === false && prBranch.error?.code === 'git/pr-tool-missing'
       && prBranch.error?.details?.tool === 'gh',
     `prForBranch with the unresolvable fixture ghCommand should be git/pr-tool-missing: ${JSON.stringify(prBranch)}`)
     step('prForBranch negative path OK: git/pr-tool-missing via the pinned fixture ghCommand')
+}
 
+/** 阶段⑬（§5.99 断言 P：冲突解决面三方法各一条真宿主断言）。 */
+async function phaseConflicts(ctx) {
+  const { apiCookie, fixtureRepo, worldGit, worldStatusPorcelain, pseudoHeadExists } = ctx
     // ── 5.99 断言 P（v3 批次一 §3.8 verify-load 扩展）：冲突解决面三方法各一条真宿主
     //        断言。world 重读纪律同 K/L/M/N。O-2 留下了 staged 未提交的 submodule
     //        gitlink——先收尾成提交，给 cherry-pick 夹具一个干净起点。
@@ -1331,7 +1492,7 @@ async function main() {
     worldGit('add', 'cf.txt')
     worldGit('commit', '-q', '-m', 'chore: verify-load cf main')
     const cfMainOid = worldGit('rev-parse', 'HEAD')
-    const cfPick = await rpcCall(base.origin, apiCookie, 'git/cherryPick', {
+    const cfPick = await rpcCall(ctx.origin, apiCookie, 'git/cherryPick', {
       options: { oid: cfOid, acknowledged: true, baseRevision: cfMainOid },
     })
     assert(cfPick.ok === false && cfPick.error?.code === 'git/merge-conflict',
@@ -1342,7 +1503,7 @@ async function main() {
 
     // P-1 operationContinue 负路径：unmerged 未解 ⇒ git/bad-request 'conflicts-remaining'
     //     （零命令——world HEAD 不动、unmerged 仍在）。
-    const cfContinueBlocked = await rpcCall(base.origin, apiCookie, 'git/operationContinue', {})
+    const cfContinueBlocked = await rpcCall(ctx.origin, apiCookie, 'git/operationContinue', {})
     assert(cfContinueBlocked.ok === false && cfContinueBlocked.error?.code === 'git/bad-request'
       && cfContinueBlocked.error?.details?.reason === 'conflicts-remaining',
     `operationContinue with unresolved conflicts should be git/bad-request conflicts-remaining: ${JSON.stringify(cfContinueBlocked)}`)
@@ -1353,7 +1514,7 @@ async function main() {
 
     // P-2 conflictList 真宿主形状：UU 条目全字段 + operation='cherry-pick' + abortable，
     //     路径集与 world diff-filter=U 一致。
-    const cfList = await rpcCall(base.origin, apiCookie, 'git/conflictList', {})
+    const cfList = await rpcCall(ctx.origin, apiCookie, 'git/conflictList', {})
     assert(cfList.ok === true && Array.isArray(cfList.value?.conflicts), `git/conflictList failed: ${JSON.stringify(cfList)}`)
     const cfEntry = cfList.value.conflicts[0]
     assert(cfList.value.conflicts.length === 1 && cfEntry?.path === 'cf.txt' && cfEntry?.code === 'UU'
@@ -1367,7 +1528,7 @@ async function main() {
 
     // P-3 conflictResolve（theirs）：RPC resolved 回带 + world 重读 unmerged 清空、
     //     index 落对方侧内容 + git/status.conflicted 空。
-    const cfResolve = await rpcCall(base.origin, apiCookie, 'git/conflictResolve', {
+    const cfResolve = await rpcCall(ctx.origin, apiCookie, 'git/conflictResolve', {
       options: { choices: [{ path: 'cf.txt', resolution: 'theirs' }] },
     })
     assert(cfResolve.ok === true && JSON.stringify(cfResolve.value?.resolved) === JSON.stringify(['cf.txt']),
@@ -1376,7 +1537,7 @@ async function main() {
       && readFileSync(join(fixtureRepo, 'cf.txt'), 'utf8') === 'cf branch line\n'
       && worldGit('ls-files', '-s', '--', 'cf.txt').trim().split(/\s+/)[2] === '0',
     'world re-read after resolve: unmerged cleared, worktree + index carry the theirs side')
-    const statusAfterResolve = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    const statusAfterResolve = await rpcCall(ctx.origin, apiCookie, 'git/status', {})
     assert(statusAfterResolve.ok === true && Array.isArray(statusAfterResolve.value?.conflicted)
       && statusAfterResolve.value.conflicted.length === 0,
     `git/status.conflicted should be empty after conflictResolve: ${JSON.stringify(statusAfterResolve.value?.conflicted)}`)
@@ -1384,7 +1545,7 @@ async function main() {
 
     // P-4 operationContinue 正路径：done:true + world 重读（HEAD 前进为被摘提交、
     //     序役伪引用清空、工作区干净——GIT_EDITOR=true 防挂起的真宿主面）。
-    const cfContinue = await rpcCall(base.origin, apiCookie, 'git/operationContinue', {})
+    const cfContinue = await rpcCall(ctx.origin, apiCookie, 'git/operationContinue', {})
     assert(cfContinue.ok === true && cfContinue.value?.op === 'cherry-pick' && cfContinue.value?.done === true
       && Array.isArray(cfContinue.value?.conflicted) && cfContinue.value.conflicted.length === 0,
     `git/operationContinue should complete the pick: ${JSON.stringify(cfContinue)}`)
@@ -1394,7 +1555,11 @@ async function main() {
       && readFileSync(join(fixtureRepo, 'cf.txt'), 'utf8') === 'cf branch line\n',
     'world re-read after continue: pick committed (GIT_EDITOR=true kept it non-interactive), sequencer cleared, worktree clean')
     step('operationContinue RPC OK: done=true, HEAD advanced to the picked commit (world re-read)')
+}
 
+/** 阶段⑭（§5.995 断言 Q：merge/rebase 两方法各一条真宿主正路径 + dirty / operation-in-progress 两负路径）。 */
+async function phaseMergeRebase(ctx) {
+  const { apiCookie, fixtureRepo, worldGit, worldStatusPorcelain, pseudoHeadExists } = ctx
     // ── 5.995 断言 Q（v3 批次二 §4.7 verify-load 扩展）：merge/rebase 两方法各一条真宿主
     //        正路径 + dirty / operation-in-progress 两负路径。world 重读纪律同 K/L/M/N/O/P。
     //        夹具起点：main @ 'chore: verify-load cf branch' 的 pick（clean，无中间态）。
@@ -1415,7 +1580,7 @@ async function main() {
     const ffOid = worldGit('rev-parse', 'HEAD')
     worldGit('checkout', '-q', 'main')
     const ffMainOid = worldGit('rev-parse', 'HEAD')
-    const ffMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+    const ffMerge = await rpcCall(ctx.origin, apiCookie, 'git/branchMerge', {
       options: { branch: 'verify-ff', fastForward: 'ff-only', acknowledged: true, baseRevision: ffMainOid },
     })
     assert(ffMerge.ok === true, `git/branchMerge (ff-only) failed: ${JSON.stringify(ffMerge)}`)
@@ -1431,7 +1596,7 @@ async function main() {
     // Q-2 branchMerge 负路径 dirty：untracked 在场 ⇒ git/dirty-worktree（零命令——
     //     HEAD 不动、无 MERGE_HEAD）；清场后工作区回干净。
     writeFileSync(join(fixtureRepo, 'dirty.txt'), 'dsh verify-load dirty sample\n')
-    const dirtyMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+    const dirtyMerge = await rpcCall(ctx.origin, apiCookie, 'git/branchMerge', {
       options: { branch: 'verify-cp', fastForward: 'auto', acknowledged: true, baseRevision: null },
     })
     assert(dirtyMerge.ok === false && dirtyMerge.error?.code === 'git/dirty-worktree'
@@ -1455,7 +1620,7 @@ async function main() {
     worldGit('add', 'seed.md')
     worldGit('commit', '-q', '-m', 'chore: verify-load mg main')
     const mgMainOid = worldGit('rev-parse', 'HEAD')
-    const mgMerge = await rpcCall(base.origin, apiCookie, 'git/branchMerge', {
+    const mgMerge = await rpcCall(ctx.origin, apiCookie, 'git/branchMerge', {
       options: { branch: 'verify-mg', fastForward: 'no-ff', acknowledged: true, baseRevision: mgMainOid },
     })
     assert(mgMerge.ok === false && mgMerge.error?.code === 'git/merge-conflict',
@@ -1471,7 +1636,7 @@ async function main() {
 
     // Q-4 rebase 负路径 operation-in-progress：MERGE_HEAD 在场 ⇒ git/operation-in-progress
     //     （op='merge'——批次一共享探测的真宿主面；零命令、无 rebase 目录）。
-    const rbOverlap = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+    const rbOverlap = await rpcCall(ctx.origin, apiCookie, 'git/rebase', {
       options: { upstream: 'main', acknowledged: true, baseRevision: mgMainOid },
     })
     assert(rbOverlap.ok === false && rbOverlap.error?.code === 'git/operation-in-progress'
@@ -1482,7 +1647,7 @@ async function main() {
     step('rebase guard OK: operation-in-progress on the real host (shared detectOperation, zero commands)')
 
     // Q-5 abort 治愈：aborted='merge'（world 重读 HEAD 回原、MERGE_HEAD 清空、干净）。
-    const mgAbort = await rpcCall(base.origin, apiCookie, 'git/abortOperation', {})
+    const mgAbort = await rpcCall(ctx.origin, apiCookie, 'git/abortOperation', {})
     assert(mgAbort.ok === true && mgAbort.value?.aborted === 'merge',
       `git/abortOperation should clear the merge state: ${JSON.stringify(mgAbort)}`)
     assert(worldGit('rev-parse', 'HEAD') === mgMainOid && !pseudoHeadExists('MERGE_HEAD')
@@ -1507,7 +1672,7 @@ async function main() {
     const rbMainOid = worldGit('rev-parse', 'HEAD')
     worldGit('checkout', '-q', 'verify-rb')
     assert(worldGit('rev-list', '--count', 'main..verify-rb') === '3', 'fixture sanity: three rb commits behind main')
-    const rbRebase = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+    const rbRebase = await rpcCall(ctx.origin, apiCookie, 'git/rebase', {
       options: { upstream: 'main', acknowledged: true, baseRevision: rbTip },
     })
     assert(rbRebase.ok === true, `git/rebase failed: ${JSON.stringify(rbRebase)}`)
@@ -1525,7 +1690,7 @@ async function main() {
 
     // Q-7 rebase up-to-date 幂等：已基于 main 的分支再 rebase ⇒ done=true、HEAD 不动。
     const rbHead = worldGit('rev-parse', 'HEAD')
-    const rbAgain = await rpcCall(base.origin, apiCookie, 'git/rebase', {
+    const rbAgain = await rpcCall(ctx.origin, apiCookie, 'git/rebase', {
       options: { upstream: 'main', acknowledged: true, baseRevision: rbHead },
     })
     assert(rbAgain.ok === true && rbAgain.value?.done === true && rbAgain.value?.newOid === rbHead,
@@ -1533,7 +1698,11 @@ async function main() {
     assert(worldGit('rev-parse', 'HEAD') === rbHead && worldGit('rev-list', '--count', 'main..verify-rb') === '3',
       'world re-read after the idempotent rebase: HEAD unchanged, commit count unchanged')
     step('rebase idempotent OK: up-to-date branch rebased with zero rewrite (git up-to-date semantics)')
+}
 
+/** 阶段⑮（§5.95 断言 S：检查点/归因三断言——entries=0 降级 WARN，绝不 fail）。 */
+async function phaseCheckpoints(ctx) {
+  const { apiCookie } = ctx
     // ── 5.95 断言 S（v3 批次四 §6.7 verify-load 扩展）：检查点/归因三断言。
     //        checkpointList（真宿主一回合后 entries≥1——夹具会话产生 workspace/changes
     //        事件）。本链全部为裸 RPC 驱动、不开真实聊天回合（真宿主无可编程的「起一
@@ -1542,7 +1711,7 @@ async function main() {
     //        「施工时实测定案」的落地：entries≥1 时走严格形状断言，=0 时 WARN）。
     //        checkpointDiff 负路径（环外 seq ⇒ git/checkpoint-unavailable details.seq）与
     //        attributionGet 形状不依赖回合事件，恒严格。──
-    const checkpointListS = await rpcCall(base.origin, apiCookie, 'git/checkpointList', {})
+    const checkpointListS = await rpcCall(ctx.origin, apiCookie, 'git/checkpointList', {})
     assert(checkpointListS.ok === true, `git/checkpointList failed: ${JSON.stringify(checkpointListS)}`)
     assert(Array.isArray(checkpointListS.value?.entries), `checkpointList.entries should be an array: ${JSON.stringify(checkpointListS)}`)
     if (checkpointListS.value.entries.length >= 1) {
@@ -1564,13 +1733,13 @@ async function main() {
       console.warn('[verify] WARN: checkpointList returned zero entries — no session turn produced a workspace/changes event on this deployment (raw-RPC chain opens no chat turns; workspace-changes may be unmounted)（降级口径，非失败——agentToolsStatus R 相先例）')
       step('checkpointList OK (degraded): entries=[] (no session turn observed — see WARN)')
     }
-    const checkpointDiffNeg = await rpcCall(base.origin, apiCookie, 'git/checkpointDiff', { options: { seq: 987_654_321, index: 0 } })
+    const checkpointDiffNeg = await rpcCall(ctx.origin, apiCookie, 'git/checkpointDiff', { options: { seq: 987_654_321, index: 0 } })
     assert(checkpointDiffNeg.ok === false, `git/checkpointDiff with a ring-external seq unexpectedly succeeded: ${JSON.stringify(checkpointDiffNeg)}`)
     assert(checkpointDiffNeg.error?.code === 'git/checkpoint-unavailable'
       && checkpointDiffNeg.error?.details?.seq === 987_654_321,
     `expected git/checkpoint-unavailable with details.seq, got ${JSON.stringify(checkpointDiffNeg.error)}`)
     step('checkpointDiff negative OK: ring-external seq rejected as git/checkpoint-unavailable (details.seq carried)')
-    const attributionS = await rpcCall(base.origin, apiCookie, 'git/attributionGet', {})
+    const attributionS = await rpcCall(ctx.origin, apiCookie, 'git/attributionGet', {})
     assert(attributionS.ok === true, `git/attributionGet failed: ${JSON.stringify(attributionS)}`)
     assert(Array.isArray(attributionS.value?.entries), `attributionGet.entries should be an array: ${JSON.stringify(attributionS)}`)
     for (const rowS of attributionS.value.entries) {
@@ -1580,20 +1749,28 @@ async function main() {
       `attribution entry shape wrong: ${JSON.stringify(rowS)}`)
     }
     step(`attributionGet OK: ${attributionS.value.entries.length} entries, all in the four-state vocabulary (shape)`)
+}
 
+/** 阶段⑯（§5.95b 断言 T 第一相：automationStatus off 档形状——off 全程零动作）。 */
+async function phaseAutomationOff(ctx) {
+  const { apiCookie } = ctx
     // ── 5.95b 断言 T 第一相（v3 批次五 §7.6 verify-load 扩展）：automationStatus off
     //        档形状。默认 Config（profile 补丁未设自动化六键）⇒ autoCommitMode='off' +
     //        autoBranchMode='off' + lastActions 深等 []（off 全程零动作——引擎 observe
     //        即退的端到端面）；动作环条目形状（at/action/ok/detail）在 Phase-2 按实际
     //        观测严格断言。──
-    const automationT = await rpcCall(base.origin, apiCookie, 'git/automationStatus', {})
+    const automationT = await rpcCall(ctx.origin, apiCookie, 'git/automationStatus', {})
     assert(automationT.ok === true, `git/automationStatus failed: ${JSON.stringify(automationT)}`)
     assert(automationT.value?.autoCommitMode === 'off' && automationT.value?.autoBranchMode === 'off',
       `automationStatus off-shape wrong (default config, no profile patch): ${JSON.stringify(automationT)}`)
     assert(Array.isArray(automationT.value?.lastActions) && automationT.value.lastActions.length === 0,
       `automationStatus.lastActions should be [] at both modes off (zero actions end-to-end): ${JSON.stringify(automationT)}`)
     step('automationStatus off-shape OK: autoCommitMode=off, autoBranchMode=off, lastActions=[]')
+}
 
+/** 阶段⑰（§5.6 断言 F：strict typert 注册判别——按列 flag target.strictTypert）。 */
+async function phaseStrictTypert(ctx) {
+  const { apiCookie } = ctx
     // ── 5.6 断言 F：strict 注册判别（§⑧-2 动态安装链路）。
     //        生成产物 lib/typert.host.js 经 typert-loader 自动注册后，scope 的
     //        strict codec 在网关拒绝非法值为 gateway/input-invalid；若仍是 SRC
@@ -1603,22 +1780,34 @@ async function main() {
     if (!target.strictTypert) {
       step('strict typert registration probe: not asserted for this column (target.strictTypert=false)')
     } else {
-      const strictProbe = await rpcCall(base.origin, apiCookie, 'git/identity', { scope: 'not-a-scope' })
+      const strictProbe = await rpcCall(ctx.origin, apiCookie, 'git/identity', { scope: 'not-a-scope' })
       assert(strictProbe.ok === false, `git/identity(scope=<invalid>) unexpectedly succeeded: ${JSON.stringify(strictProbe)}`)
       assert(strictProbe.error?.code === 'gateway/input-invalid',
         `expected gateway/input-invalid (strict descriptor registered), got ${JSON.stringify(strictProbe.error)} — ` +
         'the generated ./typert artifact was NOT registered (SRC fallback is active)')
       step('strict descriptor registered OK: invalid scope rejected as gateway/input-invalid (typert-loader auto-registration works)')
     }
+}
 
+/** 阶段⑱（§6 未知端点负向检查——证明 /api 路由表真实解析了 git 命名空间）。 */
+async function phaseNegative(ctx) {
+  const { apiCookie } = ctx
     // ── 6. 断言 E：未知端点不被服务（证明 /api 路由表真实解析了 git 命名空间）。
     //        实测：未知端点在 Connection 传输层就 404（gateway 的 claimsEndpoint 不认领
     //        未注册端点，请求到不了 dispatchRpc），到达 dispatchRpc 的未知方法才返回
     //        gateway/invocation-unavailable。两种拒绝形状都算通过。──
-    const negative = await rpcNegative(base.origin, apiCookie, 'git/__no_such_method__')
+    const negative = await rpcNegative(ctx.origin, apiCookie, 'git/__no_such_method__')
     assert(negative.rejected, `unknown endpoint unexpectedly succeeded: ${JSON.stringify(negative)}`)
     step(`negative check OK: unknown endpoint rejected (${negative.detail})`)
+}
 
+/**
+ * 阶段⑲（§5.999 断言 R 第二相 + T 第二相：taskkill 停第一相宿主 → profile 补丁
+ * agentTools='readonly' + autoCommitMode='turn-end' + autoBranchMode='session-start'
+ * → 同 profile 重启 → agentToolsStatus/automationStatus plumb-through 断言）。
+ */
+async function phaseRestartReadonly(ctx) {
+  const { env, profilePatchPath, worldGit } = ctx
     // ── 5.999 断言 R 第二相（v3 批次三 §5.8）：profile 补丁 agentTools='readonly' ⇒
     //        taskkill 停第一相宿主 → 同 profile 重启 → agentToolsStatus 数量断言。
     //        两相共用 profile 与夹具仓库（第二相只读观测，零 repo 交互——Q 链收尾的
@@ -1632,7 +1821,7 @@ async function main() {
     //        凑）；若环境意外产生了回合动作（lastActions 非空），则升级为严格形状 +
     //        夹具仓 trailer 提交 world 重读断言。──
     step('stopping phase-1 host for the agentTools=readonly phase (taskkill /T /F)')
-    await stopHost(host)
+    await stopHost(ctx.host)
     const readonlyPatchRows = "    agentTools: 'readonly'\n    autoCommitMode: 'turn-end'\n    autoBranchMode: 'session-start'"
     let patchText = readFileSync(profilePatchPath, 'utf8')
     if (!/^ {4}agentTools: /m.test(patchText)) {
@@ -1645,13 +1834,13 @@ async function main() {
     step('starting phase-2 web host (agentTools=readonly)…')
     // boot 行匹配只看第二相新增输出——累积输出里还有第一相的 boot 行（旧宿主已死，
     // 匹配旧 URL ⇒ /connect fetch failed——首跑实测踩坑）。
-    const phase2OutputOffset = hostOutput.length
-    host = spawnHost(env, (chunk) => { hostOutput += chunk })
-    const bootLine2 = await waitBootLine(host, () => hostOutput.slice(phase2OutputOffset))
+    const phase2OutputOffset = ctx.hostOutput.length
+    ctx.host = spawnHost(ctx.env, (chunk) => { ctx.hostOutput += chunk })
+    const bootLine2 = await waitBootLine(ctx.host, () => ctx.hostOutput.slice(phase2OutputOffset))
     const base2 = new URL(bootLine2)
     const token2 = base2.searchParams.get('token')
     step(`phase-2 host booted: ${base2.origin} (token acquired)`)
-    const apiCookie2 = await exchangeTokenForCookie(base2.origin, token2)
+    const apiCookie2 = await exchangeTokenForCookie(base2.origin, token2, { step })
     const agentStatusRw = await rpcCall(base2.origin, apiCookie2, 'git/agentToolsStatus', {})
     assert(agentStatusRw.ok === true, `git/agentToolsStatus (phase-2) failed: ${JSON.stringify(agentStatusRw)}`)
     assert(agentStatusRw.value?.mode === 'readonly',
@@ -1692,56 +1881,6 @@ async function main() {
       console.warn('[verify] WARN: automationStatus.lastActions=[] in the turn-end/session-start phase — this chain is raw-RPC driven and cannot produce a completed session turn (same root as the S-phase checkpointList entries=0 downgrade); the commit-materialization assertion is downgraded to status-only per plan §7.6 — 人工走查登记：host 真仓范式已由 packages/host/tests/automation.spec.ts 全项覆盖（16 用例），本脚本只断言 Config plumb-through 与动作环形状')
       step('automationStatus phase-2 OK (status-only downgrade): modes=turn-end/session-start, lastActions=[] (no turns fired on this deployment — see WARN)')
     }
-
-    outcome = 'PASS'
-    exitCode = EXIT_PASS
-    step('ALL CHECKS PASSED')
-  } catch (error) {
-    if (error instanceof SkipError) {
-      ({ outcome, exit: exitCode } = applySkipDiscipline(error, '[verify]'))
-    } else if (target.observation) {
-      // 观测列：KNOWN-UNSUPPORTED 行改纯记录式（报告 §2.3）——不预设失败形态，
-      // 记录实际失败与宿主输出尾部；exit 0（观测列 KNOWN-UNSUPPORTED 亦 0）。
-      console.warn(`[verify] KNOWN-UNSUPPORTED（观测列纯记录，双结局合法）: ${error?.message ?? String(error)}`)
-      if (hostOutput) console.warn(`---- host output tail ----\n${tail(hostOutput, 4000)}`)
-      outcome = 'KNOWN-UNSUPPORTED'
-      exitCode = EXIT_PASS
-    } else {
-      fail(error?.message ?? String(error))
-      if (hostOutput) console.error(`---- host output tail ----\n${tail(hostOutput, 4000)}`)
-      outcome = 'FAIL'
-      exitCode = EXIT_FAIL
-    }
-  } finally {
-    // ── 7. 清理（runbook §6.9）──
-    if (host?.pid && host.exitCode === null) {
-      step(`stopping host pid ${host.pid} (taskkill /T /F)`)
-      await stopHost(host)
-    }
-    try {
-      rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
-      step(`removed temp DSH_HOME ${home}`)
-    } catch (error) {
-      console.warn(`[verify] WARN: could not remove temp home ${home}: ${error?.message ?? error}`)
-    }
-    try {
-      rmSync(fixtureRepo, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
-      step(`removed identity fixture repo ${fixtureRepo}`)
-    } catch (error) {
-      console.warn(`[verify] WARN: could not remove fixture repo ${fixtureRepo}: ${error?.message ?? error}`)
-    }
-    for (const derived of [fixtureWt, fixtureBare]) {
-      try {
-        if (existsSync(derived)) {
-          rmSync(derived, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 })
-          step(`removed fixture sibling ${derived}`)
-        }
-      } catch (error) {
-        console.warn(`[verify] WARN: could not remove fixture sibling ${derived}: ${error?.message ?? error}`)
-      }
-    }
-  }
-  return { outcome, exit: exitCode }
 }
 
 /** 未知端点的负向检查：接受传输层 404 或 gateway 层 ok:false 两种拒绝形状。 */
@@ -1763,46 +1902,10 @@ async function rpcNegative(origin, cookie, endpoint) {
   return { rejected: false, detail: envelope.result }
 }
 
-/** POST one Connection unary RPC（client/rpc.ts 线格式）。 */
-async function rpcCall(origin, cookie, endpoint, args) {
-  const rpcId = randomUUID()
-  const response = await fetch(`${origin}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
-  })
-  const text = await response.text()
-  assert(response.status === 200, `POST /api/${endpoint} → HTTP ${response.status}: ${text}`)
-  const envelope = JSON.parse(text)
-  assert(envelope?.type === 'server-response', `unexpected envelope type: ${JSON.stringify(envelope)?.slice(0, 200)}`)
-  assert(envelope.rpcId === rpcId, `rpcId mismatch: sent ${rpcId}, got ${envelope.rpcId}`)
-  return envelope.result
-}
-
-/** GET /?token=… → 303 + 浏览器 cookie（browser-auth.ts authorizeIndex）。 */
-async function tokenQueryCookie(origin, token) {
-  const response = await fetch(`${origin}/?token=${encodeURIComponent(token)}`, { redirect: 'manual' })
-  assert(response.status === 303, `index token exchange → HTTP ${response.status}（expected 303）`)
-  const setCookie = response.headers.get('set-cookie')
-  assert(typeof setCookie === 'string' && setCookie.length > 0, 'index token exchange returned no set-cookie')
-  step('browser cookie acquired via /?token=')
-  return setCookie.split(';', 1)[0]
-}
-
-/** GET /connect?token=… → 302 + API 操作员 cookie（browser-auth.ts:308-351）。 */
-async function exchangeTokenForCookie(origin, token) {
-  const response = await fetch(`${origin}/connect?token=${encodeURIComponent(token)}`, { redirect: 'manual' })
-  assert(response.status === 302, `/connect token exchange → HTTP ${response.status}（expected 302）`)
-  const setCookie = response.headers.get('set-cookie')
-  assert(typeof setCookie === 'string' && setCookie.length > 0, '/connect returned no set-cookie')
-  const pair = setCookie.split(';', 1)[0]
-  step('API operator cookie acquired via /connect')
-  return pair
-}
-
-function tail(text, limit = 2500) {
-  return text.length <= limit ? text : `…${text.slice(-limit)}`
-}
+// rpcCall（POST one Connection unary RPC，client/rpc.ts 线格式）收口至 ./verify-rpc.mjs
+// ——load 列不带 fetch 上界（install 版 AbortSignal.timeout 的差异按登记保留）。
+// tokenQueryCookie（/?token= → 303 + 浏览器 cookie）与 exchangeTokenForCookie
+// （/connect?token= → 302 + API 操作员 cookie）同收口——step 行经本模块 step 函数注入。
 
 // ── 编排（P3）：列解析（模块顶层）→ npm 列安装回填（try 内首步，延迟解析）→ main
 //    → 统一 finally（清理 npm prefix 临时目录）→ RESULT 行 → 唯一退出点。──

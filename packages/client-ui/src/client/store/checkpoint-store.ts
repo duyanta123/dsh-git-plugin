@@ -18,13 +18,16 @@
  *
  * revision 失效的代际纪律与 git-changes-store 相同：订阅状态源，revision 递增即
  * 递增代际 + 时间线/归因打回 idle，旧代际在途响应一律丢弃（绝不写回新代际）。
+ * in-flight 去重/代际丢弃/finally 清理的骨架闸由 store/task-gate.ts 承接（Phase 2·client
+ * 收敛）——本 store 只决定 bump/forget 的时机；diff 槽不随 revision 失效的口径不变。
  */
 
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { AttributionEntry, AttributionResult, CheckpointEntry, CheckpointFileDiff, CheckpointListResult } from 'dsh-gitkit/types'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
+import { createTaskGate } from './task-gate.js'
 import type { GitStatusSource } from './git-status-source.js'
 
 /** 一段只读数据（timeline / attribution 共形）的相位。 */
@@ -92,15 +95,6 @@ export function checkpointDiffSlotKey(sessionId: string, seq: number, index: num
   return `${sessionId}:${seq}:${index}`
 }
 
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
-}
-
 const idleTimeline: CheckpointTimelineState = { phase: 'idle', entries: [], error: null }
 const idleAttribution: CheckpointAttributionState = { phase: 'idle', entries: [], error: null }
 
@@ -111,9 +105,10 @@ export function createCheckpointStore(rpc: GitCheckpointRpcFace, status: Checkpo
     attribution: { ...idleAttribution, entries: [] },
     diffs: {},
   })
-  let generation = 0
   let revision = status.store.getSnapshot().revision
-  const pending = new Map<string, Promise<void>>()
+  // in-flight 去重 + 代际丢弃 + finally 清理的骨架闸（store/task-gate.ts——Phase 2·client
+  // 收敛）：代际计数与在途登记由闸自持，本 store 只决定 bump/forget 的时机与失效范围。
+  const gate = createTaskGate()
 
   // revision 变化失效（timeline/attribution 打回 idle；diff 槽不随 revision 失效——
   // 回合快照冻结不变，error 重试即可）。旧代际在途响应经代际比对丢弃。
@@ -121,7 +116,7 @@ export function createCheckpointStore(rpc: GitCheckpointRpcFace, status: Checkpo
     const next = status.store.getSnapshot().revision
     if (next === revision) return
     revision = next
-    generation += 1
+    gate.bump()
     store.update((draft) => {
       draft.timeline = { phase: 'idle', entries: [], error: null }
       draft.attribution = { phase: 'idle', entries: [], error: null }
@@ -129,74 +124,64 @@ export function createCheckpointStore(rpc: GitCheckpointRpcFace, status: Checkpo
   })
 
   function forgetGeneration(): void {
-    generation += 1
-    pending.clear()
+    gate.forget()
   }
 
-  /** 一段只读数据的通用按需拉取（timeline / attribution 共形；段键防在途串扰）。 */
-  function ensureSection(
+  /** 一段只读数据的通用按需拉取（timeline / attribution 共形；段键防在途串扰）。
+   *  结果类型泛型化（R）——调用半各自拿到精确的 entries 类型，无需 as 断言。 */
+  function ensureSection<R extends CheckpointListResult | AttributionResult>(
     section: 'timeline' | 'attribution',
-    call: () => Promise<RemoteResult<CheckpointListResult | AttributionResult>>,
-    write: (draft: GitCheckpointState, result: CheckpointListResult | AttributionResult) => void,
+    call: () => Promise<RemoteResult<R>>,
+    write: (draft: GitCheckpointState, result: R) => void,
     fail: (draft: GitCheckpointState, error: GitErrorLike) => void,
   ): Promise<void> {
     const current = section === 'timeline' ? store.getSnapshot().timeline : store.getSnapshot().attribution
     if (current.phase === 'loading' || current.phase === 'ready') return Promise.resolve()
-    const inFlight = pending.get(section)
-    if (inFlight !== undefined) return inFlight
-    const gen = generation
-    store.update((draft) => {
-      const slot = section === 'timeline' ? draft.timeline : draft.attribution
-      slot.phase = 'loading'
-      slot.error = null
-    })
-    const task = (async () => {
-      const result = await call()
-      if (gen !== generation) return // 代际已换代：迟到的响应丢弃
+    return gate.run(section, (stale) => {
       store.update((draft) => {
-        if (result.ok) write(draft, result.value)
-        else fail(draft, result.error)
+        const slot = section === 'timeline' ? draft.timeline : draft.attribution
+        slot.phase = 'loading'
+        slot.error = null
       })
-    })().catch((cause: unknown) => {
-      if (gen !== generation) return
-      store.update((draft) => {
-        fail(draft, { code: causeCode(cause), message: causeMessage(cause) })
+      return (async () => {
+        const result = await call()
+        if (stale()) return // 代际已换代：迟到的响应丢弃
+        store.update((draft) => {
+          if (result.ok) write(draft, result.value)
+          else fail(draft, result.error)
+        })
+      })().catch((cause: unknown) => {
+        if (stale()) return
+        store.update((draft) => {
+          fail(draft, { code: causeCode(cause), message: causeMessage(cause) })
+        })
       })
-    }).finally(() => {
-      if (pending.get(section) === task) pending.delete(section)
     })
-    pending.set(section, task)
-    return task
   }
 
   async function loadDiff(seq: number, index: number, sessionId?: string): Promise<void> {
     const key = checkpointDiffSlotKey(sessionId ?? '', seq, index)
     const existing = store.getSnapshot().diffs[key]
     if (existing !== undefined && existing.state !== 'error') return
-    const inFlight = pending.get(key)
-    if (inFlight !== undefined) return inFlight
-    const gen = generation
-    store.update((draft) => {
-      draft.diffs[key] = { state: 'loading' }
-    })
-    const task = (async () => {
-      // exactOptionalPropertyTypes：sessionId 缺席时不出键（undefined 不落 optional 字段）。
-      const result = await rpc.checkpointDiff({ seq, index, ...(sessionId !== undefined ? { sessionId } : {}) })
-      if (gen !== generation) return // reset/dispose 后丢弃
+    return gate.run(key, (stale) => {
       store.update((draft) => {
-        if (result.ok) draft.diffs[key] = { state: 'ready', diff: result.value }
-        else draft.diffs[key] = { state: 'error', error: result.error }
+        draft.diffs[key] = { state: 'loading' }
       })
-    })().catch((cause: unknown) => {
-      if (gen !== generation) return
-      store.update((draft) => {
-        draft.diffs[key] = { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) } }
+      return (async () => {
+        // exactOptionalPropertyTypes：sessionId 缺席时不出键（undefined 不落 optional 字段）。
+        const result = await rpc.checkpointDiff({ seq, index, ...(sessionId !== undefined ? { sessionId } : {}) })
+        if (stale()) return // reset/dispose 后丢弃
+        store.update((draft) => {
+          if (result.ok) draft.diffs[key] = { state: 'ready', diff: result.value }
+          else draft.diffs[key] = { state: 'error', error: result.error }
+        })
+      })().catch((cause: unknown) => {
+        if (stale()) return
+        store.update((draft) => {
+          draft.diffs[key] = { state: 'error', error: { code: causeCode(cause), message: causeMessage(cause) } }
+        })
       })
-    }).finally(() => {
-      if (pending.get(key) === task) pending.delete(key)
     })
-    pending.set(key, task)
-    return task
   }
 
   return {
@@ -206,7 +191,7 @@ export function createCheckpointStore(rpc: GitCheckpointRpcFace, status: Checkpo
         'timeline',
         () => rpc.checkpointList(null),
         (draft, value) => {
-          draft.timeline = { phase: 'ready', entries: (value as CheckpointListResult).entries, error: null }
+          draft.timeline = { phase: 'ready', entries: value.entries, error: null }
         },
         (draft, error) => {
           draft.timeline = { phase: 'error', entries: draft.timeline.entries, error }
@@ -218,7 +203,7 @@ export function createCheckpointStore(rpc: GitCheckpointRpcFace, status: Checkpo
         'attribution',
         () => rpc.attributionGet(),
         (draft, value) => {
-          draft.attribution = { phase: 'ready', entries: (value as AttributionResult).entries, error: null }
+          draft.attribution = { phase: 'ready', entries: value.entries, error: null }
         },
         (draft, error) => {
           draft.attribution = { phase: 'error', entries: draft.attribution.entries, error }

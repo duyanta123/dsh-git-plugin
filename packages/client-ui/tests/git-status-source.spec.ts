@@ -10,296 +10,20 @@ import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from 'dsh-gi
 import { createGitStatusSource, snapshotSignature } from '../src/client/store/git-status-source.ts'
 import type { GitErrorLike, GitRpcFace, GitStreamHandle } from '../src/client/remote/mount.ts'
 import { GATEWAY_UNAVAILABLE } from '../src/client/remote/mount.ts'
+import { errorFrame, FakeStream, mkSnapshot, statusFrame } from './support.ts'
 
-/** 内存流句柄：队列 + 唤醒；记录上行与 dispose。 */
-class FakeStream implements GitStreamHandle<GitStatusFrame, GitFollowCommand> {
-  readonly sent: GitFollowCommand[] = []
-  disposed = 0
-  private readonly queue: GitStatusFrame[] = []
-  private readonly waiters: Array<() => void> = []
-  private finished = false
-
-  push(frame: GitStatusFrame): void {
-    this.queue.push(frame)
-    this.flushWaiters()
-  }
-
-  send(item: GitFollowCommand): void { this.sent.push(item) }
-  end(): void { /* 半关上行——假实现只记录语义面之外的行为 */ }
-  dispose(): void {
-    this.disposed += 1
-    this.finished = true
-    this.flushWaiters()
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<GitStatusFrame> {
-    return {
-      next: async (): Promise<IteratorResult<GitStatusFrame>> => {
-        for (;;) {
-          const frame = this.queue.shift()
-          if (frame !== undefined) return { done: false, value: frame }
-          if (this.finished) return { done: true, value: undefined }
-          await new Promise<void>((resolve) => { this.waiters.push(resolve) })
-        }
-      },
-    }
-  }
-
-  private flushWaiters(): void {
-    for (const waiter of this.waiters.splice(0)) waiter()
-  }
-}
-
-/** 假 RPC：followStatus 产新流；可注入拒绝与延迟（挂载等待）。 */
-class FakeRpc implements GitRpcFace {
+/**
+ * 假 RPC（结构化切片——graph-store.spec FakeGraphRpc 同款形态）：只实现状态源实际
+ * 消费的 followStatus（+ status 断言守卫——数据面走流，status 被调即表明消费面漂移）；
+ * 全量镜像守卫桩已收敛删除（support.ts 收纳 FakeStream 与假快照工厂同批）。
+ * 可注入拒绝与延迟（挂载等待）。
+ */
+class FakeRpc implements Pick<GitRpcFace, 'followStatus' | 'status'> {
   streams: FakeStream[] = []
   followCalls = 0
   private gate: Promise<void> | null = null
   private openGate: (() => void) | null = null
   failWith: Error | null = null
-
-  // F 变更面板模块扩展 GitRpcFace（diff/stage/unstage/discard）后的适配面：
-  // 状态源不消费这些端点——断言守卫同 status。
-  async diff(): Promise<never> {
-    throw new Error('FakeRpc.diff must not be called by the source')
-  }
-
-  async stage(): Promise<never> {
-    throw new Error('FakeRpc.stage must not be called by the source')
-  }
-
-  async unstage(): Promise<never> {
-    throw new Error('FakeRpc.unstage must not be called by the source')
-  }
-
-  async discard(): Promise<never> {
-    throw new Error('FakeRpc.discard must not be called by the source')
-  }
-
-  // ④-K 提交对话框模块补齐 GitRpcFace 全量镜像（ping/identity/commit/push/pull/fetch/
-  // generateCommitMessage）后的适配面：状态源不消费这些端点——断言守卫同 status。
-  async ping(): Promise<never> {
-    throw new Error('FakeRpc.ping must not be called by the source')
-  }
-
-  async identity(): Promise<never> {
-    throw new Error('FakeRpc.identity must not be called by the source')
-  }
-
-  async commit(): Promise<never> {
-    throw new Error('FakeRpc.commit must not be called by the source')
-  }
-
-  async push(): Promise<never> {
-    throw new Error('FakeRpc.push must not be called by the source')
-  }
-
-  async pull(): Promise<never> {
-    throw new Error('FakeRpc.pull must not be called by the source')
-  }
-
-  async fetch(): Promise<never> {
-    throw new Error('FakeRpc.fetch must not be called by the source')
-  }
-
-  async generateCommitMessage(): Promise<never> {
-    throw new Error('FakeRpc.generateCommitMessage must not be called by the source')
-  }
-
-  // F7 提交图数据层模块扩展 GitRpcFace（log/refs/getCommitDetail）后的适配面：
-  // 状态源不消费这些端点——断言守卫同 status。
-  async log(): Promise<never> {
-    throw new Error('FakeRpc.log must not be called by the source')
-  }
-
-  async refs(): Promise<never> {
-    throw new Error('FakeRpc.refs must not be called by the source')
-  }
-
-  async getCommitDetail(): Promise<never> {
-    throw new Error('FakeRpc.getCommitDetail must not be called by the source')
-  }
-
-  // V2 批次一管理面扩展 GitRpcFace（9 admin 方法）后的适配面：
-  // 状态源不消费这些端点——断言守卫同 status。
-  async branchCreate(): Promise<never> {
-    throw new Error('FakeRpc.branchCreate must not be called by the source')
-  }
-
-  async branchSwitch(): Promise<never> {
-    throw new Error('FakeRpc.branchSwitch must not be called by the source')
-  }
-
-  async branchDelete(): Promise<never> {
-    throw new Error('FakeRpc.branchDelete must not be called by the source')
-  }
-
-  async tagCreate(): Promise<never> {
-    throw new Error('FakeRpc.tagCreate must not be called by the source')
-  }
-
-  async tagDelete(): Promise<never> {
-    throw new Error('FakeRpc.tagDelete must not be called by the source')
-  }
-
-  async remoteList(): Promise<never> {
-    throw new Error('FakeRpc.remoteList must not be called by the source')
-  }
-
-  async worktreeList(): Promise<never> {
-    throw new Error('FakeRpc.worktreeList must not be called by the source')
-  }
-
-  async worktreeAdd(): Promise<never> {
-    throw new Error('FakeRpc.worktreeAdd must not be called by the source')
-  }
-
-  async worktreeRemove(): Promise<never> {
-    throw new Error('FakeRpc.worktreeRemove must not be called by the source')
-  }
-
-  // V2 批次二历史面 6 方法（blame/compareBranches/cherryPick/revert/reset/
-  // abortOperation）——状态源不消费；断言守卫桩（FakeRpc.diff 同款）。
-  async blame(): Promise<never> {
-    throw new Error('FakeRpc.blame must not be called by the source')
-  }
-
-  async compareBranches(): Promise<never> {
-    throw new Error('FakeRpc.compareBranches must not be called by the source')
-  }
-
-  async cherryPick(): Promise<never> {
-    throw new Error('FakeRpc.cherryPick must not be called by the source')
-  }
-
-  async revert(): Promise<never> {
-    throw new Error('FakeRpc.revert must not be called by the source')
-  }
-
-  async reset(): Promise<never> {
-    throw new Error('FakeRpc.reset must not be called by the source')
-  }
-
-  async abortOperation(): Promise<never> {
-    throw new Error('FakeRpc.abortOperation must not be called by the source')
-  }
-
-  // V2 批次三提交链路与护栏 7 方法（stagePatch/stashPush/stashList/stashPop/stashDrop/
-  // scanStaged/repoDiagnostics）——状态源不消费；断言守卫桩（FakeRpc.diff 同款）。
-  async stagePatch(): Promise<never> {
-    throw new Error('FakeRpc.stagePatch must not be called by the source')
-  }
-
-  async stashPush(): Promise<never> {
-    throw new Error('FakeRpc.stashPush must not be called by the source')
-  }
-
-  async stashList(): Promise<never> {
-    throw new Error('FakeRpc.stashList must not be called by the source')
-  }
-
-  async stashPop(): Promise<never> {
-    throw new Error('FakeRpc.stashPop must not be called by the source')
-  }
-
-  async stashDrop(): Promise<never> {
-    throw new Error('FakeRpc.stashDrop must not be called by the source')
-  }
-
-  async scanStaged(): Promise<never> {
-    throw new Error('FakeRpc.scanStaged must not be called by the source')
-  }
-
-  async repoDiagnostics(): Promise<never> {
-    throw new Error('FakeRpc.repoDiagnostics must not be called by the source')
-  }
-
-  // V2 批次四体验集成 6 方法（initRepository/submoduleStatus/auditLog/
-  // generatePrDescription/createPr/prForBranch）——状态源不消费；断言守卫桩
-  // （FakeRpc.status 同款）。
-  async initRepository(): Promise<never> {
-    throw new Error('FakeRpc.initRepository must not be called by the source')
-  }
-
-  async submoduleStatus(): Promise<never> {
-    throw new Error('FakeRpc.submoduleStatus must not be called by the source')
-  }
-
-  async auditLog(): Promise<never> {
-    throw new Error('FakeRpc.auditLog must not be called by the source')
-  }
-
-  async generatePrDescription(): Promise<never> {
-    throw new Error('FakeRpc.generatePrDescription must not be called by the source')
-  }
-
-  async createPr(): Promise<never> {
-    throw new Error('FakeRpc.createPr must not be called by the source')
-  }
-
-  async prForBranch(): Promise<never> {
-    throw new Error('FakeRpc.prForBranch must not be called by the source')
-  }
-
-  // V3 批次一冲突解决 4 方法（conflictList/conflictResolve/conflictMarkResolved/
-  // operationContinue）——状态源不消费；断言守卫桩（FakeRpc.status 同款）。
-  async conflictList(): Promise<never> {
-    throw new Error('FakeRpc.conflictList must not be called by the source')
-  }
-
-  async conflictResolve(): Promise<never> {
-    throw new Error('FakeRpc.conflictResolve must not be called by the source')
-  }
-
-  async conflictMarkResolved(): Promise<never> {
-    throw new Error('FakeRpc.conflictMarkResolved must not be called by the source')
-  }
-
-  async operationContinue(): Promise<never> {
-    throw new Error('FakeRpc.operationContinue must not be called by the source')
-  }
-
-  // V3 批次二 merge / rebase 2 方法（branchMerge/rebase）——状态源不消费；断言守卫桩
-  // （FakeRpc.status 同款）。
-  async branchMerge(): Promise<never> {
-    throw new Error('FakeRpc.branchMerge must not be called by the source')
-  }
-
-  async rebase(): Promise<never> {
-    throw new Error('FakeRpc.rebase must not be called by the source')
-  }
-
-  // V3 批次三 Agent 工具观测面（agentToolsStatus）——状态源不消费；断言守卫桩
-  // （FakeRpc.status 同款）。
-  async agentToolsStatus(): Promise<never> {
-    throw new Error('FakeRpc.agentToolsStatus must not be called by the source')
-  }
-
-  // V3 批次四检查点/归因面（checkpointList/checkpointDiff/checkpointRestore/
-  // attributionGet）——状态源不消费；断言守卫桩（GitRpcFace 方法对账的面补齐，
-  // v3-implementation-plan §6.3）。
-  async checkpointList(): Promise<never> {
-    throw new Error('FakeRpc.checkpointList must not be called by the source')
-  }
-
-  async checkpointDiff(): Promise<never> {
-    throw new Error('FakeRpc.checkpointDiff must not be called by the source')
-  }
-
-  async checkpointRestore(): Promise<never> {
-    throw new Error('FakeRpc.checkpointRestore must not be called by the source')
-  }
-
-  async attributionGet(): Promise<never> {
-    throw new Error('FakeRpc.attributionGet must not be called by the source')
-  }
-
-  // V3 批次五自动化观测面（automationStatus）——状态源不消费（header 菜单状态行走
-  // admin-face 直通）；断言守卫桩（GitRpcFace 方法对账的面补齐，
-  // v3-implementation-plan §7.3）。
-  async automationStatus(): Promise<never> {
-    throw new Error('FakeRpc.automationStatus must not be called by the source')
-  }
 
   /** 门控：followStatus 在 openGate() 前挂起（挂载等待仿真）。 */
   holdCalls(): void {
@@ -332,30 +56,9 @@ class FakeRpc implements GitRpcFace {
   }
 }
 
-function mkSnapshot(overrides: Partial<GitStatusSnapshot> = {}): GitStatusSnapshot {
-  return {
-    repoRoot: 'D:/repo',
-    generatedAt: new Date().toISOString(),
-    branch: {
-      name: 'main', oid: 'a'.repeat(40), abbrevOid: 'aaaaaaa', upstream: 'origin/main',
-      ahead: 0, behind: 0, detached: false, unborn: false,
-    },
-    staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
-    ...overrides,
-  }
-}
-
-function statusFrame(snapshot: GitStatusSnapshot): GitStatusFrame {
-  return { kind: 'status', reason: 'change', snapshot }
-}
-
 /** 一条 staged 变更（路径置换回归用；形状照 host GitStatusChange 的 wire 面）。 */
 function stagedChange(path: string): GitStatusSnapshot['staged'][number] {
   return { path, origPath: null, kind: 'modified', x: 'M', y: '.', conflicted: false, binary: false, additions: 1, deletions: 0, submodule: false }
-}
-
-function errorFrame(code: string): GitStatusFrame {
-  return { kind: 'error', reason: 'poll', error: { code, message: `boom: ${code}` } }
 }
 
 async function settled(): Promise<void> {
@@ -366,7 +69,7 @@ async function settled(): Promise<void> {
 describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', () => {
   it('首帧 status 建立可用态并计数 revision', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(statusFrame(mkSnapshot()))
@@ -385,7 +88,7 @@ describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', 
 
   it('内容重复帧被丢（revision 不计数、status 引用不变）——R5 无条件帧幂等', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     const first = mkSnapshot()
@@ -404,7 +107,7 @@ describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', 
 
   it('内容变化帧被接受（revision 递增）', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(statusFrame(mkSnapshot()))
@@ -440,7 +143,7 @@ describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', 
 
   it('路径置换且计数不变 ⇒ 不丢帧、新路径进状态', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(statusFrame(mkSnapshot({ clean: false, staged: [stagedChange('a.ts')] })))
@@ -463,7 +166,7 @@ describe('createGitStatusSource — followStatus 消费（R1 initial / R2+）', 
 describe('createGitStatusSource — 错误帧与投影', () => {
   it('no-repository 错误帧 ⇒ repo 不可用 + statusError；流不断', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(errorFrame('git/no-repository'))
@@ -486,7 +189,7 @@ describe('createGitStatusSource — 错误帧与投影', () => {
 
   it('非仓库类错误帧保留可用投影', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(errorFrame('git/git-error'))
@@ -498,7 +201,7 @@ describe('createGitStatusSource — 错误帧与投影', () => {
   it('followStatus 载波拒绝 ⇒ gateway/service-unavailable 状态 + 流未开', async () => {
     const rpc = new FakeRpc()
     rpc.failWith = new Error('no connection')
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await vi.waitFor(() => {
       const state = source.store.getSnapshot()
@@ -513,7 +216,7 @@ describe('createGitStatusSource — 错误帧与投影', () => {
 describe('createGitStatusSource — P3-8 mount 失败投影（V2 批次四；plan §6.6）', () => {
   it('projectUnavailable：mount reject 折叠为 gateway/service-unavailable 同形 + repo 不可用（不抛不弃）', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     // 先以一帧就绪态打底——mount 失败投影应推翻可用态。
@@ -539,7 +242,7 @@ describe('createGitStatusSource — P3-8 mount 失败投影（V2 批次四；pla
     const rpc = new FakeRpc()
     rpc.failWith = new Error('namespace down')
     let reported = 0
-    const source = createGitStatusSource(rpc, { onOpenFailed: () => { reported += 1 } })
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace, { onOpenFailed: () => { reported += 1 } })
     source.start()
     await vi.waitFor(() => expect(reported).toBe(1))
     source.dispose()
@@ -548,7 +251,7 @@ describe('createGitStatusSource — P3-8 mount 失败投影（V2 批次四；pla
   it('不带 hooks 的旧签名照常工作（可选参数兼容）', async () => {
     const rpc = new FakeRpc()
     rpc.failWith = new Error('down')
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await vi.waitFor(() => expect(source.store.getSnapshot().streaming).toBe(false))
     source.dispose()
@@ -558,7 +261,7 @@ describe('createGitStatusSource — P3-8 mount 失败投影（V2 批次四；pla
 describe('createGitStatusSource — R5 refresh / connection/reset / dispose', () => {
   it('refresh() 在流开着时走上行 {type:refresh}', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     source.refresh()
@@ -569,7 +272,7 @@ describe('createGitStatusSource — R5 refresh / connection/reset / dispose', ()
   it('refresh() 在流未开时重开流（重试路径）', async () => {
     const rpc = new FakeRpc()
     rpc.failWith = new Error('down')
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await vi.waitFor(() => expect(source.store.getSnapshot().streaming).toBe(false))
     rpc.failWith = null
@@ -582,7 +285,7 @@ describe('createGitStatusSource — R5 refresh / connection/reset / dispose', ()
 
   it('reset() 清空 + 重订：旧代际迟到帧丢弃，新代际帧生效', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(statusFrame(mkSnapshot()))
@@ -609,7 +312,7 @@ describe('createGitStatusSource — R5 refresh / connection/reset / dispose', ()
 
   it('dispose() 关流且后续帧不再进入', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     const stream = rpc.latest()
@@ -623,7 +326,7 @@ describe('createGitStatusSource — R5 refresh / connection/reset / dispose', ()
 
   it('start() 幂等：已开着不重开', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     source.start()
@@ -638,8 +341,8 @@ describe('createGitStatusSource — 状态源工厂纪律', () => {
   it('每次工厂调用产独立实例（模块级句柄禁止）', async () => {
     const rpcA = new FakeRpc()
     const rpcB = new FakeRpc()
-    const a = createGitStatusSource(rpcA)
-    const b = createGitStatusSource(rpcB)
+    const a = createGitStatusSource(rpcA as unknown as GitRpcFace)
+    const b = createGitStatusSource(rpcB as unknown as GitRpcFace)
     expect(a.store).not.toBe(b.store)
     a.start()
     b.start()
@@ -655,7 +358,7 @@ describe('createGitStatusSource — 状态源工厂纪律', () => {
 describe('GitErrorLike 形状（spec §3.2 按 code 判别的投影面）', () => {
   it('错误帧投影只带 code/message（details 不上投影）', async () => {
     const rpc = new FakeRpc()
-    const source = createGitStatusSource(rpc)
+    const source = createGitStatusSource(rpc as unknown as GitRpcFace)
     source.start()
     await settled()
     rpc.latest().push(errorFrame('git/no-repository'))

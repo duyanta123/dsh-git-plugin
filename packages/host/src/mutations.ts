@@ -37,6 +37,8 @@
 import { assertGitOk, gitError } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner, GitRunResult } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { scanFresh } from './scan-fresh.ts'
 import type { StatusEngine } from './status.ts'
 import type { GitStatusSnapshot, DiscardOptions, DiscardResult, StageResult, UnstageResult } from './types.ts'
 
@@ -86,7 +88,7 @@ export class MutationEngine {
     const { repoRoot } = await this.scanFresh('stage', signal)
     const result = await this.git.run(
       [...LITERAL_PATHSPECS, 'add', '--', ...unique],
-      { cwd: repoRoot, op: 'stage(git add)', signal: active(signal) },
+      { cwd: repoRoot, op: 'stage(git add)', signal: signalOf(signal) },
     )
     assertGitOk(result, 'stage(git add)')
     return { staged: unique.length }
@@ -113,7 +115,7 @@ export class MutationEngine {
       // 无提交仓库：restore --staged / reset HEAD 都需要 HEAD ⇒ rm --cached 兜底（spec §1.3）。
       const removed = await this.git.run(
         [...LITERAL_PATHSPECS, 'rm', '--cached', '--', ...target],
-        { cwd: repoRoot, op: 'unstage(git rm --cached, unborn)', signal: active(signal) },
+        { cwd: repoRoot, op: 'unstage(git rm --cached, unborn)', signal: signalOf(signal) },
       )
       assertGitOk(removed, 'unstage(git rm --cached, unborn)')
       return { unstaged: target.length }
@@ -121,14 +123,14 @@ export class MutationEngine {
 
     const restored = await this.git.run(
       [...LITERAL_PATHSPECS, 'restore', '--staged', '--', ...target],
-      { cwd: repoRoot, op: 'unstage(git restore --staged)', signal: active(signal) },
+      { cwd: repoRoot, op: 'unstage(git restore --staged)', signal: signalOf(signal) },
     )
     if (isOldGitRestore(restored)) {
       // 极老 git 兜底：restore 缺失 ⇒ reset HEAD（mix reset，仅回退 index）。
       this.logger?.debug('git unstage: restore unavailable, falling back to git reset HEAD')
       const reset = await this.git.run(
         [...LITERAL_PATHSPECS, 'reset', 'HEAD', '--', ...target],
-        { cwd: repoRoot, op: 'unstage(git reset HEAD fallback)', signal: active(signal) },
+        { cwd: repoRoot, op: 'unstage(git reset HEAD fallback)', signal: signalOf(signal) },
       )
       assertGitOk(reset, 'unstage(git reset HEAD fallback)')
       return { unstaged: target.length }
@@ -187,7 +189,7 @@ export class MutationEngine {
     if (restorePaths.length > 0) {
       const result = await this.git.run(
         [...LITERAL_PATHSPECS, 'restore', '--worktree', '--', ...restorePaths],
-        { cwd: repoRoot, op: 'discard(git restore --worktree)', signal: active(signal) },
+        { cwd: repoRoot, op: 'discard(git restore --worktree)', signal: signalOf(signal) },
       )
       assertGitOk(result, 'discard(git restore --worktree)')
       discarded += restorePaths.length
@@ -195,7 +197,7 @@ export class MutationEngine {
     if (cleanPaths.length > 0) {
       const result = await this.git.run(
         [...LITERAL_PATHSPECS, 'clean', '-fd', '--', ...cleanPaths],
-        { cwd: repoRoot, op: 'discard(git clean -fd)', signal: active(signal) },
+        { cwd: repoRoot, op: 'discard(git clean -fd)', signal: signalOf(signal) },
       )
       assertGitOk(result, 'discard(git clean -fd)')
       discarded += cleanPaths.length
@@ -204,14 +206,11 @@ export class MutationEngine {
   }
 
   /** fresh status 扫描（守卫世界读取 + repoRoot；三态的 error 就地抛出）。 */
-  private async scanFresh(
+  private scanFresh(
     op: string,
     signal?: AbortSignal,
   ): Promise<{ repoRoot: string; snapshot: GitStatusSnapshot }> {
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
-    return { repoRoot: state.snapshot.repoRoot, snapshot: state.snapshot }
+    return scanFresh(this.status, this.logger, op, signal)
   }
 }
 
@@ -224,12 +223,6 @@ export function isOldGitRestore(result: GitRunResult): boolean {
 /** 去重保序（ZCode 对照语义：Set 去重、原顺序进命令）。 */
 function dedupe(paths: readonly string[]): string[] {
   return Array.from(new Set(paths))
-}
-
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
 }
 
 function noPaths(op: string): never {

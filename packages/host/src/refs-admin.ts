@@ -39,6 +39,9 @@
 import { resolve } from 'node:path'
 import { assertGitOk, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { scanFresh } from './scan-fresh.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { StatusEngine } from './status.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type {
@@ -93,12 +96,12 @@ export class RefsAdminEngine {
       ? ['branch', '--', name, options.from]
       : ['branch', '--', name]
     const created = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'branchCreate(git branch)', signal: active(signal),
+      cwd: repoRoot, op: 'branchCreate(git branch)', signal: signalOf(signal),
     })
     assertGitOk(created, 'branchCreate(git branch)')
     if (options.checkout === true) {
       const switched = await this.gitWrite.run(['switch', '--', name], {
-        cwd: repoRoot, op: 'branchCreate(git switch)', signal: active(signal),
+        cwd: repoRoot, op: 'branchCreate(git switch)', signal: signalOf(signal),
       })
       assertGitOk(switched, 'branchCreate(git switch)')
     }
@@ -127,7 +130,7 @@ export class RefsAdminEngine {
       throw gitError('git/branch-not-found', `git branchSwitch: branch '${name}' does not exist`, { name })
     }
     const switched = await this.gitWrite.run(['switch', '--', name], {
-      cwd: repoRoot, op: 'branchSwitch(git switch)', signal: active(signal),
+      cwd: repoRoot, op: 'branchSwitch(git switch)', signal: signalOf(signal),
     })
     assertGitOk(switched, 'branchSwitch(git switch)')
     const to = await this.currentBranch(repoRoot, signal)
@@ -161,7 +164,7 @@ export class RefsAdminEngine {
     }
     const wasMerged = await this.isAncestorOfHead(repoRoot, `refs/heads/${name}`, signal)
     const deleted = await this.gitWrite.run(['branch', options.force === true ? '-D' : '-d', '--', name], {
-      cwd: repoRoot, op: 'branchDelete(git branch)', signal: active(signal),
+      cwd: repoRoot, op: 'branchDelete(git branch)', signal: signalOf(signal),
     })
     if (deleted.exitCode !== 0 && /not fully merged/i.test(deleted.stderr)) {
       throw gitError('git/branch-not-merged', `git branchDelete: branch '${name}' is not fully merged (use force to delete)`, { name })
@@ -199,7 +202,7 @@ export class RefsAdminEngine {
     args.push('--', name)
     if (options.oid !== null && options.oid !== undefined && options.oid !== '') args.push(options.oid)
     const created = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'tagCreate(git tag)', signal: active(signal),
+      cwd: repoRoot, op: 'tagCreate(git tag)', signal: signalOf(signal),
     })
     assertGitOk(created, 'tagCreate(git tag)')
     const oid = await this.peekOid(repoRoot, `refs/tags/${name}^{commit}`, signal)
@@ -220,7 +223,7 @@ export class RefsAdminEngine {
       throw gitError('git/tag-not-found', `git tagDelete: tag '${name}' does not exist`, { name })
     }
     const deleted = await this.gitWrite.run(['tag', '-d', '--', name], {
-      cwd: repoRoot, op: 'tagDelete(git tag -d)', signal: active(signal),
+      cwd: repoRoot, op: 'tagDelete(git tag -d)', signal: signalOf(signal),
     })
     assertGitOk(deleted, 'tagDelete(git tag -d)')
     this.logger?.debug(`git tagDelete: name=${name}`)
@@ -239,7 +242,7 @@ export class RefsAdminEngine {
   async remoteList(signal?: AbortSignal): Promise<RemoteListResult> {
     const repoRoot = await this.resolveRepoRoot('remoteList', signal)
     const listing = await this.gitRead.run(['remote', '-v'], {
-      cwd: repoRoot, op: 'remoteList(git remote -v)', signal: active(signal),
+      cwd: repoRoot, op: 'remoteList(git remote -v)', signal: signalOf(signal),
     })
     assertGitOk(listing, 'remoteList(git remote -v)')
     if (listing.stdout !== '' && !listing.stdout.endsWith('\n')) {
@@ -285,7 +288,7 @@ export class RefsAdminEngine {
   async worktreeList(signal?: AbortSignal): Promise<WorktreeListResult> {
     const repoRoot = await this.resolveRepoRoot('worktreeList', signal)
     const listing = await this.gitRead.run(['worktree', 'list', '--porcelain'], {
-      cwd: repoRoot, op: 'worktreeList(git worktree list --porcelain)', signal: active(signal),
+      cwd: repoRoot, op: 'worktreeList(git worktree list --porcelain)', signal: signalOf(signal),
     })
     assertGitOk(listing, 'worktreeList(git worktree list --porcelain)')
     const worktrees = parseWorktreePorcelain(listing.stdout)
@@ -318,7 +321,7 @@ export class RefsAdminEngine {
     args.push('--', absPath)
     if (hasBranch) args.push(options.branch as string)
     const added = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'worktreeAdd(git worktree add)', signal: active(signal),
+      cwd: repoRoot, op: 'worktreeAdd(git worktree add)', signal: signalOf(signal),
     })
     if (added.exitCode !== 0) {
       throw gitError('git/worktree-failed', `git worktreeAdd: worktree add failed for '${absPath}'`, {
@@ -351,7 +354,7 @@ export class RefsAdminEngine {
     if (options.force === true) args.push('--force')
     args.push('--', absPath)
     const removed = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'worktreeRemove(git worktree remove)', signal: active(signal),
+      cwd: repoRoot, op: 'worktreeRemove(git worktree remove)', signal: signalOf(signal),
     })
     if (removed.exitCode !== 0) {
       throw gitError('git/worktree-failed', `git worktreeRemove: worktree remove failed for '${absPath}'`, {
@@ -366,29 +369,17 @@ export class RefsAdminEngine {
   // ---------- 守卫与解析助手 ----------
 
   /** fresh status 扫描（branchSwitch 脏区守卫 + repoRoot；三态 error 就地抛出）。 */
-  private async scanFresh(
+  private scanFresh(
     op: string,
     signal?: AbortSignal,
   ): Promise<{ repoRoot: string; snapshot: GitStatusSnapshot }> {
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
-    return { repoRoot: state.snapshot.repoRoot, snapshot: state.snapshot }
+    return scanFresh(this.status, this.logger, op, signal)
   }
 
-  /** repo 发现（graph.ts resolveRepoRoot 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? active(signal),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return resolve(resolution.root, probe.stdout.trim())
+    return resolve(resolution.root, await probeRepoRoot(this.gitRead, resolution.root, op, signal))
   }
 
   /**
@@ -402,7 +393,7 @@ export class RefsAdminEngine {
     opts: { lenient?: boolean } = {},
   ): Promise<string | null> {
     const probe = await this.gitRead.run(['rev-parse', '--verify', '--quiet', ref], {
-      cwd, op: `refs-admin(rev-parse --verify ${ref})`, signal: active(signal),
+      cwd, op: `refs-admin(rev-parse --verify ${ref})`, signal: signalOf(signal),
     })
     if (probe.exitCode === 0) {
       const oid = probe.stdout.trim()
@@ -422,7 +413,7 @@ export class RefsAdminEngine {
     opts: { lenient?: boolean } = {},
   ): Promise<string | null> {
     const probe = await this.gitRead.run(['symbolic-ref', '--quiet', '--short', 'HEAD'], {
-      cwd, op: 'refs-admin(symbolic-ref HEAD)', signal: active(signal),
+      cwd, op: 'refs-admin(symbolic-ref HEAD)', signal: signalOf(signal),
     })
     if (probe.exitCode === 0) {
       const name = probe.stdout.trim()
@@ -436,7 +427,7 @@ export class RefsAdminEngine {
   /** `merge-base --is-ancestor <ref> HEAD`（exit 0 = 祖先；1 = 否；其余要响）。 */
   private async isAncestorOfHead(repoRoot: string, ref: string, signal?: AbortSignal): Promise<boolean> {
     const probe = await this.gitRead.run(['merge-base', '--is-ancestor', ref, 'HEAD'], {
-      cwd: repoRoot, op: 'refs-admin(merge-base --is-ancestor)', signal: active(signal),
+      cwd: repoRoot, op: 'refs-admin(merge-base --is-ancestor)', signal: signalOf(signal),
     })
     if (probe.exitCode === 0) return true
     if (probe.exitCode === 1) return false
@@ -526,8 +517,3 @@ function badRequest(reason: 'force-unacknowledged' | 'invalid-options', message:
   throw gitError('git/bad-request', message, { reason, paths: [], expected: null, actual: null })
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

@@ -24,12 +24,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// 并行跑的资源裕量（全仓用例大量真实 git 子进程 / 真实 fs+定时器；本机 16 核 Windows
-// 上 vitest 默认 5s/10s 边缘超时——client 地基模块全绿门禁实测复现；单文件跑恒绿）。
-// 只放宽超时上限，断言面零改动。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { afterEach, describe, expect, it } from 'vitest'
 import type { GitLoggerFace } from '../src/error-codes.ts'
 import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX } from '../src/git-runner.ts'
 import { GitService } from '../src/index.ts'

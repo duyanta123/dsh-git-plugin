@@ -60,6 +60,8 @@ import { resolve } from 'node:path'
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
 import { revListCounts } from './rev-count.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { DiffEngine } from './diff.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type {
@@ -257,7 +259,7 @@ export class GraphEngine {
     if (ref !== null) {
       // 起点 revision 预检（exit 1 = 不可解析 ⇒ unknown-revision，details 带原词）。
       const probed = await this.git.run(['rev-parse', '--verify', '--quiet', ref], {
-        cwd: repoRoot, op: 'log(rev-parse --verify ref)', signal: signal ?? neverAborted(),
+        cwd: repoRoot, op: 'log(rev-parse --verify ref)', signal: signalOf(signal),
       })
       if (probed.exitCode !== 0) {
         throw gitError('git/unknown-revision', `git log: revision '${ref}' could not be resolved`, {
@@ -267,7 +269,7 @@ export class GraphEngine {
       args.push(ref)
     }
     if (path !== null) args.push('--', path)
-    const result = await this.git.run(args, { cwd: repoRoot, op: 'log', signal: signal ?? neverAborted() })
+    const result = await this.git.run(args, { cwd: repoRoot, op: 'log', signal: signalOf(signal) })
     if (result.exitCode === 128 && UNBORN_STDERR_PATTERN.test(result.stderr)) {
       return { commits: [], hasMore: false, skipUsed: skip, limitUsed: limit }
     }
@@ -292,7 +294,7 @@ export class GraphEngine {
    */
   async refs(signal?: AbortSignal): Promise<RefsSnapshot> {
     const repoRoot = await this.resolveRepoRoot('refs', signal)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const [refsResult, symbolicResult, headResult] = await Promise.all([
       this.git.run(
         ['for-each-ref', `--format=${REF_PRETTY_FORMAT}`, 'refs/heads', 'refs/remotes', 'refs/tags'],
@@ -338,7 +340,7 @@ export class GraphEngine {
    */
   async getCommitDetail(options: ShowOptions, signal?: AbortSignal): Promise<CommitDetail> {
     const repoRoot = await this.resolveRepoRoot('getCommitDetail', signal)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const [metaResult, refsResult, diffResult] = await Promise.all([
       this.git.run(['log', '-1', `--pretty=format:${LOG_PRETTY_FORMAT}`, options.oid], {
         cwd: repoRoot, op: `getCommitDetail(log -1 ${options.oid.slice(0, 12)})`, signal: active,
@@ -376,7 +378,7 @@ export class GraphEngine {
     const base = requireRevision(options.base, 'compareBranches', 'base')
     const compare = requireRevision(options.compare, 'compareBranches', 'compare')
     const repoRoot = await this.resolveRepoRoot('compareBranches', signal)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     await this.requireRevisionResolvable(repoRoot, 'compareBranches', base, active)
     await this.requireRevisionResolvable(repoRoot, 'compareBranches', compare, active)
 
@@ -442,23 +444,8 @@ export class GraphEngine {
    */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.git.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return resolve(resolution.root, probe.stdout.trim())
+    return resolve(resolution.root, await probeRepoRoot(this.git, resolution.root, op, signal))
   }
-}
-
-/** 未取消信号（调用方 signal 缺席时的占位；diff.ts 同款）。 */
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
 }
 
 /** 非空修订守卫（compareBranches 的 base/compare；空 ⇒ bad-request 'invalid-options'）。 */

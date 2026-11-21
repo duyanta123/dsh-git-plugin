@@ -37,20 +37,14 @@
 import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { GitService } from '../src/index.ts'
 import { sanitizeStderr } from '../src/error-codes.ts'
 import { classifyRemoteStderr, rejectionReason, upstreamStateOf } from '../src/remote-ops.ts'
 import type { RemoteStderrClass } from '../src/remote-ops.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
+import { git, makeGitService, scratchDir, scratchRepo } from './support.ts'
 import type { SpawnRecord } from './support.ts'
-
-// 并行负载下的资源裕量（真实 git 子进程；commit.spec 同款先例）。60s：fresh 扫描
-// （status + 双 numstat）+ push/pull/fetch 每操作 6-8 条 git spawn，满载轮次的
-// Windows spawn 抖动以时间余量吸收（资源裕量，非断言放宽）。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 const cleanups: Array<() => Promise<unknown>> = []
 const envCleanups: Array<() => Promise<unknown>> = []
@@ -87,18 +81,14 @@ function makeService(
   overrides: { record?: SpawnRecord[]; networkTimeoutMs?: number; autoFetchIntervalMs?: number } = {},
 ): Harness {
   const record = overrides.record ?? []
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess(record))
-  const service = new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  const { service } = makeGitService(workspaceOverride, {
     commitTimeoutMs: 15_000,
     networkTimeoutMs: overrides.networkTimeoutMs ?? 20_000,
     outputMaxBytes: 1_048_576,
-    workspaceOverride,
     // 缺省 0 = 定时 fetch 关闭（既有用例语义不变）；定时 fetch 用例显式给短间隔。
     autoFetchIntervalMs: overrides.autoFetchIntervalMs ?? 0,
+    record,
   })
   return { service, record }
 }
@@ -247,10 +237,13 @@ describe('stderr 脱敏分类器（remote-ops.ts 夹具单测）', () => {
       name: 'main', oid: 'x'.repeat(40), abbrevOid: 'xxxxxxx',
       upstream: null, ahead: null, behind: null, detached: false, unborn: false, ...over,
     })
-    expect(branchOf({})).toBe('no-upstream')
-    expect(branchOf({ upstream: 'origin/main' })).toBe('gone')
-    expect(branchOf({ upstream: 'origin/main', ahead: 0, behind: 0 })).toBe('normal')
-    expect(branchOf({ upstream: 'origin/main', ahead: 1, behind: 1 })).toBe('normal')
+    // 2026-11-21 判别联合化：返回 { state, upstream }——state 判别键，normal/gone 分支
+    // 携带 porcelain upstream 原文（push/pull normal 路径窄化免 as string）。三态判定
+    // 行为不变，断言随返回形状迁移。
+    expect(branchOf({})).toEqual({ state: 'no-upstream', upstream: null })
+    expect(branchOf({ upstream: 'origin/main' })).toEqual({ state: 'gone', upstream: 'origin/main' })
+    expect(branchOf({ upstream: 'origin/main', ahead: 0, behind: 0 })).toEqual({ state: 'normal', upstream: 'origin/main' })
+    expect(branchOf({ upstream: 'origin/main', ahead: 1, behind: 1 })).toEqual({ state: 'normal', upstream: 'origin/main' })
   })
 })
 

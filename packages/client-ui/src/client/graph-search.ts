@@ -22,9 +22,6 @@ export interface GraphSearchFilter {
   author: string | null
 }
 
-/** 全空过滤（重置态；store 侧默认值同形）。 */
-export const EMPTY_SEARCH_FILTER: GraphSearchFilter = { query: null, author: null }
-
 /** 输入草稿 → 过滤（trim + 空白降 null；两维全空 ⇒ null = 无过滤）。 */
 export function normalizeSearchFilter(query: string, author: string): GraphSearchFilter | null {
   const q = query.trim()

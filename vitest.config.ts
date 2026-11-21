@@ -58,8 +58,16 @@ export default defineConfig({
     // 子进程）后，重负载轮次（同机并行施工的外部负载）偶发把既有 30s 用例顶到
     // 超时——处置是把各集成 spec 的 testTimeout/hookTimeout 提到 60s（纯上限放宽，
     // 断言面零改动；6 worker 维持——4 worker 对照轮未见收益）。
+    // 2026-11-20 收敛：60s 超时基线上收为**全局** testTimeout/hookTimeout（原各集成
+    // spec 文件头的 vi.setConfig({60_000,60_000}) 重复面删除；纯上限放宽，断言面零
+    // 改动）。文件级非重复键保留：blame 90s / submodule 90s（真仓慢夹具，高于基线）、
+    // message-gen 30s（确定性夹具，低于基线）——基线只统一「重复的 60s」。
     // 按可用核数收敛：16 核本机仍是 6（既有调优）；GitHub public 的
     // windows-latest 是 4 vCPU，固定 6 worker 会超订并把 spawn 密集型用例顶穿。
     maxWorkers: Math.max(1, Math.min(6, availableParallelism() - 1)),
+    // 全局超时基线（原各集成 spec 的 vi.setConfig 重复面收敛于此；blame/submodule
+    // 的 90s 文件级放宽与 message-gen 的 30s 收紧各自保留——见上注）。
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
   },
 })

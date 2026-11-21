@@ -34,6 +34,7 @@
 import { sanitizeStderr } from './error-codes.ts'
 import { gitError } from './error-codes.ts'
 import type { SubprocessFace } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
 import type { GitRunner } from './git-runner.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { PrCreateOptions, PrLinkResult, PrResult } from './types.ts'
@@ -68,7 +69,7 @@ export interface GhTransport {
 export function subprocessGhTransport(subprocess: SubprocessFace): GhTransport {
   return {
     async resolveExecutable(command, signal) {
-      return subprocess.resolveExecutable(command, undefined, signal ?? neverAborted())
+      return subprocess.resolveExecutable(command, undefined, signalOf(signal))
     },
     async run(spec) {
       const handle = subprocess.spawn({
@@ -265,7 +266,7 @@ export class PrEngine {
   /** head 推断（§6.3 prForBranch 行：该分支 upstream 缺省映射）：`rev-parse --abbrev-ref <branch>@{upstream}` 剥远端前缀；无 upstream/探测失败回落 branch 本名。 */
   private async inferUpstreamHead(root: string, branch: string, signal?: AbortSignal): Promise<string> {
     const probe = await this.gitRead.run(['rev-parse', '--abbrev-ref', `${branch}@{upstream}`], {
-      cwd: root, op: UPSTREAM_OP, signal: active(signal),
+      cwd: root, op: UPSTREAM_OP, signal: signalOf(signal),
     })
     if (probe.exitCode === 0) {
       const upstream = probe.stdout.trim()
@@ -317,13 +318,3 @@ function ghTimeout(op: string, timeoutMs: number): never {
   })
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}
-
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

@@ -38,6 +38,8 @@
 import { assertGitOk, gitError } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { CommitScanResult, CommitViolation } from './types.ts'
 
@@ -307,16 +309,7 @@ export class GuardScanEngine {
   /** repo 发现（blame.ts 同款）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
@@ -333,7 +326,7 @@ export async function scanStagedContents(
   options: Pick<GuardScanOptions, 'largeFileBytes' | 'buildPatterns' | 'secretPatterns' | 'logger'>,
   signal?: AbortSignal,
 ): Promise<CommitViolation[]> {
-  const active = signal ?? neverAborted()
+  const active = signalOf(signal)
   // 1. staged 清单 + 新 blob oid（--raw -z --no-abbrev：`:mode mode oldOid newOid
   //    status\0path\0`；R/C 重命名/复制为双路径 `…status\0<旧>\0<新>\0`——parseStagedRaw
   //    变长消费并取新路径；A/M/R/C/T 带内容可比对——D（删除）与全零 oid（U 未合并等）
@@ -509,7 +502,3 @@ async function readBlobText(gitRead: GitRunner, repoRoot: string, oid: string, s
   return body.replace(/\r?\n$/, '')
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

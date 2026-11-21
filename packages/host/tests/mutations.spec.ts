@@ -15,15 +15,11 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { GitService } from '../src/index.ts'
 import { isOldGitRestore } from '../src/mutations.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
-
-// 并行负载下的资源裕量（真实 git 子进程 + fresh status 扫描；diff.spec.ts 同款先例）。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 
@@ -36,17 +32,13 @@ interface Harness {
 }
 
 function makeService(workspaceOverride: string): Harness {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  const service = new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
-    commitTimeoutMs: 15_000,
-    outputMaxBytes: 1_048_576,
-    workspaceOverride,
-  })
-  return { service }
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return {
+    service: makeGitService(workspaceOverride, {
+      commitTimeoutMs: 15_000,
+      outputMaxBytes: 1_048_576,
+    }).service,
+  }
 }
 
 /**

@@ -215,16 +215,37 @@ export function branchSubmenuEntries(params: {
 }
 
 /**
- * 删除分支子菜单的渲染模型（plan §3.6「当前分支除外——git 拒删当前分支，UI 前置
- * 禁用」）：当前分支不进清单（排除即前置禁用）；其余分支逐行可点。
+ * 「排除当前分支」条目装配的单一骨架（Phase 2·client 收敛：branchDelete/Compare/
+ * Reset/Picker 四函数原互为逐字复制——filter(≠headName) + map(前缀 id 行) 的同构面，
+ * 仅 id 前缀与 detached 闸位不同）。`prefix` 是行 id 的权威字面量（'branch-delete:'
+ * 等 / BRANCH_PICKER_PREFIX）；行模型恒 `disabled:false, current:false`——排除即
+ * 前置禁用（装配半承担整行禁用，见各别名注释）。
+ *
+ * detached/unborn（headName null）时 filter 恒真 ⇒ **全分支进清单**——这正是
+ * branchDeleteEntries 的「无当前分支全可删」口径；compare/reset/picker 三别名的
+ * 「无当前分支 ⇒ 空清单」闸（重置/比较/合并自身无意义）由别名半前置 null 判断。
+ * 模块内私有——四个导出名与签名不变（tests/ui-model.spec、merge-dialog.spec 的
+ * 断言面）。
  */
-export function branchDeleteEntries(params: {
+function excludeHeadEntries(prefix: string, params: {
   branches: readonly { shortName: string }[]
   headName: string | null
 }): HeaderSubmenuEntry[] {
   return params.branches
     .filter((branch) => branch.shortName !== params.headName)
-    .map((branch) => ({ id: `branch-delete:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+    .map((branch) => ({ id: `${prefix}${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+}
+
+/**
+ * 删除分支子菜单的渲染模型（plan §3.6「当前分支除外——git 拒删当前分支，UI 前置
+ * 禁用」）：当前分支不进清单（排除即前置禁用）；其余分支逐行可点。detached（无当前
+ * 分支）⇒ filter 恒真——全部分支可删（excludeHeadEntries 的原生口径，无 null 闸）。
+ */
+export function branchDeleteEntries(params: {
+  branches: readonly { shortName: string }[]
+  headName: string | null
+}): HeaderSubmenuEntry[] {
+  return excludeHeadEntries('branch-delete:', params)
 }
 
 /**
@@ -236,10 +257,7 @@ export function branchCompareEntries(params: {
   branches: readonly { shortName: string }[]
   headName: string | null
 }): HeaderSubmenuEntry[] {
-  if (params.headName === null) return []
-  return params.branches
-    .filter((branch) => branch.shortName !== params.headName)
-    .map((branch) => ({ id: `branch-compare:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+  return params.headName === null ? [] : excludeHeadEntries('branch-compare:', params)
 }
 
 /**
@@ -251,10 +269,7 @@ export function branchResetEntries(params: {
   branches: readonly { shortName: string }[]
   headName: string | null
 }): HeaderSubmenuEntry[] {
-  if (params.headName === null) return []
-  return params.branches
-    .filter((branch) => branch.shortName !== params.headName)
-    .map((branch) => ({ id: `branch-reset:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+  return params.headName === null ? [] : excludeHeadEntries('branch-reset:', params)
 }
 
 /**
@@ -264,14 +279,18 @@ export function branchResetEntries(params: {
  * unborn）⇒ 空清单。与四条子菜单 entries 函数同形（id 前缀区别调用方；对话框
  * picker 只消费 label，id 供 Menu 行键）。
  */
+/**
+ * branch picker 条目 id 的 'branch-picker:' 前缀（Phase 2·client 收敛：原
+ * ui-model/dialog 三处硬编码魔数收敛为单一导出常量——id 组装（branchPickerEntries）
+ * 与消费侧（selectedId 组装 / onSelect 剥前缀）共用同一权威字面量）。
+ */
+export const BRANCH_PICKER_PREFIX = 'branch-picker:'
+
 export function branchPickerEntries(params: {
   branches: readonly { shortName: string }[]
   headName: string | null
 }): HeaderSubmenuEntry[] {
-  if (params.headName === null) return []
-  return params.branches
-    .filter((branch) => branch.shortName !== params.headName)
-    .map((branch) => ({ id: `branch-picker:${branch.shortName}`, label: branch.shortName, disabled: false, current: false }))
+  return params.headName === null ? [] : excludeHeadEntries(BRANCH_PICKER_PREFIX, params)
 }
 
 /**

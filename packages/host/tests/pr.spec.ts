@@ -18,18 +18,15 @@
 
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { GitService } from '../src/index.ts'
 import { PrEngine, parsePrUrl } from '../src/pr.ts'
 import { createGitRunners } from '../src/git-runner.ts'
 import type { GhTransport } from '../src/pr.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchRepo } from './support.ts'
 import type { SpawnRecord } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -308,14 +305,13 @@ describe('createPr — [清单 46]（transport 切片假 gh）', () => {
 
 describe('createPr/prForBranch — 服务级 Config 通道（真宿主无 face 注入通道的对应面）', () => {
   function makeService(workspaceOverride: string, overrides: { ghCommand?: string } = {}, record?: SpawnRecord[]): InstanceType<typeof GitService> {
-    const ctx = new Context() as never
-    const face = ctx as { provide(name: string, value: unknown): void }
-    face.provide('subprocess', localSubprocess(record))
-    return new GitService(ctx, {
-      gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000,
-      workspaceOverride, autoFetchIntervalMs: 0,
+    // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+    return makeGitService(workspaceOverride, {
+      commitTimeoutMs: 15_000,
+      autoFetchIntervalMs: 0,
       ghCommand: overrides.ghCommand ?? 'gh',
-    })
+      ...(record !== undefined ? { record } : {}),
+    }).service
   }
 
   it('ghCommand 指向解析不到的固件名 ⇒ createPr 抛 pr-tool-missing / prForBranch 静默降级 null', async () => {

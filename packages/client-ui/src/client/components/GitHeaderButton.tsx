@@ -59,7 +59,7 @@
  * 稳定行 id 'dsh-git-menu-automation' / 'dsh-git-menu-automation-latest' 供组合断言。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry, MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SnapshotSelectorHook, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -77,6 +77,8 @@ import {
 } from '../ui-model.js'
 import type { GitErrorLike } from '../remote/mount.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
+import { useAsyncAction } from '../hooks/useAsyncAction.js'
+import { useMenuFetch } from '../hooks/useMenuFetch.js'
 import { GitBranchCreateDialog } from './GitBranchCreateDialog.js'
 import { GitCommitDialog } from './GitCommitDialog.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
@@ -164,12 +166,18 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
   const [prIntent, setPrIntent] = useState(false)
   const [prNumbers, setPrNumbers] = useState<Readonly<Record<string, number | null>>>({})
   const [branchList, setBranchList] = useState<readonly RefInfo[]>([])
-  // ── V3 批次三：Agent 工具观测态（[45]——null = 未拉取/拉取失败，状态行缺席）──
-  const [agentTools, setAgentTools] = useState<AgentToolsStatusResult | null>(null)
-  // ── V3 批次五：自动化观测态（[42][43]——null = 未拉取/拉取失败，状态行组缺席）──
-  const [automation, setAutomation] = useState<AutomationStatusResult | null>(null)
-  const [busy, setBusy] = useState(false)
+  // ── V3 批次三：Agent 工具观测态（[45]）与 V3 批次五：自动化观测态（[42][43]）──
+  // 「菜单开着即拉数据」同形 effect 收敛到 useMenuFetch（成功 ⇒ value；失败静默降
+  // 级 ⇒ null，行缺席；重取防陈旧）。[69] 的并行 PR 查询（错误卡 + 多路 Promise.all
+  // + 徽标折叠）形状不同，保留独立 effect。
+  const agentTools = useMenuFetch<AgentToolsStatusResult>({ enabled: open, fetch: admin.agentToolsStatus })
+  const automation = useMenuFetch<AutomationStatusResult>({ enabled: open, fetch: admin.automationStatus })
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
+  // runAdmin 点击时的任务闭包（useAsyncAction 的 run 经 ref 读取——任务因动作而异）。
+  const taskRef = useRef<AdminTask | null>(null)
+
+  // V3 批次三/五观测态 effect 已收敛（见上）；分支清单 + [69] PR 徽标的拉取形状
+  // 不同（错误卡 + 并行查询），保留独立。
 
   const branch = state.status?.branch ?? null
   const headName = branch !== null && !branch.detached && !branch.unborn ? branch.name : null
@@ -203,42 +211,24 @@ export function GitHeaderButton(props: GitHeaderButtonProps) {
     return () => { cancelled = true }
   }, [open, admin, pr])
 
-  // V3 批次三（[45]；plan §5.7）：菜单开着即拉 Agent 工具观测态（每次开菜单重取防
-  // 陈旧——Config.agentTools 是 fiber 构造期定值，重取主要覆盖 face 降级态漂移）。
-  // 失败静默降级：状态行整行缺席——观测行不进错误卡语义（错误卡是动作面）。
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void admin.agentToolsStatus().then((result) => {
-      if (cancelled) return
-      setAgentTools(result.ok ? result.value : null)
-    })
-    return () => { cancelled = true }
-  }, [open, admin])
+  // V3 批次三（[45]）/ V3 批次五（[42][43]）的观测态拉取已收敛到 useMenuFetch
+  // （见 hooks/useMenuFetch.ts——语义逐字节保真：开着重取防陈旧、失败静默降级）。
 
-  // V3 批次五（[42][43]；plan §7.5）：菜单开着即拉自动化观测态（Agent 工具观测态
-  // 同款重取防陈旧——重取覆盖自动化动作环推进）。失败静默降级：状态行组整组缺席
-  // （观测行不进错误卡语义）。
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    void admin.automationStatus().then((result) => {
-      if (cancelled) return
-      setAutomation(result.ok ? result.value : null)
-    })
-    return () => { cancelled = true }
-  }, [open, admin])
-
-  /** 菜单直跑动作的错误折叠 + busy 闸（防双击重入）。 */
-  const runAdmin = async (task: AdminTask): Promise<void> => {
-    if (busy) return
-    setBusy(true)
-    try {
+  // ── 菜单直跑动作闸（Phase 2·client 薄壳化）：busy 闸收敛到 useAsyncAction 的
+  // createBusyGate（同步翻转先于任何 await——闭包 busy 竞态根治）；任务经 ref 传递。
+  // 错误折叠保留原语义：任务失败 ⇒ setAdminError（错误卡不因后续成功动作清除——
+  // 关闭按钮是唯一清除通道，hooks 的 error 态在此不消费）。 ──
+  const adminAction = useAsyncAction<null>({
+    run: async () => {
+      const task = taskRef.current as AdminTask
       const error = await task()
       if (error !== null) setAdminError(error)
-    } finally {
-      setBusy(false)
-    }
+      return { ok: true, value: null }
+    },
+  })
+  const runAdmin = (task: AdminTask): Promise<void> => {
+    taskRef.current = task
+    return adminAction.trigger()
   }
 
   const switchBranch = (name: string): void => {

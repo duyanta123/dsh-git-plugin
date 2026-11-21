@@ -15,12 +15,8 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// 真实 git 子进程风暴用例（每用例多次 execFileSync/spawn）——资源裕量放宽（diff.spec 同款）。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type { LogPage, RefsSnapshot } from '../src/types.ts'
 import { DiffEngine } from '../src/diff.ts'
@@ -31,7 +27,7 @@ import {
 import { GitRunner, READONLY_PREFIX, DEFAULT_OUTPUT_MAX_BYTES } from '../src/git-runner.ts'
 import { GitService } from '../src/index.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -55,10 +51,8 @@ async function makeEngine(logMaxLimit?: number): Promise<EngineHarness> {
 }
 
 function makeService(workspaceOverride: string): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  return new GitService(ctx, { gitCommand: 'git', fastTimeoutMs: 15_000, workspaceOverride })
+  // 装配去重：Context+subprocess 面经 support.makeGitService；本文件无差异键（基线即全量）。
+  return makeGitService(workspaceOverride).service
 }
 
 /** world 重读：git log --topo-order 的全量 oid 序（children-first 权威）。 */

@@ -33,7 +33,11 @@
 
 import { detectOperation } from './conflicts.ts'
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
+import { conflictedPaths } from './op-guards.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { scanFresh } from './scan-fresh.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { StatusEngine } from './status.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type {
@@ -155,7 +159,7 @@ export class StashEngine {
     if (options.includeUntracked === true) args.push('--include-untracked')
     if (typeof options.message === 'string' && options.message !== '') args.push('-m', options.message)
     const pushed = await this.gitWrite.run(args, {
-      cwd: repoRoot, op: 'stashPush(git stash push)', signal: active(signal),
+      cwd: repoRoot, op: 'stashPush(git stash push)', signal: signalOf(signal),
       // 单条命令摘除 GIT_LITERAL_PATHSPECS（undefined = 墓碑）：本机 git 2.55.0.windows.2
       // 实测该环境变量静默破坏 `-u` 的 untracked 收集（tracked 照常入 stash、untracked
       // 留在工作区——git 内部 pathspec 魔法被字面化）。stash push 不传用户 pathspec
@@ -178,7 +182,7 @@ export class StashEngine {
   async stashList(signal?: AbortSignal): Promise<StashListResult> {
     const repoRoot = await this.resolveRepoRoot('stashList', signal)
     const listed = await this.gitRead.run(['stash', 'list', `--pretty=format:${STASH_LIST_FORMAT}`], {
-      cwd: repoRoot, op: 'stashList(git stash list)', signal: signal ?? neverAborted(),
+      cwd: repoRoot, op: 'stashList(git stash list)', signal: signalOf(signal),
     })
     assertGitOk(listed, 'stashList(git stash list)')
     return { stashes: parseStashList(listed.stdout).stashes }
@@ -199,7 +203,7 @@ export class StashEngine {
     const repoRoot = await this.resolveRepoRoot('stashPop', signal)
     await this.requireStashEntry(repoRoot, index, signal)
     const popped = await this.gitWrite.run(['stash', 'pop', stashRef(index)], {
-      cwd: repoRoot, op: 'stashPop(git stash pop)', signal: active(signal),
+      cwd: repoRoot, op: 'stashPop(git stash pop)', signal: signalOf(signal),
     })
     if (popped.exitCode !== 0) {
       await this.throwStashFailure(popped, 'stash-pop', repoRoot, signal)
@@ -228,7 +232,7 @@ export class StashEngine {
     const repoRoot = await this.resolveRepoRoot('stashDrop', signal)
     await this.requireStashEntry(repoRoot, index, signal)
     const dropped = await this.gitWrite.run(['stash', 'drop', stashRef(index)], {
-      cwd: repoRoot, op: 'stashDrop(git stash drop)', signal: active(signal),
+      cwd: repoRoot, op: 'stashDrop(git stash drop)', signal: signalOf(signal),
     })
     assertGitOk(dropped, 'stashDrop(git stash drop)')
     this.logger?.debug(`git stashDrop: index=${String(index)}`)
@@ -240,7 +244,7 @@ export class StashEngine {
   /** stash@{N} 存在性预检（`rev-parse --verify --quiet`；exit 1 ⇒ git/stash-not-found）。 */
   private async requireStashEntry(repoRoot: string, index: number, signal?: AbortSignal): Promise<void> {
     const probed = await this.gitRead.run(['rev-parse', '--verify', '--quiet', stashRef(index)], {
-      cwd: repoRoot, op: `stash(rev-parse --verify ${stashRef(index)})`, signal: signal ?? neverAborted(),
+      cwd: repoRoot, op: `stash(rev-parse --verify ${stashRef(index)})`, signal: signalOf(signal),
     })
     if (probed.exitCode !== 0) {
       throw gitError('git/stash-not-found', `git stash: no stash entry at stash@{${String(index)}}`, { index })
@@ -259,7 +263,7 @@ export class StashEngine {
     signal?: AbortSignal,
   ): Promise<never> {
     if (/CONFLICT/.test(result.stdout) || /CONFLICT/.test(result.stderr)) {
-      const conflicted = await this.conflictedPaths(repoRoot, signal)
+      const conflicted = await conflictedPaths(this.gitRead, repoRoot, 'stash', signal)
       // 中间态探测走 conflicts.ts 共享 detectOperation（V3 统一面：rebase 目录 +
       // CHERRY_PICK/REVERT/MERGE_HEAD 全覆盖——私有双头探测是 1ddaab5 统一前的遗留）。
       const operation = await detectOperation(repoRoot, this.gitRead, signal)
@@ -273,44 +277,23 @@ export class StashEngine {
   }
 
   /**
-   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）：**-z 口径**——NUL 分隔、
-   * 路径原样字节不加引号（merge-rebase.ts/time-travel.ts 同款；评审收口补齐——本处是
-   * 1ddaab5「conflicted 回读 -z 口径统一」漏掉的第四处，原行分割口径在 core.quotepath
-   * 缺省下会把非 ASCII 路径 C-引号化，且路径内嵌换行会被拆行）。不 trim——`-z` 输出
-   * 无填充，条目即路径本身（路径尾空格合法）。
+   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）已收口至 op-guards.ts
+   * 共享 conflictedPaths（op 词汇 'stash' 经参数保留；本处曾是 1ddaab5「conflicted
+   * 回读 -z 口径统一」漏掉的第四处——收口后该漂移面结构性消失）。
    */
-  private async conflictedPaths(repoRoot: string, signal?: AbortSignal): Promise<string[]> {
-    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U', '-z'], {
-      cwd: repoRoot, op: 'stash(diff --diff-filter=U -z)', signal: active(signal),
-    })
-    assertGitOk(listing, 'stash(diff --diff-filter=U -z)')
-    return listing.stdout.split('\0').filter((entry) => entry !== '')
-  }
 
   /** fresh status 扫描（守卫世界读取 + repoRoot；三态 error 就地抛出）。 */
-  private async scanFresh(
+  private scanFresh(
     op: string,
     signal?: AbortSignal,
   ): Promise<{ repoRoot: string; snapshot: GitStatusSnapshot }> {
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
-    return { repoRoot: state.snapshot.repoRoot, snapshot: state.snapshot }
+    return scanFresh(this.status, this.logger, op, signal)
   }
 
-  /** repo 发现（blame.ts 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
@@ -330,13 +313,3 @@ function normalizeIndex(index: number | null | undefined, op: string): number {
   return value
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}
-
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

@@ -60,9 +60,12 @@
  * （log/refs/show 引擎落地前的缓存面 = status）。
  */
 
-import { assertGitOk, gitError, gitRunError, logFailure, sanitizeStderr } from './error-codes.ts'
+import { assertGitOk, gitError, gitRunError, logFailure, nullLogger, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { configGetScalar, currentBranchShortName } from './op-guards.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { CommitOptions, CommitProcessOutput, CommitResult, CommitViolation } from './types.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import { DEFAULT_GUARD_LARGE_FILE_BYTES, hardBlockViolations, scanStagedContents } from './guard-scan.ts'
@@ -119,7 +122,7 @@ export class CommitEngine {
    *   git/no-repository（身份查询顺带发现出仓）、git/timeout、git/git-error。
    */
   async commit(options: CommitOptions, signal?: AbortSignal): Promise<CommitResult> {
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     // 守卫 3.5：[清单 18] trailers 形状校验（最先判——零命令面）。
     const trailers = options.trailers ?? []
     if (trailers.length > 0) {
@@ -135,13 +138,7 @@ export class CommitEngine {
     const { root } = await this.workspace.resolve()
     // 步骤 0：仓库发现（"exit 128 + not a git repository" 范式，status.ts 同源）——
     // 把「会话 cwd 不是仓库」显式落 git/no-repository，而不是让 config/diff 间接失败。
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: root, op: 'commit(rev-parse --show-toplevel)', signal: active,
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${root}`, { probed: root })
-    }
-    assertGitOk(probe, 'commit(rev-parse --show-toplevel)')
+    await probeRepoRoot(this.gitRead, root, 'commit', active)
 
     // 守卫 1：身份检查（合并视图；缺失键进 details.missing，[清单 55]）。
     const [name, email] = await Promise.all([
@@ -273,31 +270,30 @@ export class CommitEngine {
     return { oid, shortOid: oid.slice(0, 7), branch, amended: options.amend, message, process }
   }
 
-  /** 当前分支短名；detached（`--abbrev-ref HEAD` 输出 'HEAD'，本机实测）⇒ null。 */
+  /**
+   * 当前分支短名；detached（`--abbrev-ref HEAD` 输出 'HEAD'，本机实测）⇒ null——
+   * 共享实现在 op-guards.ts currentBranchShortName（commit.ts ≡ message-gen.ts 同款
+   * 收口；refs-admin.ts / admin-repo.ts 的 symbolic-ref 口径刻意不并入）。
+   */
   private async currentBranch(root: string, signal: AbortSignal): Promise<string | null> {
-    const result = await this.gitRead.run(['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: root, op: 'commit(rev-parse --abbrev-ref HEAD)', signal,
-    })
-    if (result.exitCode !== 0) return null
-    const name = result.stdout.trim()
-    return name === '' || name === 'HEAD' ? null : name
+    return currentBranchShortName(this.gitRead, root, 'commit(rev-parse --abbrev-ref HEAD)', signal)
   }
 
   /**
    * 单键 `git config --get`（exit 语义同 index.ts configGet：0=有值/空串按缺失、
-   * 1=键未设置 ⇒ null、其余非零 ⇒ git/git-error）。
+   * 1=键未设置 ⇒ null、其余非零 ⇒ git/git-error）——共享实现在 op-guards.ts
+   * configGetScalar（四份同语义实现收口）；失败出口的 logFailure 经 onFailure 保序
+   * （先 warn 后 throw——index.ts identity 版同纪律）。
    */
   private async configGet(root: string, key: 'user.name' | 'user.email', signal: AbortSignal): Promise<string | null> {
-    const result = await this.gitRead.run(['config', '--get', key], {
-      cwd: root, op: `commit(config --get ${key})`, signal,
-    })
-    if (result.exitCode === 0) {
-      const value = result.stdout.trim()
-      return value === '' ? null : value
-    }
-    if (result.exitCode === 1) return null
-    logFailure(this.logger ?? nullLogger, 'commit', 'git/git-error', { key })
-    throw gitRunError(`commit(config --get ${key})`, result.exitCode, result.stderr, result.truncated)
+    return configGetScalar(
+      this.gitRead,
+      root,
+      ['config', '--get', key],
+      `commit(config --get ${key})`,
+      signal,
+      () => { logFailure(this.logger ?? nullLogger, 'commit', 'git/git-error', { key }) },
+    )
   }
 }
 
@@ -321,10 +317,5 @@ function firstLine(message: string): string {
   return message.split(/\r?\n/, 1)[0] ?? ''
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}
-
-/** 引擎内 logFailure 的空实现（logger 可选注入的兜底面）。 */
-const nullLogger: GitLoggerFace = { debug() {}, info() {}, warn() {}, error() {} }
+// 引擎内 logFailure 的空实现（logger 可选注入的兜底面）已收口至 error-codes.ts
+// nullLogger（message-gen.ts 同款私有副本一并不留）。

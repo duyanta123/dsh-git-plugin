@@ -41,6 +41,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { assert, killTree } from './verify-rpc.mjs'
 
 export const EXIT_PASS = 0
 export const EXIT_FAIL = 1
@@ -55,9 +56,8 @@ export const NEGATIVE_SPECS = ['@deepseek-ai/dsh@0.1.7-rc.2', '@deepseek-ai/dsh@
 const NPM_VIEW_TIMEOUT_MS = 120_000
 const NPM_INSTALL_TIMEOUT_MS = 600_000
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message)
-}
+// assert / killTree 收口至 ./verify-rpc.mjs（verify 系公共助手单源；resolveTarget 的
+// 存在性断言与 npmInstallToPrefix/runProcess 的超时 kill 两道防线消费同一实现）。
 
 /** skip 纪律的异常载体：reason ∈ 'spec-not-found' | 'npm-unreachable'。 */
 export class SkipError extends Error {
@@ -165,14 +165,6 @@ function classifyNpmFailure(spec, out, headline) {
     return new SkipError('spec-not-found', `${headline}: spec ${spec} not found on the registry (stderr first line: ${stderrFirstLine})`)
   }
   return new SkipError('npm-unreachable', `${headline} (stderr first line: ${stderrFirstLine})`)
-}
-
-function killTree(pid) {
-  if (!pid) return
-  try {
-    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    killer.on('error', () => { /* best effort */ })
-  } catch { /* best effort */ }
 }
 
 /** spawn once, capture output, enforce a timeout, kill the tree on timeout；'error' 事件兜底。 */

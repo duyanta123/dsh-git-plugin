@@ -10,140 +10,10 @@
  * SRC 源码反射兜底 —— 因此 `super(ctx, 'git')` 的 serviceKey 必须是字符串字面量
  * （generator gatewayBindingArguments 契约；spec §1.0.1 样例同形）。
  *
- * ⑤ status 引擎模块（2026-10-31）接线：四实例 GitRunner（只读/写/提交/网络，
- * git-runner.ts）+ StatusEngine（status.ts）+ `@Remote status()`（spec §1.1）+
- * Config 超时三档（fastTimeoutMs/commitTimeoutMs/networkTimeoutMs，spec §1.0.2）。
- * ④-C diff 引擎模块（2026-10-31）接线：DiffEngine（diff.ts）+ `@Remote diff()`
- * （spec §1.2，权限 A）+ Config diffFilePatchMaxBytes/diffTotalPatchMaxBytes
- * （spec §1.0.2 默认 262_144 / 2_097_152）。commitDiff 为 DiffEngine 引擎级方法
- * （show 接线模块经它取 CommitDetail 的 files/totalTruncated）。
- * M9 watcher/followStatus 模块（2026-10-31）接线：StatusWatcher（watcher.ts，三目标
- * watch + 防抖 + 轮询兜底 + 引用计数 + R1–R6）+ `@Remote({mode:'stream'})
- * followStatus()`（spec §2 host 推送契约的 v1 落地面——事件转发 allowlist 无 git/*，
- * 推送以 typert stream 流帧承载；上行 `refresh` 命令 = R5 manual）+ Config
- * debounceMs/pollIntervalMs/watchEnabled（spec §1.0.2 默认 150/60_000/true）。
- * ⑤ mutations/commit 模块（2026-10-31）接线：MutationEngine（mutations.ts，stage/
- * unstage/discard 三重守卫）+ CommitEngine（commit.ts，全守卫链/hook 分类/回读）+
- * `@Remote stage()/unstage()/discard()/commit()`（spec §1.3/§1.4）。写后失效统一
- * invalidateStatusCache() + notifyStatusMutation()（R3；status/log/refs/show 的
- * 后三者在 log/refs/show 模块落地时并入此失效点）。
- * M6 remote-ops 模块（2026-10-31）接线：RemoteOpsEngine（remote-ops.ts，上游三态
- * 判定/diverged 预检/stderr 脱敏分类器）+ `@Remote push()/pull()/fetch()`
- * （spec §1.5/§1.6；权限 push/pull C、fetch B）。
- * M7 message-gen 模块（2026-10-31）接线：MessageGenEngine（message-gen.ts，
- * nothing-staged 前置 + 裁剪四上限 + session-title-llm 六步范式）+
- * `@Remote generateCommitMessage()`（spec §1.7，权限 B）+ Config
- * llmTimeoutMs/llmProvider/llmModel/llmMaxInputBytes（spec §1.0.2 + 任务口径
- * 硬顶）。LLM 路由捕获自挂 session/event（request/header）——与 workspace.ts
- * 的 turn/start 监听同机制。
- * F7 提交图数据层模块（2026-10-31）接线：GraphEngine（graph.ts，log 分页
- * over-fetch/refs 单次查询/commitDetail）+ `@Remote log()/refs()/getCommitDetail()`
- * （spec §1.8 [清单 31/32/33]；workflow 任务口径端点名 show → getCommitDetail、
- * 详情带 refs 过滤）+ Config logDefaultLimit/logMaxLimit（spec §1.0.2 默认
- * 500/5_000）。host 对 log/refs/show 无缓存（spec §1.9 三行无失效列）——写后失效
- * 由 client store 的状态订阅（branch.oid 变化 → reload）承担，afterWrite 无需接线。
- * v2 批次一（2026-11-08，docs/v2-implementation-plan.md §3）接线：RefsAdminEngine
- * （refs-admin.ts，分支/标签/remote/worktree 管理面，[清单 23/30/57/62/68]）+
- * `@Remote branchCreate()/branchSwitch()/branchDelete()/tagCreate()/tagDelete()/
- * remoteList()/worktreeList()/worktreeAdd()/worktreeRemove()`（九方法，REMOTE_METHODS
- * 16→25）+ push 的 force/acknowledged/remote 入参（[清单 27/57]，remote-ops.ts 扩展）
- * + Config autoFetchIntervalMs（[清单 58] 定时 fetch，D6=B 默认 300_000、0=关；
- * Cordis effect 挂 interval，失败仅 warn 不投 UI）。
- * v2 批次二（2026-11-08，docs/v2-implementation-plan.md §4）接线：BlameEngine
- * （blame.ts，[清单 34] blame --porcelain + D3=B 的 -L 区间分片与单次 50_000 行
- * 硬顶/outputMaxBytes 互相校验）+ TimeTravelEngine（time-travel.ts，[清单 37]
- * cherry-pick/revert/reset/abortOperation，write runner 档 + 三重守卫 + 中间态
- * 探测）+ GraphEngine 扩 log 过滤参数（[清单 35/60]）与 compareBranches（[清单 36]，
- * revListCounts 提共享 rev-count.ts）+ `@Remote blame()/compareBranches()/cherryPick()/
- * revert()/reset()/abortOperation()`（六方法，REMOTE_METHODS 25→31）+ 域码四码
- * （blame-oversized/merge-conflict/unknown-revision/operation-in-progress）+
- * bad-request reason += 'follow-without-path'。
- * v2 批次三（2026-11-08，docs/v2-implementation-plan.md §5）接线：StagingPatchEngine
- * （staging-patch.ts，[清单 10] `apply --cached --recount` 两态 stage/unstage——D7=B）
- * + StashEngine（stash.ts，[清单 14] push/list/pop/drop——D4=B includeUntracked 显式
- * boolean 缺省 true）+ GuardScanEngine（guard-scan.ts，[清单 21/22] staged 护栏扫描
- * ——密钥模式表自研零新依赖、redactedMatch 脱敏；D5=A secret 硬阻断由 CommitEngine
- * 守卫链消费）+ DiagnosticsEngine（diagnostics.ts，[清单 56] autocrlf/eol/CRLF 抽样）
- * + CommitEngine 扩 trailers（[清单 18]）与 process 捕获（[清单 63]）+ `@Remote
- * stagePatch()/stashPush()/stashList()/stashPop()/stashDrop()/scanStaged()/
- * repoDiagnostics()`（七方法，REMOTE_METHODS 31→38）+ 域码三码（stage-patch-failed/
- * stash-not-found/commit-blocked）+ bad-request reason += 'malformed-trailer' +
- * Config guardLargeFileBytes/guardBuildPatterns/guardSecretPatterns。
- * v2 批次四（2026-11-08，docs/v2-implementation-plan.md §6）接线：AdminRepoEngine
- * （admin-repo.ts，[清单 8] 非仓库目录 git init——前置 rev-parse 复核非仓库态）+
- * SubmoduleEngine（submodule.ts，[清单 61] `git submodule status` 只列不递归双读
- * 归并）+ AuditEngine（audit.ts，[清单 66] 写操作审计环缓冲——**双出口挂钩**：
- * 成功出口（logWrite 处）入环 ok:true、catch 出口（logFailure 处）入环 ok:false+code，
- * 只挂 afterWrite 会漏全部失败审计，§6.5）+ PrEngine（pr.ts，[清单 46/69] gh CLI
- * 载体 D1=A——ghCommand Config 经 resolveExecutable 解析（gitCommand 先例），失败
- * ⇒ git/pr-tool-missing；transport 结构切片只在单测可达，§6.7/§6.10）+
- * MessageGenEngine 扩 generatePrDescription（[清单 46] 六步管线共用 dispatch +
- * [清单 70] 合并策略约定段——PR 模板/CONTRIBUTING/git config merge·pull 探测，
- * 缺失即省略）+ `@Remote initRepository()/submoduleStatus()/auditLog()/
- * generatePrDescription()/createPr()/prForBranch()`（六方法，REMOTE_METHODS 38→44）
- * + 域码三码（init-failed/pr-tool-missing/pr-create-failed）+ Config ghCommand/
- * auditMaxEntries。
- * v3 批次一（2026-11-12，docs/v3-implementation-plan.md §3）接线：ConflictsEngine
- * （conflicts.ts，[清单 13] 冲突解决——fresh porcelain v2 扫描 + §3.4 七码×两向命令
- * 矩阵（查表；UD/DU 按 git 2.55 实测语义落表，与方案表格列互换的实测裁决见
- * conflicts.ts 文件头）+ detectOperation 中间态探测提共享）+ TimeTravelEngine 改消费
- * 共享探测（abortOperation 探测面 += MERGE_HEAD/rebase 目录，§3.3）+ `@Remote
- * conflictList()/conflictResolve()/conflictMarkResolved()/operationContinue()`
- * （四方法，REMOTE_METHODS 44→48）+ 域码零新码（operation-in-progress op 联合 +=
- * 'merge'|'rebase'、bad-request reason 联合 += 'path-not-conflicted'|
- * 'conflicts-remaining'）+ operationContinue 执行 env 追加 GIT_EDITOR=true（防
- * sequencer 编辑器挂起）。
- * v3 批次二（2026-11-13，docs/v3-implementation-plan.md §4）接线：MergeRebaseEngine
- * （merge-rebase.ts，[清单 28/29] merge/rebase——守卫链 acknowledged / baseRevision
- * 乐观并发 / rev-parse --verify / detectOperation（批次一共享探测，不重复实现）/
- * dirty-worktree 从严档（git 允许部分脏合并，插件口径要求干净才可预测，README 如实
- * 注明）+ merge ff 三态（auto/ff-only/no-ff；-m msg|--no-edit 命令面防编辑器挂起）+
- * rebase [--onto] upstream（执行 env GIT_EDITOR=true）+ up-to-date 幂等成功 + 冲突 ⇒
- * git/merge-conflict（op 'merge'|'rebase'，conflicted 回读，continue 由批次一
- * operationContinue 驱动））+ `@Remote branchMerge()/rebase()`（两方法，REMOTE_METHODS
- * 48→50）+ 域码零新码。
- * v3 批次三（2026-11-13，docs/v3-implementation-plan.md §5）接线：Agent 工具面
- * （[清单 45]）agent-tools.ts（11 工具定义表——readonly 8 + readwrite 3，plan §5.4
- * 权威表；本地最小结构接口零运行期依赖 dsh-tools；raw JSON Schema 形态；execute
- * 直调引擎层不走 RPC 自调；失败以 `{ok:false,error,message}` 值返回不抛宿主异常）
- * + registerAgentTools 注册面（可选切片 ctx.get('tools') 结构读取——绝不进 static
- * inject；即时尝试 + 'internal/service' 事件跟随 + 宽限期单次降级 warn；逐工具
- * register 包 try/catch——schema 校验拒绝 log + 跳过不炸服务；写工具按批次四双出口
- * 纪律挂 AuditEngine.record，op 名 = 工具名）+ agentToolBlockShellGit 引导 guard
- * （shell 类工具参数的 git 命令模式 deny——文案引导改用 git_* 工具；引导性防线非
- * 安全边界，默认关）+ `@Remote agentToolsStatus()`（观测/verify 断言锚，REMOTE_METHODS
- * 50→51）+ Config agentTools（三档，默认 off——D-γ=A）/agentToolBlockShellGit
- * （默认 false）。零新域码（工具内失败以结果文本表达——plan §5.6）。
- * v3 批次四（2026-11-14，docs/v3-implementation-plan.md §6）接线：检查点·归因·聚合
- * （[清单 39/40/41]，消费式）——SessionWatch（session-watch.ts，构造期挂
- * session/event + session/disposed，workspace.ts 先例；消费 workspace/changes 事件建
- * (sessionId,seq,turn) 环索引 + turn/end 补 endedAt/reason；per-session 环容量
- * Config checkpointMaxTurns 默认 50；事件缺 seq/turn 按降级跳过不炸监听——plan §6.9
- * 残余风险守卫）+ CheckpointsEngine（checkpoints.ts，checkpointList/checkpointDiff/
- * checkpointRestore/attributionGet 四引擎 + hunk→patch 序列化器纯函数；restore =
- * `git apply -R --whitespace=nowarn --unidiff-zero` worktree 应用——DB=A diff hunks
- * 反向应用，私有 tree id 绝不触碰（§0.2-③-1）；逐文件部分成功语义；--unidiff-zero
- * 为施工增补（coarse/整文件替换 hunk 无上下文行，git apply 缺旗标即拒，probe 实测））
- * + workspaceChanges 服务经可选切片 ctx.get('workspaceChanges') 读取（绝不进 static
- * inject——未挂载部署索引照建、summary null / 操作侧 checkpoint-unavailable 降级）
- * + `@Remote checkpointList()/checkpointDiff()/checkpointRestore()/attributionGet()`
- * （四方法，REMOTE_METHODS 51→55）+ 域码一码（checkpoint-unavailable）+
- * checkpointRestore 审计双出口（checkpointDiff/Restore 的 seq 校验硬失败在引擎守卫链）。
- * v3 批次五（2026-11-18，docs/v3-implementation-plan.md §7）接线：自动化（[清单
- * 42/43]，DA=C 会话锚定）——AutomationEngine（automation.ts，构造期挂 session/event
- * + session/disposed——批次四 session-watch.ts 同款接线，消费 GitSessionFace.id 投影）：
- * auto-commit（turn/end reason.kind==='completed' + workspace 已解析 + fresh status
- * 非干净 ⇒ add -A → scanStagedContents（secret 命中 ⇒ git reset 全撤销 + audit——
- * DD=A 不豁免不重试）→ CommitEngine 落提交（模板 `{turn}` 插值或 message-gen AI 路由
- * 未解析/失败回落模板 + trailer 'Auto-committed-by: dsh-git-plugin'；hook 失败放弃
- * + audit；identity-missing 跳过 + audit））+ auto-branch（turn/start per-session
- * 判重 + 当前分支 ∈ autoBranchProtected + fresh status clean ⇒ refsAdmin.branchCreate
- * checkout=true，branch-exists ⇒ 序号后缀递增；非 clean/非受保护 ⇒ 跳过 + log）+
- * 并发纪律（fresh status + detectOperation 双检 + 全局单飞；自动化永不向 UI 报错——
- * §7.4 零新码，结果经 auditLog + automationStatus 双可查）+ `@Remote automationStatus()`
- * （只读观测面，lastActions 环 20 条 newest-first，detail 白名单摘要——REMOTE_METHODS
- * 55→56）+ Config autoCommitMode/autoCommitMessage/autoCommitTemplate/autoBranchMode/
- * autoBranchPrefix/autoBranchProtected 六键（默认全 off/template/['main','master']）。
+ * 各批次接线史（⑤ status 引擎模块 / ④-C diff 引擎模块 / M9 watcher·followStatus 模块 /
+ * ⑤ mutations·commit 模块 / M6 remote-ops 模块 / M7 message-gen 模块 / F7 提交图数据层模块 /
+ * v2 批次一~四 / v3 批次一~五，逐批 @Remote/域码/Config 接线明细原文）已迁
+ * docs/host-wiring-notes.md §1（NOTICE.md/PORTING.md 登记面不变）。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -151,9 +21,10 @@ import z from '@deepseek-ai/schemastery'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { RemoteStream } from '@deepseek-ai/dsh-typert-protocol'
 import type { GitCommandClass, GitRunner, SubprocessFace } from './git-runner.ts'
-import { DEFAULT_OUTPUT_MAX_BYTES, createGitRunners } from './git-runner.ts'
-import { gitRunError, logFailure, logRead, logWrite, sanitizeStderr } from './error-codes.ts'
+import { DEFAULT_OUTPUT_MAX_BYTES, createGitRunners, signalOf } from './git-runner.ts'
+import { errorCodeOf, logFailure, logRead, logWrite, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
+import { configGetScalar } from './op-guards.ts'
 import { DiffEngine, DIFF_FILE_PATCH_MAX_BYTES, DIFF_TOTAL_PATCH_MAX_BYTES } from './diff.ts'
 import { CommitEngine } from './commit.ts'
 import { MutationEngine } from './mutations.ts'
@@ -223,6 +94,18 @@ export const SERVICE_KEY = 'git'
 
 /** 定时 fetch 默认间隔毫秒（v2 批次一 [清单 58]，D6=B 拍板默认开启；0 = 关闭）。 */
 export const DEFAULT_AUTO_FETCH_INTERVAL_MS = 300_000
+
+/**
+ * identity 作用域 → `git config` 作用域旗标（查表收口，原四分支三元链）。
+ * merged（与缺省 undefined）= 合并视图 = 无旗标；键集按 GitIdentityScope 全量
+ * 枚举——新增作用域时编译期即报缺表项。
+ */
+const IDENTITY_SCOPE_FLAGS: Readonly<Record<GitIdentityScope, readonly string[]>> = Object.freeze({
+  merged: [],
+  local: ['--local'],
+  global: ['--global'],
+  system: ['--system'],
+})
 
 /** GitRunner bounds 与工作区解析（Config；超时分档照 spec §1.0.2）。 */
 export interface Config {
@@ -365,6 +248,19 @@ export interface Config {
 export const REMOTE_METHODS = ['ping', 'identity', 'status', 'diff', 'followStatus', 'stage', 'unstage', 'discard', 'commit', 'push', 'pull', 'fetch', 'generateCommitMessage', 'log', 'refs', 'getCommitDetail', 'branchCreate', 'branchSwitch', 'branchDelete', 'tagCreate', 'tagDelete', 'remoteList', 'worktreeList', 'worktreeAdd', 'worktreeRemove', 'blame', 'compareBranches', 'cherryPick', 'revert', 'reset', 'abortOperation', 'stagePatch', 'stashPush', 'stashList', 'stashPop', 'stashDrop', 'scanStaged', 'repoDiagnostics', 'initRepository', 'submoduleStatus', 'auditLog', 'generatePrDescription', 'createPr', 'prForBranch', 'conflictList', 'conflictResolve', 'conflictMarkResolved', 'operationContinue', 'branchMerge', 'rebase', 'agentToolsStatus', 'checkpointList', 'checkpointDiff', 'checkpointRestore', 'attributionGet', 'automationStatus'] as const
 
 /** `REMOTE_METHODS` 的权威注释口径：16（v1）→25（批次一）→31（批次二）→38（批次三）→44（批次四：+initRepository/submoduleStatus/auditLog/generatePrDescription/createPr/prForBranch）→**48**（v3 批次一：+conflictList/conflictResolve/conflictMarkResolved/operationContinue）→**50**（v3 批次二：+branchMerge/rebase）→**51**（v3 批次三：+agentToolsStatus）→**55**（v3 批次四：+checkpointList/checkpointDiff/checkpointRestore/attributionGet）→**56**（v3 批次五：+automationStatus）。 */
+
+/**
+ * 写出口遥测字段对（{@link GitService.withWrite} fieldsOf 回调产物；Phase 2 样板收敛）：
+ * `log` = 成功日志字段（logWrite/logRead 的 pairs——键序即消息串序，error-codes.ts
+ * fields() 按插入序拼接；durationMs 位置逐方法保真：v1 四方法 commit/push/pull/fetch
+ * 居首、其余居尾、autoFetch 的 logRead 无）+ `audit` = auditOk 白名单摘要字段（键序
+ * 即 summary 串序，audit.ts summarizeAuditFields 同序拼接）。两表的字段面与键序被
+ * tests/audit-snapshot.spec 全 op 快照逐字节钉死——改键序/字段 = 行为改动，禁。
+ */
+interface WriteTelemetry {
+  log: Readonly<Record<string, unknown>>
+  audit: Readonly<Record<string, unknown>>
+}
 
 /**
  * Git 插件 host 服务。构造即注册（`ctx.reflect.provide`），
@@ -709,7 +605,7 @@ export class GitService extends TypertRemoteService {
     const result = await this.runners.readonly.run(['--version'], {
       cwd: process.env.TEMP ?? process.cwd(),
       op: 'ping(--version)',
-      signal: neverAborted(),
+      signal: signalOf(),
     })
     if (result.exitCode !== 0 || result.truncated) {
       // message 经 gateway 原样回传（gateway/internal 折叠保留 message）——stderr 必须先
@@ -756,24 +652,26 @@ export class GitService extends TypertRemoteService {
     }
   }
 
-  /** 单键 `git config --get`；exit 1 = 缺失 → null，其余非零 → git/git-error。 */
+  /**
+   * 单键 `git config --get`（exit 1 = 缺失 → null，其余非零 → git/git-error）——共享
+   * 实现在 op-guards.ts configGetScalar（四份同语义实现收口）；scope 旗标组装留在
+   * 调用侧（IDENTITY_SCOPE_FLAGS 查表），失败出口的 logFailure 经 onFailure 保序。
+   */
   private async configGet(
     workspace: GitWorkspaceResolution,
     scope: GitIdentityScope | undefined,
     key: 'user.name' | 'user.email',
     signal?: AbortSignal,
   ): Promise<string | null> {
-    const scopeFlag = scope === 'local' ? ['--local'] : scope === 'global' ? ['--global'] : scope === 'system' ? ['--system'] : []
-    const result = await this.runners.readonly.run(['config', ...scopeFlag, '--get', key], {
-      cwd: workspace.root, op: `identity(config --get ${key})`, signal: signal ?? neverAborted(),
-    })
-    if (result.exitCode === 0) {
-      const value = result.stdout.trim()
-      return value === '' ? null : value
-    }
-    if (result.exitCode === 1) return null
-    logFailure(this.logger, 'identity', 'git/git-error', { key })
-    throw gitRunError(`identity(config --get ${key})`, result.exitCode, result.stderr, result.truncated)
+    const scopeFlag = scope === undefined ? [] : IDENTITY_SCOPE_FLAGS[scope]
+    return configGetScalar(
+      this.runners.readonly,
+      workspace.root,
+      ['config', ...scopeFlag, '--get', key],
+      `identity(config --get ${key})`,
+      signal,
+      () => { logFailure(this.logger, 'identity', 'git/git-error', { key }) },
+    )
   }
 
   /**
@@ -831,19 +729,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async stage(paths: string[], signal?: AbortSignal): Promise<StageResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.mutations.stage(paths, signal)
-      logWrite(this.logger, 'stage', { pathCount: result.staged, durationMs: Date.now() - startedAt })
-      this.auditOk('stage', startedAt, { pathCount: result.staged })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'stage', code)
-      this.auditFail('stage', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('stage', () => this.mutations.stage(paths, signal), (result, durationMs) => ({
+      log: { pathCount: result.staged, durationMs },
+      audit: { pathCount: result.staged },
+    }))
   }
 
   /**
@@ -855,19 +744,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async unstage(paths: string[], signal?: AbortSignal): Promise<UnstageResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.mutations.unstage(paths, signal)
-      logWrite(this.logger, 'unstage', { pathCount: result.unstaged, durationMs: Date.now() - startedAt })
-      this.auditOk('unstage', startedAt, { pathCount: result.unstaged })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'unstage', code)
-      this.auditFail('unstage', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('unstage', () => this.mutations.unstage(paths, signal), (result, durationMs) => ({
+      log: { pathCount: result.unstaged, durationMs },
+      audit: { pathCount: result.unstaged },
+    }))
   }
 
   /**
@@ -880,19 +760,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async discard(options: DiscardOptions, signal?: AbortSignal): Promise<DiscardResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.mutations.discard(options, signal)
-      logWrite(this.logger, 'discard', { pathCount: result.discarded, durationMs: Date.now() - startedAt })
-      this.auditOk('discard', startedAt, { pathCount: result.discarded })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'discard', code)
-      this.auditFail('discard', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('discard', () => this.mutations.discard(options, signal), (result, durationMs) => ({
+      log: { pathCount: result.discarded, durationMs },
+      audit: { pathCount: result.discarded },
+    }))
   }
 
   /**
@@ -908,28 +779,11 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async commit(options: CommitOptions, signal?: AbortSignal): Promise<CommitResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.commitEngine.commit(options, signal)
-      // 日志不含 message 正文（spec §1.0.6）。
-      logWrite(this.logger, 'commit', {
-        durationMs: Date.now() - startedAt,
-        amend: options.amend,
-        skipHooks: options.skipHooks,
-      })
-      this.auditOk('commit', startedAt, {
-        amend: options.amend,
-        skipHooks: options.skipHooks,
-        trailerCount: options.trailers?.length ?? 0,
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'commit', code)
-      this.auditFail('commit', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('commit', () => this.commitEngine.commit(options, signal), (_result, durationMs) => ({
+      // 日志不含 message 正文（spec §1.0.6）；durationMs 居首 = v1 四方法 logWrite 字段序。
+      log: { durationMs, amend: options.amend, skipHooks: options.skipHooks },
+      audit: { amend: options.amend, skipHooks: options.skipHooks, trailerCount: options.trailers?.length ?? 0 },
+    }))
   }
 
   /**
@@ -945,29 +799,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async push(options: PushOptions, signal?: AbortSignal): Promise<PushResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.remoteOps.push(options, signal)
-      logWrite(this.logger, 'push', {
-        durationMs: Date.now() - startedAt,
-        setUpstream: result.setUpstreamUsed,
-        remote: result.remote,
-        branch: result.branch,
-      })
-      this.auditOk('push', startedAt, {
-        remote: result.remote,
-        branch: result.branch,
-        setUpstream: result.setUpstreamUsed,
-        force: options.force === true,
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'push', code)
-      this.auditFail('push', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('push', () => this.remoteOps.push(options, signal), (result, durationMs) => ({
+      log: { durationMs, setUpstream: result.setUpstreamUsed, remote: result.remote, branch: result.branch },
+      audit: { remote: result.remote, branch: result.branch, setUpstream: result.setUpstreamUsed, force: options.force === true },
+    }))
   }
 
   /**
@@ -981,19 +816,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async pull(signal?: AbortSignal): Promise<PullResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.remoteOps.pull(signal)
-      logWrite(this.logger, 'pull', { durationMs: Date.now() - startedAt, remote: result.remote })
-      this.auditOk('pull', startedAt, { remote: result.remote })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'pull', code)
-      this.auditFail('pull', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('pull', () => this.remoteOps.pull(signal), (result, durationMs) => ({
+      log: { durationMs, remote: result.remote },
+      audit: { remote: result.remote },
+    }))
   }
 
   /**
@@ -1005,19 +831,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async fetch(options: FetchOptions, signal?: AbortSignal): Promise<FetchResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.remoteOps.fetch(options, signal)
-      logWrite(this.logger, 'fetch', { durationMs: Date.now() - startedAt, remote: result.remote, pruned: result.pruned })
-      this.auditOk('fetch', startedAt, { remote: result.remote, pruned: result.pruned })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'fetch', code)
-      this.auditFail('fetch', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('fetch', () => this.remoteOps.fetch(options, signal), (result, durationMs) => ({
+      log: { durationMs, remote: result.remote, pruned: result.pruned },
+      audit: { remote: result.remote, pruned: result.pruned },
+    }))
   }
 
   /**
@@ -1135,6 +952,63 @@ export class GitService extends TypertRemoteService {
     this.audit.record(op, false, code, Date.now() - startedAt, {})
   }
 
+  // ── 写方法遥测样板统一包装器（Phase 2 收敛：30 个 @Remote 写方法 + autoFetchOnce 共用） ──
+
+  /**
+   * 31 个写 op（30 个 @Remote 写方法 + {@link autoFetchOnce}）共用的
+   * startedAt/try/logWrite/auditOk/afterWrite/return/catch/errorCodeOf/logFailure/
+   * auditFail/throw 样板本体——auditOk/auditFail 的全部调用点唯一化到这里，逐 op
+   * 差异用 fieldsOf 回调（字段白名单）与 options 位（notify/logRead/swallow）表达。
+   *
+   * 成功出口时序（31 op 钉死，tests/audit-snapshot.spec 全 op 快照）：引擎执行 →
+   * fieldsOf 组装逐 op 白名单字段（**只在引擎成功后调用**——失败出口零字段组装）→
+   * logWrite（info 级）→ auditOk →（notify ≠ false 时）afterWrite（statusEngine.
+   * invalidate → statusWatcher.notifyMutation）→ 返回引擎结果。失败出口时序（31 op
+   * 钉死）：errorCodeOf → logFailure（warn 级附 code）→ auditFail → 原样抛出。
+   *
+   * 保真纪律：log/audit 两张字段表由调用点逐 op 内联字面量组装（§6.10 白名单组装
+   * 纪律——本包装器不做任何拼接/改序；键序即消息/summary 串序）；logWrite/logFailure
+   * 消息文本、审计摘要串、reject 的 cause 对象恒等（不包装）。特例用选项位表达：
+   * createPr notify:false（无 afterWrite——外部可见写动作但不改本仓 status 世界，
+   * [清单 46]）；autoFetchOnce logRead:true（成功日志走 debug 级 logRead）+
+   * swallow:true（吞错 resolve(undefined)——后台任务永不向 UI 报错，§7.4 fetch 版）。
+   */
+  private async withWrite<T>(
+    op: string,
+    run: () => Promise<T>,
+    fieldsOf: (result: T, durationMs: number) => WriteTelemetry,
+    options: { notify?: boolean; logRead?: boolean; swallow: true },
+  ): Promise<T | undefined>
+  private async withWrite<T>(
+    op: string,
+    run: () => Promise<T>,
+    fieldsOf: (result: T, durationMs: number) => WriteTelemetry,
+    options?: { notify?: boolean; logRead?: boolean; swallow?: boolean },
+  ): Promise<T>
+  private async withWrite<T>(
+    op: string,
+    run: () => Promise<T>,
+    fieldsOf: (result: T, durationMs: number) => WriteTelemetry,
+    options: { notify?: boolean; logRead?: boolean; swallow?: boolean } = {},
+  ): Promise<T | undefined> {
+    const startedAt = Date.now()
+    try {
+      const result = await run()
+      const telemetry = fieldsOf(result, Date.now() - startedAt)
+      if (options.logRead === true) logRead(this.logger, op, telemetry.log)
+      else logWrite(this.logger, op, telemetry.log)
+      this.auditOk(op, startedAt, telemetry.audit)
+      if (options.notify !== false) this.afterWrite()
+      return result
+    } catch (cause) {
+      const code = errorCodeOf(cause)
+      logFailure(this.logger, op, code)
+      this.auditFail(op, startedAt, code)
+      if (options.swallow === true) return undefined
+      throw cause
+    }
+  }
+
   // ── v2 批次一：refs 管理面（[清单 23/30/57/62/68]；引擎半 = refs-admin.ts） ──
 
   /**
@@ -1146,23 +1020,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async branchCreate(options: BranchCreateOptions, signal?: AbortSignal): Promise<BranchCreateResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.branchCreate(options, signal)
-      logWrite(this.logger, 'branchCreate', {
-        name: result.name,
-        checkedOut: result.checkedOut,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('branchCreate', startedAt, { name: result.name, checkedOut: result.checkedOut })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'branchCreate', code)
-      this.auditFail('branchCreate', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('branchCreate', () => this.refsAdmin.branchCreate(options, signal), (result, durationMs) => ({
+      log: { name: result.name, checkedOut: result.checkedOut, durationMs },
+      audit: { name: result.name, checkedOut: result.checkedOut },
+    }))
   }
 
   /**
@@ -1173,23 +1034,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async branchSwitch(name: string, signal?: AbortSignal): Promise<BranchSwitchResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.branchSwitch(name, signal)
-      logWrite(this.logger, 'branchSwitch', {
-        from: result.from ?? '(detached)',
-        to: result.to,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('branchSwitch', startedAt, { from: result.from ?? '(detached)', to: result.to })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'branchSwitch', code)
-      this.auditFail('branchSwitch', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('branchSwitch', () => this.refsAdmin.branchSwitch(name, signal), (result, durationMs) => ({
+      log: { from: result.from ?? '(detached)', to: result.to, durationMs },
+      audit: { from: result.from ?? '(detached)', to: result.to },
+    }))
   }
 
   /**
@@ -1202,24 +1050,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async branchDelete(options: BranchDeleteOptions, signal?: AbortSignal): Promise<BranchDeleteResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.branchDelete(options, signal)
-      logWrite(this.logger, 'branchDelete', {
-        name: result.deleted,
-        force: options.force === true,
-        wasMerged: result.wasMerged,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('branchDelete', startedAt, { name: result.deleted, force: options.force === true, wasMerged: result.wasMerged })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'branchDelete', code)
-      this.auditFail('branchDelete', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('branchDelete', () => this.refsAdmin.branchDelete(options, signal), (result, durationMs) => ({
+      log: { name: result.deleted, force: options.force === true, wasMerged: result.wasMerged, durationMs },
+      audit: { name: result.deleted, force: options.force === true, wasMerged: result.wasMerged },
+    }))
   }
 
   /**
@@ -1231,24 +1065,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async tagCreate(options: TagCreateOptions, signal?: AbortSignal): Promise<TagCreateResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.tagCreate(options, signal)
-      logWrite(this.logger, 'tagCreate', {
-        name: result.name,
-        annotated: result.annotated,
-        force: options.force === true,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('tagCreate', startedAt, { name: result.name, annotated: result.annotated, force: options.force === true })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'tagCreate', code)
-      this.auditFail('tagCreate', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('tagCreate', () => this.refsAdmin.tagCreate(options, signal), (result, durationMs) => ({
+      log: { name: result.name, annotated: result.annotated, force: options.force === true, durationMs },
+      audit: { name: result.name, annotated: result.annotated, force: options.force === true },
+    }))
   }
 
   /**
@@ -1258,19 +1078,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async tagDelete(name: string, signal?: AbortSignal): Promise<TagDeleteResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.tagDelete(name, signal)
-      logWrite(this.logger, 'tagDelete', { name: result.deleted, durationMs: Date.now() - startedAt })
-      this.auditOk('tagDelete', startedAt, { name: result.deleted })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'tagDelete', code)
-      this.auditFail('tagDelete', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('tagDelete', () => this.refsAdmin.tagDelete(name, signal), (result, durationMs) => ({
+      log: { name: result.deleted, durationMs },
+      audit: { name: result.deleted },
+    }))
   }
 
   /**
@@ -1310,23 +1121,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async worktreeAdd(options: WorktreeAddOptions, signal?: AbortSignal): Promise<WorktreeAddResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.worktreeAdd(options, signal)
-      logWrite(this.logger, 'worktreeAdd', {
-        path: result.path,
-        branch: result.branch ?? '(detached)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('worktreeAdd', startedAt, { path: result.path, branch: result.branch ?? '(detached)' })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'worktreeAdd', code)
-      this.auditFail('worktreeAdd', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('worktreeAdd', () => this.refsAdmin.worktreeAdd(options, signal), (result, durationMs) => ({
+      log: { path: result.path, branch: result.branch ?? '(detached)', durationMs },
+      audit: { path: result.path, branch: result.branch ?? '(detached)' },
+    }))
   }
 
   /**
@@ -1339,19 +1137,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async worktreeRemove(options: WorktreeRemoveOptions, signal?: AbortSignal): Promise<WorktreeRemoveResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.refsAdmin.worktreeRemove(options, signal)
-      logWrite(this.logger, 'worktreeRemove', { path: result.removed, force: options.force === true, durationMs: Date.now() - startedAt })
-      this.auditOk('worktreeRemove', startedAt, { path: result.removed, force: options.force === true })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'worktreeRemove', code)
-      this.auditFail('worktreeRemove', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('worktreeRemove', () => this.refsAdmin.worktreeRemove(options, signal), (result, durationMs) => ({
+      log: { path: result.removed, force: options.force === true, durationMs },
+      audit: { path: result.removed, force: options.force === true },
+    }))
   }
 
   // ── v2 批次二：历史面（[清单 34/35/36/37/60]；引擎半 = blame.ts / time-travel.ts / graph.ts） ──
@@ -1413,24 +1202,15 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async cherryPick(options: CherryPickOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.timeTravel.cherryPick(options, signal)
-      logWrite(this.logger, 'cherryPick', {
+    return this.withWrite('cherryPick', () => this.timeTravel.cherryPick(options, signal), (result, durationMs) => ({
+      log: {
         oid: options.oid.slice(0, 12),
         oldOid: result.oldOid.slice(0, 12),
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('cherryPick', startedAt, { oid: options.oid.slice(0, 12), newOid: result.newOid?.slice(0, 12) ?? '(null)' })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'cherryPick', code)
-      this.auditFail('cherryPick', startedAt, code)
-      throw cause
-    }
+        durationMs,
+      },
+      audit: { oid: options.oid.slice(0, 12), newOid: result.newOid?.slice(0, 12) ?? '(null)' },
+    }))
   }
 
   /**
@@ -1441,24 +1221,15 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async revert(options: RevertOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.timeTravel.revert(options, signal)
-      logWrite(this.logger, 'revert', {
+    return this.withWrite('revert', () => this.timeTravel.revert(options, signal), (result, durationMs) => ({
+      log: {
         oid: options.oid.slice(0, 12),
         oldOid: result.oldOid.slice(0, 12),
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('revert', startedAt, { oid: options.oid.slice(0, 12), newOid: result.newOid?.slice(0, 12) ?? '(null)' })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'revert', code)
-      this.auditFail('revert', startedAt, code)
-      throw cause
-    }
+        durationMs,
+      },
+      audit: { oid: options.oid.slice(0, 12), newOid: result.newOid?.slice(0, 12) ?? '(null)' },
+    }))
   }
 
   /**
@@ -1471,25 +1242,16 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async reset(options: ResetOptions, signal?: AbortSignal): Promise<TimeTravelResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.timeTravel.reset(options, signal)
-      logWrite(this.logger, 'reset', {
+    return this.withWrite('reset', () => this.timeTravel.reset(options, signal), (result, durationMs) => ({
+      log: {
         kind: options.kind,
         target: options.target ?? '(HEAD)',
         oldOid: result.oldOid.slice(0, 12),
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('reset', startedAt, { kind: options.kind, target: options.target ?? '(HEAD)' })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'reset', code)
-      this.auditFail('reset', startedAt, code)
-      throw cause
-    }
+        durationMs,
+      },
+      audit: { kind: options.kind, target: options.target ?? '(HEAD)' },
+    }))
   }
 
   /**
@@ -1503,23 +1265,12 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async abortOperation(signal?: AbortSignal): Promise<AbortOperationResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.timeTravel.abortOperation(signal)
-      logWrite(this.logger, 'abortOperation', {
-        aborted: result.aborted ?? '(none)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('abortOperation', startedAt, { aborted: result.aborted ?? '(none)' })
-      // abort 只在清掉中间态时改仓库状态——null 短路也走 afterWrite（幂等失效无害）。
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'abortOperation', code)
-      this.auditFail('abortOperation', startedAt, code)
-      throw cause
-    }
+    // abort 只在清掉中间态时改仓库状态——null 短路也走 afterWrite（幂等失效无害，
+    // 包装器 notify 缺省 true 同口径）。
+    return this.withWrite('abortOperation', () => this.timeTravel.abortOperation(signal), (result, durationMs) => ({
+      log: { aborted: result.aborted ?? '(none)', durationMs },
+      audit: { aborted: result.aborted ?? '(none)' },
+    }))
   }
 
   // ── v3 批次一：冲突解决面（[清单 13]；docs/v3-implementation-plan.md §3.3；引擎半 = conflicts.ts） ──
@@ -1555,22 +1306,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async conflictResolve(options: ConflictResolveOptions, signal?: AbortSignal): Promise<ConflictResolveResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.conflicts.conflictResolve(options, signal)
-      logWrite(this.logger, 'conflictResolve', {
-        resolvedCount: result.resolved.length,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('conflictResolve', startedAt, { resolvedCount: result.resolved.length })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'conflictResolve', code)
-      this.auditFail('conflictResolve', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('conflictResolve', () => this.conflicts.conflictResolve(options, signal), (result, durationMs) => ({
+      log: { resolvedCount: result.resolved.length, durationMs },
+      audit: { resolvedCount: result.resolved.length },
+    }))
   }
 
   /**
@@ -1582,22 +1321,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async conflictMarkResolved(options: ConflictMarkOptions, signal?: AbortSignal): Promise<ConflictMarkResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.conflicts.conflictMarkResolved(options, signal)
-      logWrite(this.logger, 'conflictMarkResolved', {
-        resolvedCount: result.resolved.length,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('conflictMarkResolved', startedAt, { resolvedCount: result.resolved.length })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'conflictMarkResolved', code)
-      this.auditFail('conflictMarkResolved', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('conflictMarkResolved', () => this.conflicts.conflictMarkResolved(options, signal), (result, durationMs) => ({
+      log: { resolvedCount: result.resolved.length, durationMs },
+      audit: { resolvedCount: result.resolved.length },
+    }))
   }
 
   /**
@@ -1612,24 +1339,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async operationContinue(signal?: AbortSignal): Promise<OperationContinueResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.conflicts.operationContinue(signal)
-      logWrite(this.logger, 'operationContinue', {
-        op: result.op,
-        done: result.done,
-        conflicted: result.conflicted.length,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('operationContinue', startedAt, { op: result.op, done: result.done, conflicted: result.conflicted.length })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'operationContinue', code)
-      this.auditFail('operationContinue', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('operationContinue', () => this.conflicts.operationContinue(signal), (result, durationMs) => ({
+      log: { op: result.op, done: result.done, conflicted: result.conflicted.length, durationMs },
+      audit: { op: result.op, done: result.done, conflicted: result.conflicted.length },
+    }))
   }
 
   // ── v3 批次二：merge / rebase（[清单 28/29]；docs/v3-implementation-plan.md §4.3；引擎半 = merge-rebase.ts） ──
@@ -1648,31 +1361,22 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async branchMerge(options: BranchMergeOptions, signal?: AbortSignal): Promise<BranchMergeResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.mergeRebase.branchMerge(options, signal)
-      logWrite(this.logger, 'branchMerge', {
+    return this.withWrite('branchMerge', () => this.mergeRebase.branchMerge(options, signal), (result, durationMs) => ({
+      log: {
         branch: options.branch,
         fastForward: options.fastForward,
         resultFastForward: result.fastForward,
         oldOid: result.oldOid.slice(0, 12),
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('branchMerge', startedAt, {
+        durationMs,
+      },
+      audit: {
         branch: options.branch,
         fastForward: options.fastForward,
         merged: result.fastForward,
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'branchMerge', code)
-      this.auditFail('branchMerge', startedAt, code)
-      throw cause
-    }
+      },
+    }))
   }
 
   /**
@@ -1684,29 +1388,16 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async rebase(options: RebaseOptions, signal?: AbortSignal): Promise<RebaseResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.mergeRebase.rebase(options, signal)
-      logWrite(this.logger, 'rebase', {
+    return this.withWrite('rebase', () => this.mergeRebase.rebase(options, signal), (result, durationMs) => ({
+      log: {
         upstream: options.upstream,
         onto: options.onto ?? '(none)',
         oldOid: result.oldOid.slice(0, 12),
         newOid: result.newOid?.slice(0, 12) ?? '(null)',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('rebase', startedAt, {
-        upstream: options.upstream,
-        onto: options.onto ?? '(none)',
-        newOid: result.newOid?.slice(0, 12) ?? '(null)',
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'rebase', code)
-      this.auditFail('rebase', startedAt, code)
-      throw cause
-    }
+        durationMs,
+      },
+      audit: { upstream: options.upstream, onto: options.onto ?? '(none)', newOid: result.newOid?.slice(0, 12) ?? '(null)' },
+    }))
   }
 
   // ── v3 批次三：Agent 工具观测面（[清单 45]；docs/v3-implementation-plan.md §5.5；注册半 = agent-tools.ts） ──
@@ -1784,28 +1475,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async checkpointRestore(options: CheckpointRestoreOptions, signal?: AbortSignal): Promise<CheckpointRestoreResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.checkpoints.checkpointRestore(options, signal)
-      logWrite(this.logger, 'checkpointRestore', {
-        seq: options.seq,
-        applied: result.applied.length,
-        failed: result.failed.length,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('checkpointRestore', startedAt, {
-        seq: options.seq,
-        applied: result.applied.length,
-        failed: result.failed.length,
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'checkpointRestore', code)
-      this.auditFail('checkpointRestore', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('checkpointRestore', () => this.checkpoints.checkpointRestore(options, signal), (result, durationMs) => ({
+      log: { seq: options.seq, applied: result.applied.length, failed: result.failed.length, durationMs },
+      audit: { seq: options.seq, applied: result.applied.length, failed: result.failed.length },
+    }))
   }
 
   /**
@@ -1862,24 +1535,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async stagePatch(options: StagePatchOptions, signal?: AbortSignal): Promise<StagePatchResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.stagingPatch.stagePatch(options, signal)
-      logWrite(this.logger, 'stagePatch', {
-        path: options.path,
-        direction: options.direction ?? 'stage',
-        staged: result.staged,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('stagePatch', startedAt, { path: options.path, direction: options.direction ?? 'stage', staged: result.staged })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'stagePatch', code)
-      this.auditFail('stagePatch', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('stagePatch', () => this.stagingPatch.stagePatch(options, signal), (result, durationMs) => ({
+      log: { path: options.path, direction: options.direction ?? 'stage', staged: result.staged, durationMs },
+      audit: { path: options.path, direction: options.direction ?? 'stage', staged: result.staged },
+    }))
   }
 
   /**
@@ -1892,26 +1551,17 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async stashPush(options: StashPushOptions, signal?: AbortSignal): Promise<StashOpResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.stash.stashPush(options, signal)
-      logWrite(this.logger, 'stashPush', {
+    return this.withWrite('stashPush', () => this.stash.stashPush(options, signal), (_result, durationMs) => ({
+      log: {
         includeUntracked: options.includeUntracked === true,
         hasMessage: typeof options.message === 'string' && options.message !== '',
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('stashPush', startedAt, {
+        durationMs,
+      },
+      audit: {
         includeUntracked: options.includeUntracked === true,
         hasMessage: typeof options.message === 'string' && options.message !== '',
-      })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'stashPush', code)
-      this.auditFail('stashPush', startedAt, code)
-      throw cause
-    }
+      },
+    }))
   }
 
   /**
@@ -1938,19 +1588,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async stashPop(options: StashPopOptions, signal?: AbortSignal): Promise<StashOpResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.stash.stashPop(options, signal)
-      logWrite(this.logger, 'stashPop', { index: result.index, durationMs: Date.now() - startedAt })
-      this.auditOk('stashPop', startedAt, { index: result.index })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'stashPop', code)
-      this.auditFail('stashPop', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('stashPop', () => this.stash.stashPop(options, signal), (result, durationMs) => ({
+      log: { index: result.index, durationMs },
+      audit: { index: result.index },
+    }))
   }
 
   /**
@@ -1961,19 +1602,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async stashDrop(options: StashDropOptions, signal?: AbortSignal): Promise<StashOpResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.stash.stashDrop(options, signal)
-      logWrite(this.logger, 'stashDrop', { index: result.index, durationMs: Date.now() - startedAt })
-      this.auditOk('stashDrop', startedAt, { index: result.index })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'stashDrop', code)
-      this.auditFail('stashDrop', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('stashDrop', () => this.stash.stashDrop(options, signal), (result, durationMs) => ({
+      log: { index: result.index, durationMs },
+      audit: { index: result.index },
+    }))
   }
 
   /**
@@ -2033,19 +1665,10 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async initRepository(signal?: AbortSignal): Promise<InitResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.adminRepo.initRepository(signal)
-      logWrite(this.logger, 'initRepository', { branch: result.branch, durationMs: Date.now() - startedAt })
-      this.auditOk('initRepository', startedAt, { repoRoot: result.repoRoot, branch: result.branch })
-      this.afterWrite()
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'initRepository', code)
-      this.auditFail('initRepository', startedAt, code)
-      throw cause
-    }
+    return this.withWrite('initRepository', () => this.adminRepo.initRepository(signal), (result, durationMs) => ({
+      log: { branch: result.branch, durationMs },
+      audit: { repoRoot: result.repoRoot, branch: result.branch },
+    }))
   }
 
   /**
@@ -2115,27 +1738,12 @@ export class GitService extends TypertRemoteService {
    */
   @Remote
   async createPr(options: PrCreateOptions, signal?: AbortSignal): Promise<PrResult> {
-    const startedAt = Date.now()
-    try {
-      const result = await this.pr.createPr(options, signal)
-      logWrite(this.logger, 'createPr', {
-        draft: options.draft === true,
-        number: result.number,
-        durationMs: Date.now() - startedAt,
-      })
-      this.auditOk('createPr', startedAt, {
-        base: options.base ?? '(default)',
-        head: options.head ?? '(current)',
-        draft: options.draft === true,
-        titleChars: options.title.length,
-      })
-      return result
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      logFailure(this.logger, 'createPr', code)
-      this.auditFail('createPr', startedAt, code)
-      throw cause
-    }
+    // 特例 [清单 46]：notify:false——成功出口无 afterWrite（创建 PR 是外部可见写动作
+    // 但不改本仓 status 世界——零 invalidate/notify-mutation，[清单 46] 双出口仍入环）。
+    return this.withWrite('createPr', () => this.pr.createPr(options, signal), (result, durationMs) => ({
+      log: { draft: options.draft === true, number: result.number, durationMs },
+      audit: { base: options.base ?? '(default)', head: options.head ?? '(current)', draft: options.draft === true, titleChars: options.title.length },
+    }), { notify: false })
   }
 
   /**
@@ -2169,18 +1777,15 @@ export class GitService extends TypertRemoteService {
   async autoFetchOnce(): Promise<void> {
     if (this.autoFetchInFlight) return
     this.autoFetchInFlight = true
-    const startedAt = Date.now()
     try {
-      const result = await this.remoteOps.fetch({ remote: null })
-      logRead(this.logger, 'autoFetch', { remote: result.remote, pruned: result.pruned })
-      // 后台 fetch 也是写操作（remote-tracking 引用面变更）——双出口同入审计环。
-      this.auditOk('autoFetch', startedAt, { remote: result.remote, pruned: result.pruned })
-      this.afterWrite()
-    } catch (cause) {
-      const code = errorCodeOf(cause)
-      // 后台任务失败面：仅 warn（code 附带），绝不向上抛、不进错误帧/错误面板。
-      logFailure(this.logger, 'autoFetch', code)
-      this.auditFail('autoFetch', startedAt, code)
+      // 后台 fetch 也是写操作（remote-tracking 引用面变更）——双出口同入审计环；op 名
+      // 'autoFetch' 与显式 fetch 在环内可辨。logRead:true = 成功日志走 debug 级
+      // （读操作纪律，无 logWrite info 行）；swallow:true = 后台任务失败面仅 warn
+      // （code 附带），绝不向上抛、不进错误帧/错误面板（§7.4 的 fetch 版）。
+      await this.withWrite('autoFetch', () => this.remoteOps.fetch({ remote: null }), (result) => ({
+        log: { remote: result.remote, pruned: result.pruned },
+        audit: { remote: result.remote, pruned: result.pruned },
+      }), { logRead: true, swallow: true })
     } finally {
       this.autoFetchInFlight = false
     }
@@ -2202,7 +1807,7 @@ export class GitService extends TypertRemoteService {
    * 状态流（spec §2 host 推送契约的 v1 落地面；M9 任务口径 R1–R6）：事件转发
    * allowlist 无 `git/*`（spec §2.1），「推送」以 typert stream 流帧承载——client
    * 打开一条逻辑流，host 推 `GitStatusFrame`（R1 initial / R2 变化才推 / R3 mutation
-   * （写模块经 {@link notifyStatusMutation} 接线）/ R4 poll 兜底 / R5 manual 上行）；
+   * （写模块经 {@link afterWrite} 接线）/ R4 poll 兜底 / R5 manual 上行）；
    * fs watch 不可用即 R6 降级纯轮询（仅 warn 一次）。错误以帧通告不断流
    * （`GitFrameError` 投影）；载波终止（client dispose/断连）即订阅清理，
    * 引用计数归零关全部 watch 与定时器。
@@ -2261,11 +1866,6 @@ export class GitService extends TypertRemoteService {
     } catch {
       return undefined
     }
-  }
-
-  /** 供测试与后续写操作模块复用的 mutation 失效入口（R3，不影响 wire 面）。 */
-  notifyStatusMutation(): void {
-    this.statusWatcher.notifyMutation()
   }
 
   /** 供测试与批次五自动化复用的会话事件观察入口（直喂 observe/断言环——不影响 wire 面）。 */
@@ -2343,34 +1943,15 @@ export class GitService extends TypertRemoteService {
     return this.workspace.resolve()
   }
 
-  /** 供测试与后续模块复用的四实例入口（不影响 wire 面）。 */
-  runnerOf(commandClass: GitCommandClass): GitRunner {
-    return this.runners[commandClass]
-  }
-
   /** 供测试与后续模块复用的 status 引擎入口（失效用，不影响 wire 面）。 */
   invalidateStatusCache(): void {
     this.statusEngine.invalidate()
   }
-
-  /** 供测试与 show 接线模块复用的 diff 引擎入口（commitDiff 用，不影响 wire 面）。 */
-  engineOf(): DiffEngine {
-    return this.diffEngine
-  }
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}
-
-/** 域错误码提取（logFailure 用；非域错误按 gateway/internal 口径落日志）。 */
-function errorCodeOf(cause: unknown): string {
-  if (typeof cause === 'object' && cause !== null && typeof (cause as { code?: unknown }).code === 'string') {
-    return (cause as { code: string }).code
-  }
-  return 'gateway/internal'
-}
+// 域错误码提取（logFailure 用；非域错误按 gateway/internal 口径落日志）已收口至
+// error-codes.ts errorCodeOf（automation.ts codeOf 同形副本一并不留——本文件调用点
+// 改为导入引用，行为逐字保真）。
 
 /** 本服务感知的 Remote 调用上下文切片（gateway 经 `ctx.extend({invocation})` 注入；直接调用时 undefined）。 */
 interface GitInvocationFace {

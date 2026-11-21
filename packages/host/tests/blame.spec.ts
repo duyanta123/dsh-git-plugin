@@ -17,7 +17,6 @@
 import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BlameResult } from '../src/types.ts'
@@ -27,9 +26,10 @@ import {
 import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX } from '../src/git-runner.ts'
 import { GitService } from '../src/index.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchRepo } from './support.ts'
 
-// 真实 git 子进程用例（含 50k 行 blame）——资源裕量放宽（log-refs-show.spec 同款）。
+// 真实 git 子进程用例（含 50k 行 blame）——testTimeout 90s 高于全局 60s 基线的
+// 文件级放宽（60s 全局基线之上仍需裕量；hookTimeout 60s 与基线同值），非重复键，保留。
 vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 })
 
 const cleanups: Array<() => Promise<unknown>> = []
@@ -45,14 +45,13 @@ function makeEngine(repo: string, outputMaxBytes?: number): BlameEngine {
 }
 
 function makeService(workspaceOverride: string, outputMaxBytes?: number): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  return new GitService(ctx, {
-    gitCommand: 'git', fastTimeoutMs: 20_000, workspaceOverride,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达
+  // （本文件 fastTimeoutMs 20_000 为 blame 50k 行场景的既有放宽，基线 15_000 之上的覆盖键）。
+  return makeGitService(workspaceOverride, {
+    fastTimeoutMs: 20_000,
     ...(outputMaxBytes !== undefined ? { outputMaxBytes } : {}),
     autoFetchIntervalMs: 0,
-  })
+  }).service
 }
 
 /** 以指定作者提交（多作者夹具；world 作者对照用）。 */

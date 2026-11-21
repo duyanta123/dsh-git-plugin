@@ -13,26 +13,23 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { describe, expect, it } from 'vitest'
 import { GitService } from '../src/index.ts'
-import { localSubprocess } from './support.ts'
+import { makeGitService } from './support.ts'
 import type { SpawnRecord } from './support.ts'
 
 function makeService(gitCommand: string, workspaceOverride: string, record?: SpawnRecord[]): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess(record))
-  return new GitService(ctx, {
+  // 装配去重：Context+subprocess 面经 support.makeGitService；gitCommand 差异键经
+  // config 覆盖（基线 'git' 之上），spawn 记录经 record 设施键。
+  return makeGitService(workspaceOverride, {
     gitCommand,
-    fastTimeoutMs: 15_000,
     commitTimeoutMs: 15_000,
     networkTimeoutMs: 20_000,
     outputMaxBytes: 1_048_576,
-    workspaceOverride,
     autoFetchIntervalMs: 0,
-  })
+    ...(record !== undefined ? { record } : {}),
+  }).service
 }
 
 describe('git.ping（P3-7 专项；readonly runner + GitPingResult 形状 + 失败路径）', () => {

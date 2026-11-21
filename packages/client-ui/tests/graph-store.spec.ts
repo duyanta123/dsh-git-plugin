@@ -16,6 +16,7 @@ import { createGitGraphStore, GRAPH_PAGE_LIMIT } from '../src/client/store/git-g
 import type { GitGraphRpcFace } from '../src/client/store/git-graph-store.ts'
 import { createGitStatusSource } from '../src/client/store/git-status-source.ts'
 import type { GitRpcFace, GitStreamHandle, RemoteResult } from '../src/client/remote/mount.ts'
+import { FakeStream } from './support.ts'
 
 function commitInfo(oid: string, parents: readonly string[] = []): CommitInfo {
   return {
@@ -38,25 +39,6 @@ function page(commits: readonly CommitInfo[], hasMore: boolean): LogPage {
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
   await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
-}
-
-/** 内存流句柄（照 git-status-source.spec 的假实现切片；本套用例不驱动流）。 */
-class FakeStream implements GitStreamHandle<GitStatusFrame, GitFollowCommand> {
-  disposed = 0
-  private finished = false
-
-  send(): void { /* 本套用例不消费上行 */ }
-  end(): void { /* 半关上行 */ }
-  dispose(): void {
-    this.disposed += 1
-    this.finished = true
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<GitStatusFrame> {
-    while (!this.finished) {
-      await new Promise<void>((resolve) => { setTimeout(resolve, 1) })
-    }
-  }
 }
 
 /** 可编程假 RPC（log/refs/getCommitDetail 逐路径响应 + 调用记录；状态源切片 no-op）。 */

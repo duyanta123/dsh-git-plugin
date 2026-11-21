@@ -17,17 +17,14 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
-import { GitService } from '../src/index.ts'
+import { afterEach, beforeAll, afterAll, describe, expect, it } from 'vitest'
+import { GitService, type Config } from '../src/index.ts'
 import {
   countEol, isBuildArtifactPath, isEnvFilePath, redactMatch, scanTextForSecret, parseStagedRaw,
   SECRET_PATTERNS, DEFAULT_BUILD_PATTERNS,
 } from '../src/guard-scan.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 let realGlobalConfig: string | undefined
@@ -66,19 +63,14 @@ function makeService(
   workspaceOverride: string,
   overrides: { guardLargeFileBytes?: number; guardBuildPatterns?: string[]; guardSecretPatterns?: string[] } = {},
 ): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
   // 护栏三键按 overrides 有值才进 Config（exactOptionalPropertyTypes：可选键不给显式
   // undefined——缺键时服务面走 schemastery 默认/index.ts 兜底归一）。
-  const config: Record<string, unknown> = {
-    gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000,
-    workspaceOverride, autoFetchIntervalMs: 0,
-  }
+  const config: Config = { commitTimeoutMs: 15_000, autoFetchIntervalMs: 0 }
   if (overrides.guardLargeFileBytes !== undefined) config.guardLargeFileBytes = overrides.guardLargeFileBytes
   if (overrides.guardBuildPatterns !== undefined) config.guardBuildPatterns = overrides.guardBuildPatterns
   if (overrides.guardSecretPatterns !== undefined) config.guardSecretPatterns = overrides.guardSecretPatterns
-  return new GitService(ctx, config as never)
+  return makeGitService(workspaceOverride, config).service
 }
 
 async function makeWorld(name: string): Promise<{ repo: string; service: InstanceType<typeof GitService> }> {

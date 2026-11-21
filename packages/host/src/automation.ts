@@ -41,10 +41,12 @@
  * 失败出口 ok:false + 域码 + 空摘要。
  */
 
-import { assertGitOk, sanitizeStderr } from './error-codes.ts'
+import { assertGitOk, errorCodeOf, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
 import { detectOperation } from './conflicts.ts'
+import { reasonKindOf, turnOf } from './shared.ts'
 import { DEFAULT_GUARD_LARGE_FILE_BYTES, hardBlockViolations, scanStagedContents } from './guard-scan.ts'
 import type { GuardScanOptions } from './guard-scan.ts'
 import type { AuditEngine } from './audit.ts'
@@ -262,14 +264,14 @@ export class AutomationEngine {
       await deps.workspace.resolve()
     } catch (cause) {
       this.record('auto-commit', false, 'skipped: session workspace unresolved')
-      deps.audit.record('auto-commit', false, codeOf(cause), Date.now() - startedAt, {})
+      deps.audit.record('auto-commit', false, errorCodeOf(cause), Date.now() - startedAt, {})
       return
     }
     // 并发纪律双检（§7.3）：fresh status（绕 TTL 缓存与在飞去重——写守卫的最新世界）
     // + detectOperation（批次一共享中间态探测）。status 三态非 ready / 中间态在场 ⇒ 跳过。
     const state = await deps.status.current(undefined, { fresh: true })
     if (state.availability !== 'ready') {
-      const code = codeOf(state.error)
+      const code = errorCodeOf(state.error)
       this.logger?.debug(`git automation: auto-commit skipped (status ${state.availability}: ${code})`)
       this.record('auto-commit', false, `skipped: status ${state.availability}`)
       deps.audit.record('auto-commit', false, code, Date.now() - startedAt, {})
@@ -300,7 +302,7 @@ export class AutomationEngine {
       operation = await detectOperation(snapshot.repoRoot, deps.gitRead)
     } catch (cause) {
       this.record('auto-commit', false, 'skipped: operation probe failed')
-      deps.audit.record('auto-commit', false, codeOf(cause), Date.now() - startedAt, {})
+      deps.audit.record('auto-commit', false, errorCodeOf(cause), Date.now() - startedAt, {})
       return
     }
     if (operation !== null) {
@@ -317,7 +319,7 @@ export class AutomationEngine {
       const added = await deps.gitWrite.run(['add', '-A'], {
         cwd: snapshot.repoRoot,
         op: 'auto-commit(git add -A)',
-        signal: neverAborted(),
+        signal: signalOf(),
       })
       assertGitOk(added, 'auto-commit(git add -A)')
       // DD=A secret 硬阻断：staged 扫描（与 commit 引擎守卫 3.6 同一 scanStagedContents
@@ -332,7 +334,7 @@ export class AutomationEngine {
         })
       } catch (cause) {
         this.record('auto-commit', false, 'skipped: guard scan failed')
-        deps.audit.record('auto-commit', false, codeOf(cause), Date.now() - startedAt, {})
+        deps.audit.record('auto-commit', false, errorCodeOf(cause), Date.now() - startedAt, {})
         return
       }
       const secrets = hardBlockViolations(violations)
@@ -342,7 +344,7 @@ export class AutomationEngine {
         const reset = await deps.gitWrite.run(['reset'], {
           cwd: snapshot.repoRoot,
           op: 'auto-commit(git reset)',
-          signal: neverAborted(),
+          signal: signalOf(),
         })
         assertGitOk(reset, 'auto-commit(git reset)')
         this.logger?.warn(`git automation: auto-commit blocked by secret guard (${String(secrets.length)} violation(s)); staged reset, worktree changes kept`)
@@ -358,7 +360,7 @@ export class AutomationEngine {
           const generated = await deps.messageGen.generate()
           message = generated.message
         } catch (cause) {
-          this.logger?.debug(`git automation: ai message route fell back to template (${codeOf(cause)})`)
+          this.logger?.debug(`git automation: ai message route fell back to template (${errorCodeOf(cause)})`)
         }
       }
       // commit 引擎落提交（守卫链全量复用：identity / nothing-staged / message 校验 /
@@ -379,7 +381,7 @@ export class AutomationEngine {
           oid: result.shortOid,
         })
       } catch (cause) {
-        const code = codeOf(cause)
+        const code = errorCodeOf(cause)
         // identity-missing ⇒ 跳过 + audit；hook 失败 ⇒ 放弃（不重试不改写）；纵深
         // commit-blocked（预检后竞态落 secret 进 index）⇒ 与预检同口径全撤销；其余域码
         // 原样登记（detail 只落域码，不落 stderr/message 正文）。
@@ -418,7 +420,7 @@ export class AutomationEngine {
     }
     const state = await deps.status.current(undefined, { fresh: true })
     if (state.availability !== 'ready') {
-      const code = codeOf(state.error)
+      const code = errorCodeOf(state.error)
       this.logger?.debug(`git automation: auto-branch skipped (status ${state.availability}: ${code})`)
       this.record('auto-branch', false, `skipped: status ${state.availability}`)
       deps.audit.record('auto-branch', false, code, Date.now() - startedAt, {})
@@ -446,7 +448,7 @@ export class AutomationEngine {
       operation = await detectOperation(snapshot.repoRoot, deps.gitRead)
     } catch (cause) {
       this.record('auto-branch', false, 'skipped: operation probe failed')
-      deps.audit.record('auto-branch', false, codeOf(cause), Date.now() - startedAt, {})
+      deps.audit.record('auto-branch', false, errorCodeOf(cause), Date.now() - startedAt, {})
       this.seen.delete(sessionId)
       return
     }
@@ -472,8 +474,8 @@ export class AutomationEngine {
         })
         return
       } catch (cause) {
-        if (codeOf(cause) !== 'git/branch-exists') {
-          const code = codeOf(cause)
+        if (errorCodeOf(cause) !== 'git/branch-exists') {
+          const code = errorCodeOf(cause)
           this.record('auto-branch', false, `failed: ${code}`)
           deps.audit.record('auto-branch', false, code, Date.now() - startedAt, {})
           this.seen.delete(sessionId) // 命令失败 = 瞬时——重试
@@ -505,7 +507,7 @@ export class AutomationEngine {
       const reset = await this.deps.gitWrite.run(['reset'], {
         cwd: repoRoot,
         op: 'auto-commit(git reset)',
-        signal: neverAborted(),
+        signal: signalOf(),
       })
       assertGitOk(reset, 'auto-commit(git reset)')
     } catch (cause) {
@@ -528,37 +530,12 @@ export class AutomationEngine {
   }
 }
 
-// ---------- 事件载荷窄化（session-watch.ts 同款守卫；该处为模块私有故本地重写） ----------
+// ---------- 事件载荷窄化与域错误码提取（收口） ----------
 
-/** 单事件载荷的最小判别形状（`turn/start` 与 `turn/end` 共用 `{ turn }` 骨架）。 */
-interface TurnEventData {
-  turn?: unknown
-  reason?: unknown
-}
-
-/** 载荷 `{ turn }` 骨架窄化（safe integer 才收；缺席/病形 = null——退化插值占位）。 */
-function turnOf(data: unknown): number | null {
-  if (typeof data !== 'object' || data === null) return null
-  const turn = (data as TurnEventData).turn
-  return typeof turn === 'number' && Number.isSafeInteger(turn) && turn >= 0 ? turn : null
-}
-
-/** turn/end reason 的 kind 提取（dsh TurnEndReason = `{ kind: … }` 和型；未知形状 = null）。 */
-function reasonKindOf(data: unknown): string | null {
-  if (typeof data !== 'object' || data === null) return null
-  const kind = (data as TurnEventData).reason
-  if (typeof kind !== 'object' || kind === null) return null
-  const value = (kind as { kind?: unknown }).kind
-  return typeof value === 'string' ? value : null
-}
-
-/** 域错误码提取（index.ts errorCodeOf 同形；非域错误按 gateway/internal）。 */
-function codeOf(cause: unknown): string {
-  if (typeof cause === 'object' && cause !== null && typeof (cause as { code?: unknown }).code === 'string') {
-    return (cause as { code: string }).code
-  }
-  return 'gateway/internal'
-}
+// turnOf/reasonKindOf 已收口至 shared.ts（本模块 ≡ session-watch.ts 同款私有副本——
+// 形状闸语义不变：缺席/病形 = null，auto-commit 退化插值占位 '-'）。
+// codeOf 已收口至 error-codes.ts errorCodeOf（index.ts 同形副本；非域错误按
+// gateway/internal）——本文件全部调用点改名引用，行为逐字保真。
 
 /**
  * 会话 id → 分支安全短 token（prefix 后缀）：白名单字符保留、其余折叠 '-'，去首部
@@ -581,8 +558,3 @@ function oneLine(text: string): string {
   return text.replaceAll(/\s+/g, ' ').trim()
 }
 
-/** 引擎自有 signal（GitRunOptions 必填位——自动化无调用方取消源，永不触发）。 */
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

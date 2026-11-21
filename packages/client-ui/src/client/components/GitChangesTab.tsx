@@ -36,35 +36,39 @@
  * ② 文件卡片归因徽标（[40]——attributionGet 按 revision 拉取，agent/user/mixed/
  * unknown 四态，unknown tooltip 明示宿主重启前无记录）；③ 时间线区归因筛选
  * （filterChangesViewModel 过滤主文件列表；折叠区收起即复位 'all'）。
+ *
+ * **Phase 2·client（本轮拆分）**：主组件收敛为列表/展开/勾选主干（<400 行），
+ * 四处自包含面拆为独立组件：① GitCrlfBar（CRLF 提示条——诊断拉取 + 折叠/关闭
+ * 相位自包含）；② GitConflictBar（冲突条 + conflictList 摘要半自包含——面板开合
+ * 相位仍在主干：status/mutation/stash 三处错误条「解决冲突…」入口要能从外面打开）；
+ * ③ GitStashPanel（stash chip → 面板——七态相位机/三动作闸/drop danger 确认框
+ * 自包含）；④ GitDiffArea（展开行 diff 装配区——diffOf 的组件半，分支序/锚面
+ * 原样迁移；载荷组装 applyPatchSelection 留在主干）。data-* 锚面与词典键组逐字节
+ * 不变；GroupSection/NodeRows 的 13 个钻透 props 已由 Phase 3·client 收尾合并为单一
+ * TreeProps 对象透传（回调本体与闭包逐字保真，行为与 data-* 锚不变）。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { ConflictListResult, DiffFile, RepoDiagnostics, StashEntry } from 'dsh-gitkit/types'
-import { Checkbox } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { DiffFile } from 'dsh-gitkit/types'
 import { parseGitChangesAddress } from '../addresses.js'
 import type { ChangeRow, ChangesViewModel } from '../changes-view-model.js'
-import { changesViewModel, crlfBarView } from '../changes-view-model.js'
+import { changesViewModel } from '../changes-view-model.js'
 // V3 批次四（[40]）：归因徽标 + 按归因筛选（checkpoint-view 纯函数半）。
 import { attributionBadgeView, attributionMap, filterChangesViewModel } from '../checkpoint-view.js'
 import type { AttributionBadgeView, AttributionFilter } from '../checkpoint-view.js'
-import { conflictBarView } from '../conflict-view-model.js'
 import type { GitChangesOpsFace } from '../changes-ops-face.js'
 import type { GitCommitDialogFace } from '../commit-dialog-face.js'
-import { assembleSelectedPatch, directionOfScope, hunkLineKeys } from '../diff/patch-select.js'
-import { parsePatch } from '../diff/patch-hunks.js'
+import { assembleSelectedPatch, directionOfScope } from '../diff/patch-select.js'
 import type { PathNode } from '../group-paths.js'
 import { groupPaths } from '../group-paths.js'
 // V2 批次四（[8]）：非 git 目录空态引导卡片的纯视图模型（plan §6.6）。
 import { initEmptyStateView } from '../init-empty-state.js'
 import type { NS } from '../locales.js'
 import type { GitErrorLike } from '../remote/mount.js'
-import {
-  STASH_INCLUDE_UNTRACKED_DEFAULT, popConflictHint, stashChipView, stashDropConfirmView,
-  stashPushDisabled, stashPushOptions, untrackedHint,
-} from '../stash-view-model.js'
+import { useAsyncAction } from '../hooks/useAsyncAction.js'
 import type { GitCheckpointState } from '../store/checkpoint-store.js'
 import type { GitBlameState } from '../store/git-blame-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
@@ -72,15 +76,22 @@ import { diffCacheKey } from '../store/git-changes-store.js'
 import type { GitChangesState } from '../store/git-changes-store.js'
 import type { ChangesTabStoreHandle } from '../store/changes-tab-store.js'
 import { ChangeCard } from './ChangeCard.js'
-import { FileDiffView } from './FileDiffView.js'
-import { GitBlameView } from './GitBlameView.js'
+// Phase 2·client：展开行 diff 装配区（diffOf 的组件半——分支序/锚面原样迁移）。
+import { GitDiffArea } from './GitDiffArea.js'
 import { GitCheckpointTimeline } from './GitCheckpointTimeline.js'
 import { GitCommitDialog } from './GitCommitDialog.js'
-import { GitConflictPanel } from './GitConflictPanel.js'
+// Phase 2·client：冲突条 + conflictList 摘要半（[13]；面板开合相位仍在主干）。
+import { GitConflictBar } from './GitConflictBar.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+// V2 批次四（[8]）：非 git 目录空态引导卡片（图 tab 同款 JSX 的共享组件收口）。
+import { GitInitCard } from './GitInitCard.js'
 // V2 批次四（[61]）：子模块状态详情面板（submoduleStatus 列表——plan §6.6）。
 import { GitSubmodulePanel } from './GitSubmodulePanel.js'
+// Phase 2·client：stash 计数 chip + 面板（[14]——相位机/动作闸/drop 确认自包含）。
+import { GitStashPanel } from './GitStashPanel.js'
+// Phase 2·client：CRLF 提示条（[56]——诊断拉取与折叠/关闭相位自包含）。
+import { GitCrlfBar } from './GitCrlfBar.js'
 
 /** 插件投给 tab body 的业务面（inject 工厂产物；hooks 由渲染器合成 use* 选择器）。 */
 export interface ChangesInjected {
@@ -138,6 +149,11 @@ function emptyLineSet(): ReadonlySet<string> {
   return new Set<string>()
 }
 
+// ── Phase 2·client：闸任务的载荷类型（泛型签名拆行别名——check-locale 的行级
+// JSX 扫描会把「同一行内 `>`…`<` 相邻」误判成裸文本，AdminTask 同款规避；
+// stash 三连的 StashTask 别名随拆分迁入 GitStashPanel）。 ──
+type PatchDirection = ReturnType<typeof directionOfScope>
+
 /** 单展开行的解析（含 diff 缓存键；view/revision 变化时自然重算）。 */
 function selectionOf(view: ChangesViewModel, selectedPath: string | null, revision: number): Selection | undefined {
   if (selectedPath === null) return undefined
@@ -146,10 +162,13 @@ function selectionOf(view: ChangesViewModel, selectedPath: string | null, revisi
   return { row, key: diffCacheKey(revision, row.path, row.scope) }
 }
 
-/** 一个变更组的目录树 + 卡片渲染（组内折叠键带组前缀防跨组串扰）。 */
-function GroupSection(props: {
+/**
+ * 组树逐层透传的共用渲染面（Phase 3·client 收尾：原 GroupSection → NodeRows 的 13 个
+ * 钻透 props 合并为单一对象——递归层只拆 node/depth/groupId，回调语义与各 prop 的
+ * 形状逐一保真；对账由本文件编译面 + changes/diff 相关 spec 钉）。
+ */
+interface TreeProps {
   viewModel: ChangesViewModel
-  group: ChangesViewModel['groups'][number]
   expandedDirs: Record<string, boolean>
   selectedPath: string | null
   diffOf(path: string): ReactNode
@@ -164,8 +183,15 @@ function GroupSection(props: {
   /** 归因徽标查询（V3 批次四 [40]；数据未就绪/路径缺席 → undefined——徽标不渲染）。 */
   attributionOf(path: string): AttributionBadgeView | undefined
   t: GitChangesTabProps['t']
+}
+
+/** 一个变更组的目录树 + 卡片渲染（组内折叠键带组前缀防跨组串扰）。 */
+function GroupSection(props: {
+  tree: TreeProps
+  group: ChangesViewModel['groups'][number]
 }): ReactNode {
-  const { viewModel, group, expandedDirs, selectedPath, diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, attributionOf, t } = props
+  const { tree, group } = props
+  const { t } = tree
   const nodes = useMemo(() => groupPaths(group.rows.map((row) => row.path)), [group.rows])
   return (
     <section className='dsh-git-changes__group' data-git-changes-group={group.id}>
@@ -178,20 +204,8 @@ function GroupSection(props: {
           key={node.kind === 'dir' ? node.path : node.path}
           node={node}
           depth={0}
-          viewModel={viewModel}
           groupId={group.id}
-          expandedDirs={expandedDirs}
-          selectedPath={selectedPath}
-          diffOf={diffOf}
-          onToggleDir={onToggleDir}
-          onSelect={onSelect}
-          onCheck={onCheck}
-          onAction={onAction}
-          onRowKeyDown={onRowKeyDown}
-          onHistory={onHistory}
-          onSubmoduleDetails={onSubmoduleDetails}
-          attributionOf={attributionOf}
-          t={t}
+          tree={tree}
         />
       ))}
     </section>
@@ -202,27 +216,14 @@ function GroupSection(props: {
 function NodeRows(props: {
   node: PathNode
   depth: number
-  viewModel: ChangesViewModel
   groupId: string
-  expandedDirs: Record<string, boolean>
-  selectedPath: string | null
-  diffOf(path: string): ReactNode
-  onToggleDir(path: string): void
-  onSelect(path: string): void
-  onCheck(row: ChangeRow): void
-  onAction(row: ChangeRow, action: 'stage' | 'unstage' | 'discard'): void
-  onRowKeyDown(row: ChangeRow, event: ReactKeyboardEvent): void
-  onHistory(path: string): void
-  /** 子模块详情动作（V2 批次四 [61]；透传到 submodule 行的 ChangeCard）。 */
-  onSubmoduleDetails(path: string): void
-  /** 归因徽标查询（V3 批次四 [40]；透传到 ChangeCard 的 attribution 形态）。 */
-  attributionOf(path: string): AttributionBadgeView | undefined
-  t: GitChangesTabProps['t']
+  tree: TreeProps
 }): ReactNode {
+  const { node, depth, groupId, tree } = props
   const {
-    node, depth, viewModel, groupId, expandedDirs, selectedPath,
+    viewModel, expandedDirs, selectedPath,
     diffOf, onToggleDir, onSelect, onCheck, onAction, onRowKeyDown, onHistory, onSubmoduleDetails, attributionOf, t,
-  } = props
+  } = tree
   if (node.kind === 'dir') {
     const key = `${groupId}:${node.path}`
     const expanded = expandedDirs[key] ?? true
@@ -242,20 +243,8 @@ function NodeRows(props: {
             key={child.path}
             node={child}
             depth={depth + 1}
-            viewModel={viewModel}
             groupId={groupId}
-            expandedDirs={expandedDirs}
-            selectedPath={selectedPath}
-            diffOf={diffOf}
-            onToggleDir={onToggleDir}
-            onSelect={onSelect}
-            onCheck={onCheck}
-            onAction={onAction}
-            onRowKeyDown={onRowKeyDown}
-            onHistory={onHistory}
-            onSubmoduleDetails={onSubmoduleDetails}
-            attributionOf={attributionOf}
-            t={t}
+            tree={tree}
           />
         ))}
       </div>
@@ -335,28 +324,38 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   const [blameMode, setBlameMode] = useState(false)
   // ── hunk/行级勾选（V2 批次三 [10]；D7=B 双侧）：乐观勾选集 + 在途闸 + 就地错误 ──
   const [selectedLines, setSelectedLines] = useState<ReadonlySet<string>>(emptyLineSet)
-  const [patchBusy, setPatchBusy] = useState(false)
   const [patchError, setPatchError] = useState<GitErrorLike | null>(null)
-  // ── CRLF 提示条（V2 批次三 [56]）：诊断数据 + 折叠态 ──
-  const [diagnostics, setDiagnostics] = useState<RepoDiagnostics | null>(null)
-  const [crlfDismissed, setCrlfDismissed] = useState(false)
-  const [crlfExpanded, setCrlfExpanded] = useState(false)
-  // ── stash 面板（V2 批次三 [14]）：chip/面板/列表/动作态（D4=B includeUntracked 缺省勾选）──
-  const [stashOpen, setStashOpen] = useState(false)
-  const [stashPhase, setStashPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [stashEntries, setStashEntries] = useState<StashEntry[]>([])
-  const [stashError, setStashError] = useState<GitErrorLike | null>(null)
-  const [stashOpError, setStashOpError] = useState<GitErrorLike | null>(null)
-  const [stashBusy, setStashBusy] = useState(false)
-  const [includeUntracked, setIncludeUntracked] = useState(STASH_INCLUDE_UNTRACKED_DEFAULT)
-  const [pendingDrop, setPendingDrop] = useState<StashEntry | null>(null)
   // ── V2 批次四：[8] 初始化引导（动作/进行态/失败面）+ [61] 子模块详情面板开合 ──
-  const [initRunning, setInitRunning] = useState(false)
   const [initError, setInitError] = useState<GitErrorLike | null>(null)
   const [submodulePanelPath, setSubmodulePanelPath] = useState<string | null>(null)
-  // ── V3 批次一（[13]）：冲突条开合 + conflictList 摘要（operation 徽标数据源）──
+  // ── V3 批次一（[13]）：冲突面板开合相位（条/conflictList 摘要半自包含在
+  // GitConflictBar——status/mutation/stash 三处错误条的「解决冲突…」入口要能从
+  // 外面打开面板，故相位留在主干）。
   const [conflictOpen, setConflictOpen] = useState(false)
-  const [conflictSummary, setConflictSummary] = useState<ConflictListResult | null>(null)
+
+  // ── Phase 2·client：在途闸收敛到 useAsyncAction 的同步闸（createBusyGate——判定
+  // 与置位原子同帧，先于任何 await；根治「读闭包 busy」的双击竞态：setState 写的
+  // busy 同帧不生效而闸生效）。hunk 勾选应用闸留守主干；stash 三连/仓库初始化闸
+  // 分别随拆分迁入 GitStashPanel / 留守下方。applyPatchSelection 的入参载荷
+  // （点击时组装——patch/direction 依赖当轮 selection）。
+  const patchTaskRef = useRef<{ path: string; patch: string; keys: readonly string[]; direction: PatchDirection } | null>(null)
+  const patchAction = useAsyncAction<null>({
+    run: async () => {
+      const task = patchTaskRef.current!
+      setSelectedLines((prev) => new Set([...prev, ...task.keys])) // 乐观勾选（闸已过）
+      setPatchError(null)
+      const result = await changesOps.stagePatch({ path: task.path, patch: task.patch, direction: task.direction })
+      if (!result.ok) {
+        setSelectedLines((prev) => new Set([...prev].filter((key) => !task.keys.includes(key))))
+        setPatchError(result.error)
+        return { ok: true, value: null }
+      }
+      refresh() // R5 manual（不等 R3 帧——changes-store mutate 同款乐观口径）
+      return { ok: true, value: null }
+    },
+  })
+  // patchBusy：原布尔在途态已由 patchAction 的同步闸承载（原守卫读闭包 patchBusy——
+  // 同帧二次点击漏闸，闸修复；JSX 本无 patch busy 消费位，故不保留变量）。
 
   // blame 模式开着且展开行槽位缺席 ⇒ 首载（全区一次；oversized 转 D3=B 分片模式）。
   useEffect(() => {
@@ -383,36 +382,6 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     setPatchError(null)
   }, [selectedPath, statusState.revision])
 
-  // CRLF 提示条（[56]）：仓库可用时取一次行尾诊断（只读、可折叠、不阻断）。
-  useEffect(() => {
-    if (!view.available) return
-    let cancelled = false
-    void changesOps.repoDiagnostics().then((result) => {
-      if (!cancelled) setDiagnostics(result.ok ? result.value : null)
-    })
-    return () => { cancelled = true }
-  }, [view.available, changesOps])
-
-  // 冲突条摘要（V3 批次一 [13]）：conflicted 计数变化（含落到 0）即重取一次
-  // conflictList（只读、fresh 扫描）供 operation 徽标与可见性判定。计数归零**不清摘要**
-  // 而是以 fresh 结果裁决：中间态仍在场（operation ≠ null——continue 循环待续）则保留
-  // （条不撤、面板不卸，「继续操作」保持可达）；中间态已终结（外部完成/abort）即清。
-  // 仓库不可用直接清。面板动作后的精确回吐走 GitConflictPanel 的 onSummary。
-  const conflictedCount = statusState.status?.conflicted.length ?? 0
-  useEffect(() => {
-    if (!view.available) {
-      setConflictSummary(null)
-      return
-    }
-    let cancelled = false
-    void changesOps.conflictList().then((result) => {
-      if (cancelled) return
-      const keep = result.ok && (result.value.conflicts.length > 0 || result.value.operation !== null)
-      setConflictSummary(keep ? result.value : null)
-    })
-    return () => { cancelled = true }
-  }, [view.available, conflictedCount, changesOps])
-
   // 归因徽标数据（[40]）：仓库可用且 store 相位 idle（首装/revision 失效后的自动回落）
   // ⇒ 拉取一次（store 半去重；host 侧 status 快照 + 逐文件 mtime，tab 关闭不拉）。
   useEffect(() => {
@@ -434,140 +403,35 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
    */
   const applyPatchSelection = (file: DiffFile, keys: readonly string[]): void => {
     const current = selection
-    if (current === undefined || patchBusy) return
+    if (current === undefined) return
     const selected = new Set<string>(keys)
     const patch = assembleSelectedPatch(file, selected)
     if (patch === null) return
-    setPatchBusy(true)
-    setPatchError(null)
-    setSelectedLines((prev) => new Set([...prev, ...keys]))
-    void changesOps.stagePatch({
-      path: current.row.path,
-      patch,
-      direction: directionOfScope(current.row.scope),
-    }).then((result) => {
-      setPatchBusy(false)
-      if (result.ok) {
-        refresh()
-        return
-      }
-      setSelectedLines((prev) => new Set([...prev].filter((key) => !keys.includes(key))))
-      setPatchError(result.error)
-    })
+    patchTaskRef.current = { path: current.row.path, patch, keys, direction: directionOfScope(current.row.scope) }
+    void patchAction.trigger()
   }
 
+  // 展开行 diff 装配区（Phase 2·client 拆分）：分支序/锚面原样迁入 GitDiffArea——
+  // 本函数只保留守卫（非选中行不渲染）与回调接线（载荷组装仍在此闭包内）。
   const diffOf = (path: string): ReactNode => {
     const row = view.rowByPath.get(path)
     if (row === undefined || selection === undefined || selection.row.path !== path) return null
-    // ── blame 模式切换条（V2 批次二 [34]）：diff | blame 两态（aria-pressed）──
-    const modeBar = (
-      <div className='dsh-git-changes__diff-modes' data-git-change-diff-modes=''>
-        <button
-          type='button'
-          className='dsh-git-changes__diff-mode'
-          aria-pressed={!blameMode}
-          onClick={() => { setBlameMode(false) }}
-        >
-          {t('changes.diffMode')}
-        </button>
-        <button
-          type='button'
-          className='dsh-git-changes__diff-mode'
-          aria-pressed={blameMode}
-          data-git-change-blame-toggle=''
-          onClick={() => { setBlameMode(true) }}
-        >
-          {t('changes.blameMode')}
-        </button>
-      </div>
-    )
-    if (blameMode) {
-      const slot = blameState.byPath[path]
-      return (
-        <>
-          {modeBar}
-          {slot !== undefined ? (
-            <GitBlameView
-              path={path}
-              slot={slot}
-              t={t}
-              onEnsureRange={(start, end) => { blameEnsureRange(path, start, end) }}
-              onRetry={() => { blameEnsure(path) }}
-            />
-          ) : (
-            <p className='dsh-git-changes__diff-status' role='status' data-git-change-diff-status='loading'>{t('blame.loading')}</p>
-          )}
-        </>
-      )
-    }
-    const entry = changesState.diffs[selection.key]
-    if (entry === undefined || entry.state === 'loading') {
-      return (
-        <>
-          {modeBar}
-          <p className='dsh-git-changes__diff-status' role='status' data-git-change-diff-status='loading'>{t('diff.loading')}</p>
-        </>
-      )
-    }
-    if (entry.state === 'error' && entry.error !== undefined) {
-      return (
-        <>
-          {modeBar}
-          <div className='dsh-git-changes__diff-error' data-git-change-diff-status='error'>
-            <GitErrorNotice error={entry.error} t={t} />
-            <button
-              type='button'
-              className='dsh-git-changes__diff-retry'
-              data-git-change-diff-retry=''
-              onClick={() => { loadDiff(row.scope, row.path) }}
-            >
-              {t('common.retry')}
-            </button>
-          </div>
-        </>
-      )
-    }
-    if (entry.file === undefined) {
-      return (
-        <>
-          {modeBar}
-          <p className='dsh-git-changes__diff-status' data-git-change-diff-status='empty'>{t('diff.empty')}</p>
-        </>
-      )
-    }
-    const file = entry.file // 收窄进局部 const（闭包内属性收窄不保留）
     return (
-      <>
-        {modeBar}
-        {/* hunk/行级勾选（[10]；D7=B 双侧同构）：worktree 侧勾选=stage、staged 侧
-            勾选=unstage 反向——direction 由 directionOfScope(row.scope) 折算。 */}
-        <FileDiffView
-          file={file}
-          t={t}
-          selection={{
-            selected: selectedLines,
-            onToggleLine: (key) => { applyPatchSelection(file, [key]) },
-            onToggleHunk: (hunkIndex) => {
-              const hunk = parsePatch(file.patch ?? '')[hunkIndex]
-              if (hunk === undefined) return
-              applyPatchSelection(file, hunkLineKeys(hunk))
-            },
-          }}
-        />
-        {patchError !== null && (
-          <div className='dsh-git-changes__patch-error' data-git-change-patch-error=''>
-            <GitErrorNotice error={patchError} t={t} />
-            <button
-              type='button'
-              className='dsh-git-changes__patch-error-dismiss'
-              data-git-change-patch-error-dismiss=''
-              onClick={() => { setPatchError(null) }}
-            >
-              {t('common.close')}
-            </button>
-          </div>
-        )}
-      </>
+      <GitDiffArea
+        path={path}
+        entry={changesState.diffs[selection.key]}
+        blameSlot={blameState.byPath[path]}
+        blameMode={blameMode}
+        selectedLines={selectedLines}
+        patchError={patchError}
+        onBlameMode={setBlameMode}
+        onRetryDiff={() => { loadDiff(row.scope, row.path) }}
+        onRetryBlame={() => { blameEnsure(path) }}
+        onEnsureBlameRange={(start, end) => { blameEnsureRange(path, start, end) }}
+        onApplySelection={applyPatchSelection}
+        onDismissPatchError={() => { setPatchError(null) }}
+        t={t}
+      />
     )
   }
 
@@ -605,84 +469,31 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
   }
 
   const mutationError = changesState.mutationError
+  // ── Phase 3·client 收尾：组树透传面收敛（原 13 个逐 prop 钻透合并为单一对象——
+  // 回调本体与闭包逐字保真，仅打包位一处；GroupSection/NodeRows 递归只拆 node/depth）。
+  const tree: TreeProps = {
+    viewModel: view,
+    expandedDirs,
+    selectedPath,
+    diffOf,
+    onToggleDir: (key) => { actions.toggleDir(key) },
+    onSelect: (path) => { actions.select(path === selectedPath ? null : path) },
+    onCheck,
+    onAction,
+    onRowKeyDown,
+    onHistory: openFileHistory,
+    onSubmoduleDetails: (path) => { setSubmodulePanelPath(path) },
+    attributionOf: (path) => attributionBadgeView(attributionByPath.get(path)) ?? undefined,
+    t,
+  }
   const pendingPaths = pendingConfirm?.paths ?? []
   const resolveDiscard = (ok: boolean): void => {
     actions.resolveConfirm(ok)
     if (ok) discard(pendingPaths)
   }
 
-  // ── stash 面板（[14]）：懒加载 + push/pop/drop 三动作（成功 → refresh + 重读清单）──
-  const reloadStash = (): void => {
-    setStashPhase('loading')
-    setStashError(null)
-    void changesOps.stashList().then((result) => {
-      if (result.ok) {
-        setStashEntries(result.value.stashes)
-        setStashPhase('ready')
-      } else {
-        setStashError(result.error)
-        setStashPhase('error')
-      }
-    })
-  }
-  const toggleStashPanel = (): void => {
-    const next = !stashOpen
-    setStashOpen(next)
-    if (next && stashPhase !== 'ready') reloadStash() // 面板首开懒加载
-  }
-  const runStashPush = (): void => {
-    setStashBusy(true)
-    setStashOpError(null)
-    // D4=B：includeUntracked 显式过 wire（缺省 true——STASH_INCLUDE_UNTRACKED_DEFAULT
-    // 初始化勾选态）；baseRevision = 乐观并发基线（discard 范式的可选沿用，plan §5.2）。
-    void changesOps.stashPush(stashPushOptions(includeUntracked, statusState.status?.branch.oid ?? null))
-      .then((result) => {
-        setStashBusy(false)
-        if (!result.ok) {
-          setStashOpError(result.error)
-          return
-        }
-        refresh()
-        reloadStash()
-      })
-  }
-  const runStashPop = (entry: StashEntry): void => {
-    setStashBusy(true)
-    setStashOpError(null)
-    void changesOps.stashPop({ index: entry.index }).then((result) => {
-      setStashBusy(false)
-      if (!result.ok) {
-        // git/merge-conflict（op 'stash-pop'）⇒ 面板明示「stash 保留未丢失」（plan §5.10）。
-        setStashOpError(result.error)
-        return
-      }
-      refresh()
-      reloadStash()
-    })
-  }
-  const runStashDrop = (): void => {
-    const entry = pendingDrop
-    setPendingDrop(null)
-    if (entry === null) return
-    setStashBusy(true)
-    setStashOpError(null)
-    // acknowledged = 本调用契约「UI 已过 C5 danger 勾选闸」（changes-ops-face 同纪律）。
-    void changesOps.stashDrop({ index: entry.index, acknowledged: true }).then((result) => {
-      setStashBusy(false)
-      if (!result.ok) {
-        setStashOpError(result.error)
-        return
-      }
-      refresh()
-      reloadStash()
-    })
-  }
-
-  const crlf = crlfBarView(diagnostics)
-  const stashChip = stashChipView(stashPhase === 'ready' ? stashEntries.length : null)
-  const untrackedHintView = untrackedHint(statusState.status)
-  const popConflictVisible = popConflictHint(stashOpError)
-  const pendingDropView = pendingDrop !== null ? stashDropConfirmView(pendingDrop) : null
+  // V3 批次一（[13]）：冲突条计数（常驻入口判据——条/摘要半在 GitConflictBar）。
+  const conflictedCount = statusState.status?.conflicted.length ?? 0
   // V2 批次四（[8]）：非 git 目录空态引导卡片（恰 git/no-repository 可见——
   // workspace-unresolved/检查中/可用态不渲染；判定口径见 init-empty-state.ts）。
   const initView = initEmptyStateView({
@@ -690,25 +501,24 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
     checking: statusState.repo.checking,
     statusError: statusState.statusError,
   })
-  // V3 批次一（[13]）：冲突条（常驻入口——status.conflicted 非空即显示，不依赖错误
-  // 路径；operation 徽标吃 conflictList 摘要，未加载时 null 不渲染徽标）。
-  const conflictBar = conflictBarView(conflictedCount, conflictSummary?.operation ?? null)
 
   /** [8] 初始化动作：成功 → refresh（workspace 从 unresolved → resolved，R5 manual
-      取首帧——plan §6.3）；失败 → 就地错误条（git/init-failed 文案带 path/reason）。 */
-  const runInit = (): void => {
-    if (initRunning) return
-    setInitRunning(true)
-    setInitError(null)
-    void changesOps.initRepository().then((result) => {
-      setInitRunning(false)
+      取首帧——plan §6.3）；失败 → 就地错误条（git/init-failed 文案带 path/reason）。
+      在途闸收敛到 useAsyncAction 同步闸（Phase 2·client）。 */
+  const initAction = useAsyncAction<null>({
+    run: async () => {
+      setInitError(null)
+      const result = await changesOps.initRepository()
       if (!result.ok) {
         setInitError(result.error)
-        return
+        return { ok: true, value: null }
       }
       refresh()
-    })
-  }
+      return { ok: true, value: null }
+    },
+  })
+  const initRunning = initAction.busy
+  const runInit = (): void => { void initAction.trigger() }
 
   return (
     <div className='dsh-git-changes' data-git-changes='' data-git-changes-session={coordinates.sessionId}>
@@ -716,35 +526,17 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         <p className='dsh-git-changes__unborn' data-git-changes-unborn=''>{t('changes.emptyRepo')}</p>
       )}
       {/* V3 批次一（[13]）冲突条：conflicted 非空常驻（不依赖错误路径）——计数 +
-          operation 徽标 → 展开冲突面板（plan §3.7「常驻入口」）。 */}
-      {conflictBar.visible && (
-        <div className='dsh-git-changes__conflict-bar' data-git-changes-conflict-bar=''>
-          <button
-            type='button'
-            className='dsh-git-changes__conflict-toggle'
-            data-git-changes-conflict-toggle=''
-            aria-expanded={conflictOpen}
-            onClick={() => { setConflictOpen(!conflictOpen) }}
-          >
-            {t(conflictBar.labelKey, conflictBar.params)}
-          </button>
-          {conflictBar.operationKey !== null && (
-            <span className='dsh-git-changes__conflict-op' data-git-changes-conflict-op=''>
-              {t(conflictBar.operationKey)}
-            </span>
-          )}
-        </div>
-      )}
-      {conflictBar.visible && conflictOpen && (
-        <GitConflictPanel
-          open
-          t={t}
-          ops={changesOps}
-          onClose={() => { setConflictOpen(false) }}
-          onMutated={refresh}
-          onSummary={setConflictSummary}
-        />
-      )}
+          operation 徽标 → 展开冲突面板（plan §3.7「常驻入口」）。条/摘要半自包含在
+          GitConflictBar，面板开合相位留在主干（三处错误条「解决冲突…」入口）。 */}
+      <GitConflictBar
+        available={view.available}
+        conflictedCount={conflictedCount}
+        open={conflictOpen}
+        onOpenChange={setConflictOpen}
+        ops={changesOps}
+        refresh={refresh}
+        t={t}
+      />
       {statusState.statusError !== null && (
         <GitErrorNotice
           error={statusState.statusError}
@@ -783,139 +575,22 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
           </button>
         </div>
       )}
-      {/* CRLF 提示条（[56]）：autocrlf 生效值 + mixedEolFiles 摘要；可折叠，不阻断。 */}
-      {crlf.visible && !crlfDismissed && (
-        <div className='dsh-git-changes__crlf' data-git-changes-crlf=''>
-          <span className='dsh-git-changes__crlf-title' data-git-changes-crlf-title=''>{t('changes.crlf.title')}</span>
-          <span className='dsh-git-changes__crlf-summary' data-git-changes-crlf-summary=''>
-            {t('changes.crlf.summary', { value: crlf.unset ? t('changes.crlf.unset') : crlf.value, count: crlf.mixedCount })}
-          </span>
-          <button
-            type='button'
-            className='dsh-git-changes__crlf-toggle'
-            data-git-changes-crlf-toggle=''
-            aria-expanded={crlfExpanded}
-            onClick={() => { setCrlfExpanded(!crlfExpanded) }}
-          >
-            {t('common.details')}
-          </button>
-          <button
-            type='button'
-            className='dsh-git-changes__crlf-dismiss'
-            data-git-changes-crlf-dismiss=''
-            onClick={() => { setCrlfDismissed(true) }}
-          >
-            {t('common.close')}
-          </button>
-          {crlfExpanded && (
-            <p className='dsh-git-changes__crlf-files' data-git-changes-crlf-files=''>
-              {t('changes.crlf.files', { files: crlf.mixedFiles.length > 0 ? crlf.mixedFiles.join(', ') : '—' })}
-            </p>
-          )}
-        </div>
-      )}
+      {/* CRLF 提示条（[56]）：autocrlf 生效值 + mixedEolFiles 摘要；可折叠，不阻断。
+          数据拉取与折叠/关闭相位自包含在 GitCrlfBar。 */}
+      <GitCrlfBar available={view.available} ops={changesOps} t={t} />
       {/* stash 计数 chip（[14]）→ 面板：列表 / 应用=pop / 删除=drop danger 闸 +
-          「Stash 全部变更」（includeUntracked 缺省勾选 + untracked 计数提示，D4=B）。 */}
-      {view.available && (
-        <div className='dsh-git-changes__stashbar' data-git-changes-stashbar=''>
-          <button
-            type='button'
-            className='dsh-git-changes__stash-chip'
-            data-git-changes-stash-chip=''
-            aria-expanded={stashOpen}
-            onClick={toggleStashPanel}
-          >
-            {t(stashChip.labelKey, stashChip.params)}
-          </button>
-        </div>
-      )}
-      {view.available && stashOpen && (
-        <div className='dsh-git-changes__stash-panel' data-git-changes-stash-panel=''>
-          <h3 className='dsh-git-changes__stash-title' data-git-changes-stash-title=''>{t('stash.panelTitle')}</h3>
-          {stashPhase === 'loading' && (
-            <p className='dsh-git-changes__stash-status' role='status' data-git-changes-stash-status='loading'>{t('stash.loading')}</p>
-          )}
-          {stashError !== null && (
-            <GitErrorNotice error={stashError} t={t} onAction={(action) => { if (action === 'retry') reloadStash() }} />
-          )}
-          {stashPhase === 'ready' && stashEntries.length === 0 && (
-            <p className='dsh-git-changes__stash-status' data-git-changes-stash-status='empty'>{t('stash.empty')}</p>
-          )}
-          {stashEntries.length > 0 && (
-            <ul className='dsh-git-changes__stash-list' data-git-changes-stash-list=''>
-              {stashEntries.map((entry) => (
-                <li key={entry.index} className='dsh-git-changes__stash-item' data-git-changes-stash-item={entry.index}>
-                  <span className='dsh-git-changes__stash-message'>{entry.message}</span>
-                  <span className='dsh-git-changes__stash-oid'>{entry.shortOid}</span>
-                  <button
-                    type='button'
-                    className='dsh-git-changes__stash-action'
-                    data-git-changes-stash-pop=''
-                    disabled={stashBusy}
-                    onClick={() => { runStashPop(entry) }}
-                  >
-                    {t('stash.pop')}
-                  </button>
-                  <button
-                    type='button'
-                    className='dsh-git-changes__stash-action'
-                    data-git-changes-stash-drop=''
-                    disabled={stashBusy}
-                    onClick={() => { setPendingDrop(entry) }}
-                  >
-                    {t('stash.drop')}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {popConflictVisible && (
-            <p className='dsh-git-changes__stash-conflict' data-git-changes-stash-popconflict=''>{t('stash.popConflict')}</p>
-          )}
-          {/* stash pop 的 merge-conflict 错误条（V2 批次三）：V3 批次一追加「解决冲突…」
-              动作 → 就地展开冲突面板（plan §3.7；面板在 stash 面板下方渲染）。 */}
-          {stashOpError !== null && (
-            <GitErrorNotice
-              error={stashOpError}
-              t={t}
-              onAction={(action) => {
-                if (action === 'resolve') setConflictOpen(true)
-                else if (action === 'abort') {
-                  setStashBusy(true)
-                  setStashOpError(null)
-                  void changesOps.abortOperation().then((result) => {
-                    setStashBusy(false)
-                    if (!result.ok) setStashOpError(result.error)
-                    else { refresh(); reloadStash() }
-                  })
-                }
-              }}
-            />
-          )}
-          <div className='dsh-git-changes__stash-push' data-git-changes-stash-push=''>
-            <button
-              type='button'
-              className='dsh-git-changes__stash-push-button'
-              data-git-changes-stash-push-button=''
-              disabled={stashPushDisabled(view.available, view.clean, stashBusy)}
-              onClick={runStashPush}
-            >
-              {t('stash.pushAll')}
-            </button>
-            <Checkbox
-              className='dsh-git-changes__stash-untracked'
-              checked={includeUntracked}
-              label={t('stash.pushAllIncludeUntracked')}
-              onChange={setIncludeUntracked}
-            />
-            {untrackedHintView.visible && (
-              <p className='dsh-git-changes__stash-hint' data-git-changes-stash-untracked-hint=''>
-                {t('stash.untrackedHint', { count: untrackedHintView.count })}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+          「Stash 全部变更」（includeUntracked 缺省勾选 + untracked 计数提示，D4=B）。
+          相位机/三动作闸/drop 确认框自包含在 GitStashPanel（组件半——本环境不可
+          驱动，changes-ops-face.spec 文件头同证登记）。 */}
+      <GitStashPanel
+        available={view.available}
+        clean={view.clean}
+        status={statusState.status}
+        ops={changesOps}
+        refresh={refresh}
+        onResolveConflict={() => { setConflictOpen(true) }}
+        t={t}
+      />
       {/* V3 批次四（[39][41]）会话改动时间线折叠区：打开才拉 checkpointList（不做
           常驻轮询——store 半 HostReadStore 范式）；内含归因筛选行（[40]——作用对象
           是下方文件卡片列表）。仓库不可用时不渲染（无会话事件面可言）。 */}
@@ -938,21 +613,9 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
       {!view.available ? (
         initView !== null ? (
           // [8] 空态引导卡片（plan §6.6：说明 + 初始化按钮；init 失败就地错误条，
-          // 成功 → refresh 走 R5 manual 取 init 后首帧）。
-          <div className='dsh-git-init-card' data-git-init-card=''>
-            <p className='dsh-git-init-card__title' data-git-init-title=''>{t(initView.titleKey)}</p>
-            <p className='dsh-git-init-card__body' data-git-init-body=''>{t(initView.bodyKey)}</p>
-            {initError !== null && <GitErrorNotice error={initError} t={t} />}
-            <button
-              type='button'
-              className='dsh-git-init-card__action'
-              data-git-init-action=''
-              disabled={initRunning}
-              onClick={runInit}
-            >
-              {initRunning ? t(initView.runningKey) : t(initView.actionKey)}
-            </button>
-          </div>
+          // 成功 → refresh 走 R5 manual 取 init 后首帧）。共享组件 GitInitCard
+          // （图 tab 同款 JSX 收口）。
+          <GitInitCard initView={initView} initError={initError} initRunning={initRunning} runInit={runInit} t={t} />
         ) : (
           <p className='dsh-git-changes__empty' data-git-changes-empty='no-repo'>{t('error.no-repository')}</p>
         )
@@ -968,20 +631,8 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
           {filteredView.groups.map((group) => (
             <GroupSection
               key={group.id}
-              viewModel={view}
+              tree={tree}
               group={group}
-              expandedDirs={expandedDirs}
-              selectedPath={selectedPath}
-              diffOf={diffOf}
-              onToggleDir={(key) => { actions.toggleDir(key) }}
-              onSelect={(path) => { actions.select(path === selectedPath ? null : path) }}
-              onCheck={onCheck}
-              onAction={onAction}
-              onRowKeyDown={onRowKeyDown}
-              onHistory={openFileHistory}
-              onSubmoduleDetails={(path) => { setSubmodulePanelPath(path) }}
-              attributionOf={(path) => attributionBadgeView(attributionByPath.get(path)) ?? undefined}
-              t={t}
             />
           ))}
         </div>
@@ -1017,21 +668,6 @@ export function GitChangesTab(props: GitChangesTabProps): ReactNode {
         checkboxLabel={t('confirm.dangerCheckbox')}
         onConfirm={() => { resolveDiscard(true) }}
         onCancel={() => { resolveDiscard(false) }}
-      />
-      {/* stash drop 的 danger 确认（[14]；severity danger ⇒ GitConfirmDialog 勾选闸生效，
-          纯载荷模型 = stash-view-model.stashDropConfirmView） */}
-      <GitConfirmDialog
-        open={pendingDropView !== null}
-        title={t('stash.drop.title')}
-        message={pendingDropView !== null
-          ? t('stash.drop.message', { index: pendingDropView.params.index, message: pendingDropView.params.message })
-          : ''}
-        severity={pendingDropView?.severity ?? 'danger'}
-        confirmLabel={t('stash.drop')}
-        cancelLabel={t('confirm.cancel')}
-        checkboxLabel={t('confirm.dangerCheckbox')}
-        onConfirm={runStashDrop}
-        onCancel={() => { setPendingDrop(null) }}
       />
       {/* [61] 子模块状态详情面板（submodule 徽标行的「子模块详情」动作拉起；
           submoduleStatus 列表——path / oid 对照高亮 / state 徽标，只列不递归）。 */}

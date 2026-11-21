@@ -52,8 +52,10 @@
  */
 
 import { resolve } from 'node:path'
-import { assertGitOk, EXIT_OK_ONLY, gitError } from './error-codes.ts'
+import { assertGitOk, EXIT_OK_ONLY } from './error-codes.ts'
 import type { GitRunner, GitRunResult } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import { numstatCounts, parseNumstat } from './status-parser.ts'
 import type { NumstatCounts } from './status-parser.ts'
 import type { WorkspaceResolver } from './workspace.ts'
@@ -251,7 +253,7 @@ export class DiffEngine {
    */
   async diff(scope: DiffScope, path: string | null, signal?: AbortSignal): Promise<DiffResult> {
     const repoRoot = await this.resolveRepoRoot('diff', signal)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const cachedFlags = scope === 'staged' ? ['--cached'] as const : [] as const
     const pathTail = path !== null ? ['--', path] as const : ['--'] as const
 
@@ -316,7 +318,7 @@ export class DiffEngine {
    */
   async commitDiff(commitId: string, path: string | null, signal?: AbortSignal): Promise<CommitDiffResult> {
     const repoRoot = await this.resolveRepoRoot('commitDiff', signal)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
 
     const parentsResult = await this.git.run(['rev-list', '--parents', '-n', '1', commitId], {
       cwd: repoRoot, op: 'commitDiff(rev-list --parents)', signal: active,
@@ -367,21 +369,12 @@ export class DiffEngine {
   }
 
   /**
-   * repo 发现（dsh forge git.ts:99-103 范式，status.ts 同款再应用）：
+   * repo 发现（dsh forge git.ts:99-103 范式；共享实现 probeRepoRoot——repo-root.ts）：
    * exit 128 + "not a git repository" ⇒ git/no-repository（details.probed = 工作区）。
    */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.git.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return resolve(resolution.root, probe.stdout.trim())
+    return resolve(resolution.root, await probeRepoRoot(this.git, resolution.root, op, signal))
   }
 
   /** untracked 枚举（--others --exclude-standard = 非 ignored 未跟踪，[清单 5] 同语义）。 */
@@ -498,7 +491,3 @@ function untrackedPatchCommand(path: string): PatchCommand {
   }
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

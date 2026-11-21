@@ -16,24 +16,16 @@ import { execFileSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { assertGitOk } from '../src/error-codes.ts'
-import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX, WRITE_PREFIX, createGitRunners } from '../src/git-runner.ts'
+import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX, WRITE_PREFIX, createGitRunners, signalOf } from '../src/git-runner.ts'
 import type { SubprocessFace } from '../src/git-runner.ts'
 import { localSubprocess, scratchRepo, type SpawnRecord } from './support.ts'
-
-// 并行负载下的资源裕量（真实 git 子进程 + taskkill 树路径；diff.spec.ts 同款先例，
-// 断言面零改动）。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()!()
 })
-
-function neverAborted(): AbortSignal {
-  return new AbortController().signal
-}
 
 /** 记录型真实替身：spawn facts 追加到传入数组。 */
 function recordingSubprocess(record: SpawnRecord[]): SubprocessFace {
@@ -63,7 +55,7 @@ describe('四实例前缀（spec §1.0.7 / 任务口径 §1.2.3）', () => {
     const repo = await scratchRepo('dshgit-run-ro-', cleanups, { name: 't', email: 't@e.com' })
     const record: SpawnRecord[] = []
     const result = await makeRunners(record).readonly.run(['status', '--porcelain=v2', '-z'], {
-      cwd: repo, op: 'status', signal: neverAborted(),
+      cwd: repo, op: 'status', signal: signalOf(),
     })
     expect(result.exitCode).toBe(0)
     expect(record).toHaveLength(1)
@@ -83,7 +75,7 @@ describe('四实例前缀（spec §1.0.7 / 任务口径 §1.2.3）', () => {
     const runners = makeRunners(record)
     for (const instance of ['write', 'commit', 'network'] as const) {
       await runners[instance].run(['config', '--get', 'user.name'], {
-        cwd: repo, op: `probe(${instance})`, signal: neverAborted(),
+        cwd: repo, op: `probe(${instance})`, signal: signalOf(),
       })
     }
     expect(record).toHaveLength(3)
@@ -112,7 +104,7 @@ describe('超时与终止（spec §⑥：超时→kill 树，Windows taskkill �
     })
     const startedAt = Date.now()
     const error = await runners.commit.run(['commit', '--allow-empty', '-m', 'x'], {
-      cwd: repo, op: 'commit', signal: neverAborted(),
+      cwd: repo, op: 'commit', signal: signalOf(),
     }).then(
       (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
       (cause: unknown) => cause,
@@ -132,7 +124,7 @@ describe('超时与终止（spec §⑥：超时→kill 树，Windows taskkill �
     }, READONLY_PREFIX)
     const startedAt = Date.now()
     const result = await runner.run(['commit', '--allow-empty', '-m', 'x'], {
-      cwd: repo, op: 'commit(readonly probe)', signal: neverAborted(),
+      cwd: repo, op: 'commit(readonly probe)', signal: signalOf(),
     })
     // hook 被 /dev/null 禁用：commit 立即完成（挂起 60s 才是失败信号）。
     expect(result.exitCode).toBe(0)
@@ -169,7 +161,7 @@ describe('stdout 上限与白名单（spec §1.0.7 / §1.2）', () => {
       timeoutMs: 15_000, outputMaxBytes: 64 * 1024,
     }, READONLY_PREFIX)
     const result = await runner.run(['cat-file', 'blob', blob], {
-      cwd: repo, op: 'probe(cat-file)', maxBytes: 64 * 1024, signal: neverAborted(),
+      cwd: repo, op: 'probe(cat-file)', maxBytes: 64 * 1024, signal: signalOf(),
     })
     expect(result.truncated).toBe(true)
     expect(result.stdout.length).toBeLessThanOrEqual(64 * 1024)
@@ -189,7 +181,7 @@ describe('stdout 上限与白名单（spec §1.0.7 / §1.2）', () => {
     }, READONLY_PREFIX)
     // exit 1（有差异）在白名单内 → 原样放行。
     const diff = await runner.run(['diff', '--quiet', 'HEAD~1', 'HEAD'], {
-      cwd: repo, op: 'probe(diff)', signal: neverAborted(),
+      cwd: repo, op: 'probe(diff)', signal: signalOf(),
     })
     expect(diff.exitCode).toBe(1)
     expect(assertGitOk(diff, 'probe(diff)', [0, 1]).exitCode).toBe(1)
@@ -202,7 +194,7 @@ describe('stdout 上限与白名单（spec §1.0.7 / §1.2）', () => {
     }
     // 越界白名单：exit 128（坏 oid）不在 [0,1] → git/git-error，stderr 进 details。
     const bad = await runner.run(['cat-file', '-t', 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'], {
-      cwd: repo, op: 'probe(cat-file)', signal: neverAborted(),
+      cwd: repo, op: 'probe(cat-file)', signal: signalOf(),
     })
     expect(bad.exitCode).toBe(128)
     try {
@@ -235,7 +227,7 @@ describe('env 墓碑与固定项（spec §⑥：ambient GIT_DIR 不影响结果�
     process.env.GIT_DIR = join(repoB, '.git')
     try {
       const result = await runner.run(['status', '--porcelain=v2', '--untracked-files=all', '-z'], {
-        cwd: repoA, op: 'status', signal: neverAborted(),
+        cwd: repoA, op: 'status', signal: signalOf(),
       })
       expect(result.exitCode).toBe(0)
       // world 断言：状态是 A 的（a.txt 被修改），不是 B 的（B 无 a.txt）。
@@ -267,7 +259,7 @@ describe('git 发现（spec §1.0.7 resolveExecutable）', () => {
     const runner = new GitRunner(failing, 'git', {
       timeoutMs: 15_000, outputMaxBytes: DEFAULT_OUTPUT_MAX_BYTES,
     }, READONLY_PREFIX)
-    const error = await runner.run(['status'], { cwd: repo, op: 'status', signal: neverAborted() }).then(
+    const error = await runner.run(['status'], { cwd: repo, op: 'status', signal: signalOf() }).then(
       (value) => { throw new Error(`expected rejection, got ${JSON.stringify(value)}`) },
       (cause: unknown) => cause,
     )
@@ -285,7 +277,7 @@ describe('git 发现（spec §1.0.7 resolveExecutable）', () => {
     const runner = new GitRunner(failing, 'git', {
       timeoutMs: 15_000, outputMaxBytes: DEFAULT_OUTPUT_MAX_BYTES,
     }, READONLY_PREFIX)
-    await expect(runner.run(['status'], { cwd: repo, op: 'status', signal: neverAborted() }))
+    await expect(runner.run(['status'], { cwd: repo, op: 'status', signal: signalOf() }))
       .rejects.toMatchObject({ code: 'git/git-error', details: { op: 'resolve-git' } })
   })
 
@@ -293,7 +285,7 @@ describe('git 发现（spec §1.0.7 resolveExecutable）', () => {
     const repo = await scratchRepo('dshgit-rg-hit-', cleanups, { name: 't', email: 't@e.com' })
     const record: SpawnRecord[] = []
     await makeRunners(record).readonly.run(['--version'], {
-      cwd: repo, op: 'ping(--version)', signal: neverAborted(),
+      cwd: repo, op: 'ping(--version)', signal: signalOf(),
     })
     expect(record).toHaveLength(1) // spawn 一次即证明 resolveExecutable 命中（失败会抛 resolve-git）
   })
@@ -306,14 +298,14 @@ describe('中文路径 round-trip（spec §⑥：-z 原样字节路径）', () =
     await writeFile(join(repo, fileName), '内容\n', 'utf8')
     const runners = makeRunners()
     const added = await runners.write.run(['add', '--', fileName], {
-      cwd: repo, op: 'probe(add)', signal: neverAborted(),
+      cwd: repo, op: 'probe(add)', signal: signalOf(),
     })
     expect(added.exitCode).toBe(0)
     // world 重读（独立 git 进程，-z 原样字节）。
     const lsFiles = execFileSync('git', ['ls-files', '-z'], { cwd: repo }).toString('utf8')
     expect(lsFiles.split('\0')).toContain(fileName)
     const staged = await runners.readonly.run(['status', '--porcelain=v2', '--untracked-files=all', '-z'], {
-      cwd: repo, op: 'status', signal: neverAborted(),
+      cwd: repo, op: 'status', signal: signalOf(),
     })
     expect(staged.exitCode).toBe(0)
     expect(staged.stdout).toContain('1 A. N...')

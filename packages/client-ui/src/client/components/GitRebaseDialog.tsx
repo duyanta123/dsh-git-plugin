@@ -17,17 +17,19 @@
  * 声明面（Escape/焦点归原语 Modal——GitConflictPanel 同口径）。
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { Button, Checkbox, Input, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useEffect, useState } from 'react'
+import { Button, Checkbox, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RefInfo } from 'dsh-gitkit/types'
 import type { GitAdminFace } from '../admin-face.js'
+import type { RebaseResult } from 'dsh-gitkit/types'
 import { rebasePlan } from '../admin-view-model.js'
-import { branchPickerEntries, confirmButtonEnabled } from '../ui-model.js'
-import type { GitErrorLike } from '../remote/mount.js'
+import { confirmButtonEnabled } from '../ui-model.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import type { NS } from '../locales.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+import { DialogBranchPickerField, useDialogBranchPicker } from './branch-action-shell.js'
 
 export interface GitRebaseDialogProps {
   open: boolean
@@ -47,46 +49,37 @@ export interface GitRebaseDialogProps {
 /** 变基当前分支对话框（原语 Modal 浮层；确认 = danger 勾选闸恒档——重写历史语义）。 */
 export function GitRebaseDialog(props: GitRebaseDialogProps): ReactNode {
   const { open, t, face, headName, headOid, branches, onDone, onClose } = props
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
+  // picker 状态机（entries/缺省选中/前缀剥装）收敛到共享壳。
+  const picker = useDialogBranchPicker({ branches, headName })
   const [onto, setOnto] = useState('')
   const [acked, setAcked] = useState(false)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<GitErrorLike | null>(null)
 
-  // 开框重置草稿（上一轮的选择/勾选/onto 不延续）。
+  // 开框重置草稿（上一轮的选择/勾选/onto 不延续）；pending/error 的 open 重置
+  // + 防重入 + 「先置 pending=false 再调 onDone」时序收敛到 useDialogAction。
   useEffect(() => {
     if (!open) return
-    setPickerOpen(false)
-    setSelected(null)
+    picker.reset()
     setOnto('')
     setAcked(false)
-    setPending(false)
-    setError(null)
+    // picker 的状态机对象每渲染新建，但 reset 只依赖 open 边沿——依赖只留 open。
   }, [open])
 
-  const entries = useMemo(
-    () => branchPickerEntries({ branches, headName }),
-    [branches, headName],
-  )
-  // 缺省取首个候选（picker 未选时）；无候选 ⇒ null（确认禁用）。
-  const effective = selected ?? entries[0]?.label ?? null
-  const plan = rebasePlan({ upstream: effective ?? '', onto, headOid, acked })
+  // run 闭包在调用时读取当轮渲染的 plan（propsRef 每渲染捕获最新 props）。
+  const { pending, error, run } = useDialogAction<RebaseResult>({
+    open,
+    run: async () => face.rebase(plan.options!),
+    onDone: () => {
+      onClose()
+      onDone()
+    },
+  })
+
+  const plan = rebasePlan({ upstream: picker.effective ?? '', onto, headOid, acked })
   const enabled = plan.valid && plan.options !== null && !pending && confirmButtonEnabled(plan.severity, acked)
 
   const onConfirm = (): void => {
     if (!enabled || plan.options === null) return
-    setPending(true)
-    setError(null)
-    void face.rebase(plan.options).then((result) => {
-      if (!result.ok) {
-        setPending(false)
-        setError(result.error)
-        return
-      }
-      onClose()
-      onDone()
-    })
+    void run()
   }
 
   return (
@@ -120,34 +113,13 @@ export function GitRebaseDialog(props: GitRebaseDialogProps): ReactNode {
             {t('rebase.currentBranch', { name: headName })}
           </p>
         )}
-        <div className='dsh-git-rebase-dialog__field'>
-          <span className='dsh-git-rebase-dialog__field-label'>{t('rebase.upstreamLabel')}</span>
-          <Menu
-            open={pickerOpen}
-            anchor={
-              <button
-                type='button'
-                className='dsh-git-rebase-dialog__picker'
-                data-git-rebase-picker=''
-                aria-haspopup='menu'
-                aria-expanded={pickerOpen}
-                disabled={entries.length === 0}
-                data-modal-autofocus=''
-                onClick={() => { setPickerOpen((value) => !value) }}
-              >
-                {effective ?? t('rebase.upstreamEmpty')}
-              </button>
-            }
-            items={entries.map((entry) => ({ id: entry.id, label: entry.label }))}
-            selectedId={effective === null ? undefined : `branch-picker:${effective}`}
-            onSelect={(id) => {
-              setSelected(id.slice('branch-picker:'.length))
-              setPickerOpen(false)
-            }}
-            onClose={() => { setPickerOpen(false) }}
-            className='dsh-git-rebase-dialog__picker-anchor'
-          />
-        </div>
+        <DialogBranchPickerField
+          model={picker}
+          label={t('rebase.upstreamLabel')}
+          classBase='dsh-git-rebase-dialog'
+          anchorData={{ 'data-git-rebase-picker': '' }}
+          emptyLabel={t('rebase.upstreamEmpty')}
+        />
         <label className='dsh-git-rebase-dialog__field-label' htmlFor='dsh-git-rebase-onto'>
           {t('rebase.ontoLabel')}
         </label>

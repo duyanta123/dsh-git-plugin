@@ -19,17 +19,14 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { rm, writeFile, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { GitService } from '../src/index.ts'
 import { repoRelativePath, serializeCheckpointFilePatch, serializeCheckpointPatch } from '../src/checkpoints.ts'
 import { SessionWatch } from '../src/session-watch.ts'
 import type { CheckpointIndexEntry, GitChangesSummaryFace, GitWorkspaceChangesFace, SessionWatchHost } from '../src/session-watch.ts'
 import type { AttributionResult, CheckpointFileDiff, CheckpointListResult, CheckpointRestoreResult } from '../src/types.ts'
-import { git, localSubprocess, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -286,14 +283,13 @@ function fakeFace(records: Map<number, FakeRecord>): GitWorkspaceChangesFace {
 }
 
 function makeService(workspaceOverride: string, face?: GitWorkspaceChangesFace): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const provider = ctx as { provide(name: string, value: unknown): void }
-  provider.provide('subprocess', localSubprocess())
-  if (face !== undefined) provider.provide('workspaceChanges', face)
-  return new GitService(ctx, {
-    gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000,
-    workspaceOverride, autoFetchIntervalMs: 0,
-  })
+  // 装配去重：Context+subprocess 面经 support.makeGitService；workspaceChanges 的
+  // 构造前注入经 provides（时序不变：subprocess → provides → 构造）。
+  return makeGitService(workspaceOverride, {
+    commitTimeoutMs: 15_000,
+    autoFetchIntervalMs: 0,
+    ...(face !== undefined ? { provides: [['workspaceChanges', face] as const] } : {}),
+  }).service
 }
 
 function feedChange(service: InstanceType<typeof GitService>, seq: number, turn: number, time = T0, sessionId = SID): void {

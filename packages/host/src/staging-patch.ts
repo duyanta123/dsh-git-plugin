@@ -26,6 +26,8 @@
 
 import { assertGitOk, gitError, sanitizeStderr } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { StagePatchOptions, StagePatchResult } from './types.ts'
 
@@ -96,7 +98,7 @@ export class StagingPatchEngine {
     const applied = await this.gitWrite.run(args, {
       cwd: repoRoot,
       op: `stagePatch(git apply --cached${options.direction === 'unstage' ? ' -R' : ''})`,
-      signal: signal ?? neverAborted(),
+      signal: signalOf(signal),
       stdin: patch,
     })
     if (applied.exitCode !== 0) {
@@ -113,19 +115,10 @@ export class StagingPatchEngine {
     return { staged: hunks }
   }
 
-  /** repo 发现（blame.ts 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
@@ -139,7 +132,3 @@ function requireNonEmpty(value: string, name: string): string {
   return value
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

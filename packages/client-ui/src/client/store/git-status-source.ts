@@ -29,7 +29,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { GitFollowCommand, GitStatusFrame, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { GitErrorLike, GitRpcFace, GitStreamHandle } from '../remote/mount.js'
-import { GATEWAY_UNAVAILABLE } from '../remote/mount.js'
+import { causeCode, causeMessage } from '../rpc-error.js'
 
 /** 状态源快照（store 形状；范式 A 数据缓存）。 */
 export interface GitStatusSourceState {
@@ -125,7 +125,10 @@ export function createGitStatusSource(
     }
     const snapshot = frame.snapshot
     // revision 丢帧（内容重复）：与上一接受帧同签名 ⇒ 不写不计数。
-    if (store.getSnapshot().status !== null && snapshotSignature(store.getSnapshot().status as GitStatusSnapshot) === snapshotSignature(snapshot)) {
+    // 快照取局部变量——两次 getSnapshot 各自取值无法窄化（原 `as GitStatusSnapshot`
+    // 断言由此而生），单次读取后 `!== null` 窄化自然生效。
+    const previous = store.getSnapshot().status
+    if (previous !== null && snapshotSignature(previous) === snapshotSignature(snapshot)) {
       return false
     }
     set((s) => {
@@ -225,13 +228,4 @@ export function createGitStatusSource(
       })
     },
   }
-}
-
-function causeCode(cause: unknown): string {
-  const code = (cause as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : GATEWAY_UNAVAILABLE
-}
-
-function causeMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }

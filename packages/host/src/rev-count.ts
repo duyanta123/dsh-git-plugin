@@ -14,6 +14,7 @@
  */
 
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
 
 /** `rev-list --left-right --count <left>...<right>` 的归一计数。 */
 export interface RevListCounts {
@@ -36,7 +37,7 @@ export async function revListCounts(
   op: string,
   signal?: AbortSignal,
 ): Promise<RevListCounts | null> {
-  const active = signal ?? neverAborted()
+  const active = signalOf(signal)
   const result = await git.run(['rev-list', '--left-right', '--count', `${left}...${right}`], {
     cwd: repoRoot, op: `${op}(rev-list --left-right --count)`, signal: active,
   })
@@ -48,7 +49,3 @@ export async function revListCounts(
   return { ahead, behind }
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

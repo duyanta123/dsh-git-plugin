@@ -274,3 +274,13 @@ function resolveGitFailed(op: string, cause: unknown): RemoteError {
     truncated: false,
   })
 }
+
+/**
+ * AbortSignal 占位助手（Phase 1 评审收口，统一此前散布各引擎的私有副本
+ * neverAborted()/active()）：传入且非 undefined 时原样返回该 signal；缺省才新建
+ * 一个永不触发的 AbortController（GitRunOptions.signal 的必填位填充——引擎层
+ * 无调用方取消源时的占位，由 GitRunner 自身的 timeoutMs 封顶）。
+ */
+export function signalOf(signal?: AbortSignal): AbortSignal {
+  return signal ?? new AbortController().signal
+}

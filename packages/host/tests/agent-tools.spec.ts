@@ -29,16 +29,13 @@
 import { execFileSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { AuditEngine } from '../src/audit.ts'
 import { buildAgentToolDefinitions, registerAgentTools, shellGitGuard, READONLY_TOOL_NAMES, READWRITE_TOOL_NAMES } from '../src/agent-tools.ts'
 import type { AgentToolEngines, GitToolDefinition, GitToolsFace } from '../src/agent-tools.ts'
 import { GitService } from '../src/index.ts'
 import type { GitLoggerFace } from '../src/error-codes.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -372,21 +369,22 @@ describe('guard — shell-git 引导防线', () => {
 // ---------- service 集成（agentToolsStatus @Remote） ----------
 
 function makeServiceWithTools(repo: string, config: { agentTools?: 'off' | 'readonly' | 'readwrite'; agentToolBlockShellGit?: boolean }, tools: GitToolsFace | undefined, provideToolsFirst: boolean): InstanceType<typeof GitService> & { attachTools(): void } {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  if (provideToolsFirst && tools !== undefined) face.provide('tools', tools)
-  const service = new GitService(ctx, {
-    gitCommand: 'git', fastTimeoutMs: 15_000, commitTimeoutMs: 15_000, workspaceOverride: repo,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；tools 的构造前注入经
+  // provides（时序不变），attachTools 走同 ctx 的后置 provide。
+  const { service, ctx } = makeGitService(repo, {
+    commitTimeoutMs: 15_000,
     autoFetchIntervalMs: 0,
     ...(config.agentTools !== undefined ? { agentTools: config.agentTools } : {}),
     ...(config.agentToolBlockShellGit !== undefined ? { agentToolBlockShellGit: config.agentToolBlockShellGit } : {}),
-  }) as InstanceType<typeof GitService> & { attachTools(): void }
-  service.attachTools = () => {
+    ...(provideToolsFirst && tools !== undefined ? { provides: [['tools', tools] as const] } : {}),
+  })
+  const face = ctx as unknown as { provide(name: string, value: unknown): void }
+  const withAttach = service as InstanceType<typeof GitService> & { attachTools(): void }
+  withAttach.attachTools = () => {
     if (tools !== undefined) face.provide('tools', tools)
   }
   // provideToolsFirst=false ⇒ 由测试显式调 attachTools()（真「后挂」时序——事件跟随路径）。
-  return service
+  return withAttach
 }
 
 describe('service 集成 — agentToolsStatus（[45] §5.5 观测锚）', () => {

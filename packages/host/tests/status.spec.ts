@@ -14,20 +14,14 @@
 import { execFileSync } from 'node:child_process'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-// 并行跑的资源裕量（全仓用例大量真实 git 子进程 / 真实 fs+定时器；本机 16 核 Windows
-// 上 vitest 默认 5s/10s 边缘超时——client 地基模块全绿门禁实测复现；单文件跑恒绿）。
-// 只放宽超时上限，断言面零改动。
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { afterEach, describe, expect, it } from 'vitest'
 import type { SubprocessFace } from '../src/git-runner.ts'
 import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX } from '../src/git-runner.ts'
 import { GitService } from '../src/index.ts'
 import { StatusEngine } from '../src/status.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
-import { git, localSubprocess, scratchDir, type SpawnRecord } from './support.ts'
+import { git, localSubprocess, makeGitService, scratchDir, type SpawnRecord } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -40,17 +34,16 @@ interface Harness {
 }
 
 function makeService(workspaceOverride: string, subprocess: SubprocessFace = localSubprocess()): Harness {
+  // 装配去重：Context+subprocess 面经 support.makeGitService；自定义替身经 subprocess
+  // 设施键；spawns 沿用原装配（自建空数组透传——原实现未把它接线进替身）。
   const spawns: SpawnRecord[] = []
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', subprocess)
-  const service = new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
-    outputMaxBytes: 8 * 1024 * 1024,
-    workspaceOverride,
-  })
-  return { service, spawns }
+  return {
+    service: makeGitService(workspaceOverride, {
+      outputMaxBytes: 8 * 1024 * 1024,
+      subprocess,
+    }).service,
+    spawns,
+  }
 }
 
 /** status 引擎（engine 级缓存/去重断言用；cacheTtlMs 可控；subprocess 可注入包装替身）。 */

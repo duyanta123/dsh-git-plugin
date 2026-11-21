@@ -33,7 +33,7 @@
     `snapshot.conflicted: FileChange[]`（`types.ts:101`），kind 语义 AU/UA→added、UD/DU→deleted、
     UU→modified（`status-parser.ts:423`）——冲突面板的数据源在 v1 就绪。
 - client 面：三份方法清单恒等（`CLAUDE.md:59`，对账测试 `loader-composition.spec.ts`）；
-  `error-map.ts` Record 穷尽约束（host 增删码即编译错）；`m13/conflict-markers.ts` 的
+  `error-map.ts` Record 穷尽约束（host 增删码即编译错）；`redaction/conflict-markers.ts`（原 `m13/`，收尾更名）的
   `classifyConflictLine`（`:26,33`）在位——diff 视图已高亮冲突标记行（`markConflictRows`，
   `patch-hunks.ts:168`）；`scanConflictLines` 已按 V2 P3-2 删除（git 历史可找回，批次一评估复活）。
 
@@ -836,7 +836,7 @@ check:locale 本机补跑 / 门禁表实跑回填）+ V3 增量：
 | R-1 | `git/merge-conflict.details.op` 定为 string | 批次一直接受益（op 联合扩 merge/rebase 零类型变更） |
 | R-2 | `git/operation-in-progress.op` 联合 `'cherry-pick'\|'revert'` | 批次一扩展 `+= 'merge'\|'rebase'`（wire 变更链走全） |
 | R-3 | audit 双出口机制（批次四） | 全部新写方法逐个挂载（§1-(b)） |
-| R-4 | `m13/classifyConflictLine` 在位 + `scanConflictLines` 已删（P3-2） | 批次一冲突面板复用 classifyConflictLine；scanConflictLines 若需从 git 历史找回，随批次一评估（预期不需要——面板不做行级拼合） |
+| R-4 | `redaction/classifyConflictLine`（原 `m13/`，收尾更名）在位 + `scanConflictLines` 已删（P3-2） | 批次一冲突面板复用 classifyConflictLine；scanConflictLines 若需从 git 历史找回，随批次一评估（预期不需要——面板不做行级拼合） |
 | R-5 | P3-1~P3-9 全表已处置（v0.2.0 收口） | 无接收义务；P3-9 a11y 锚标准继续作为全批约束 |
 
 ---
@@ -886,8 +886,8 @@ check:locale 本机补跑 / 门禁表实跑回填）+ V3 增量：
    聚合）、`:423`（kind 语义）；`types.ts:101`（snapshot.conflicted）；
 9. `packages/host/src/workspace.ts:1-90`（session/event 消费先例 + GitSessionFace 最小面
    ——**现无 id 字段**，批次五扩投影）；
-10. `packages/client-ui/src/client/m13/conflict-markers.ts:26,33`（classifyConflictLine
-    在位）。
+10. `packages/client-ui/src/client/redaction/conflict-markers.ts:26,33`（原 `m13/`，收尾更名；
+    classifyConflictLine 在位）。
 
 **实跑**：
 11. `pnpm test` → 57 文件 / 820 用例全绿（2026-11-11，139.9s）；

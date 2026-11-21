@@ -18,7 +18,7 @@
 import type {} from 'dsh-gitkit/errors'
 import type { RemoteErrorCode } from '@deepseek-ai/dsh-typert-protocol'
 import type { GitLocaleKey } from './locales.js'
-import { redact } from './m13/redact.js'
+import { redact } from './redaction/redact.js'
 
 /** host 包声明过的域错误码（RemoteErrorDetailsMap 的 git/* 子集——穷尽约束的键域）。 */
 export type GitCode = Extract<RemoteErrorCode, `git/${string}`>

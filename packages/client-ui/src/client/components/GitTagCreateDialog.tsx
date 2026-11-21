@@ -12,8 +12,9 @@ import { Button, Input, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { GitAdminFace } from '../admin-face.js'
+import type { TagCreateResult } from 'dsh-gitkit/types'
 import { tagCreateDraft } from '../admin-view-model.js'
-import type { GitErrorLike } from '../remote/mount.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import type { NS } from '../locales.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 
@@ -35,32 +36,26 @@ export function GitTagCreateDialog(props: GitTagCreateDialogProps): ReactNode {
   const { open, t, face, oid, targetLabel, onDone, onClose } = props
   const [name, setName] = useState('')
   const [message, setMessage] = useState('')
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<GitErrorLike | null>(null)
 
   useEffect(() => {
     if (!open) return
     setName('')
     setMessage('')
-    setPending(false)
-    setError(null)
   }, [open])
 
   const draft = tagCreateDraft({ name, message, oid })
 
+  // pending/error + open 重置 + 防重入 + 「先置 pending=false 再调 onDone」时序，
+  // 统一收敛到 useDialogAction（Phase 2·client）。
+  const { pending, error, run } = useDialogAction<TagCreateResult>({
+    open,
+    run: async () => face.tagCreate(draft.options!),
+    onDone,
+  })
+
   const onCreate = (): void => {
     if (!draft.valid || draft.options === null || pending) return
-    setPending(true)
-    setError(null)
-    void face.tagCreate(draft.options).then((result) => {
-      if (!result.ok) {
-        setPending(false)
-        setError(result.error)
-        return
-      }
-      setPending(false)
-      onDone()
-    })
+    void run()
   }
 
   return (

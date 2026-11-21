@@ -21,15 +21,12 @@
 import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { GitService, REMOTE_METHODS } from '../src/index.ts'
 import { shortBranchToken } from '../src/automation.ts'
 import type { GitSessionEventFace, GitSessionFace } from '../src/workspace.ts'
 import type { AutomationStatusResult } from '../src/types.ts'
-import { git, localSubprocess, scratchDir, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, makeGitService, scratchDir, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -72,17 +69,12 @@ function makeService(
     autoBranchProtected?: string[]
   } = {},
 ): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const provider = ctx as { provide(name: string, value: unknown): void }
-  provider.provide('subprocess', localSubprocess())
-  return new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return makeGitService(workspaceOverride, {
     commitTimeoutMs: 15_000,
-    workspaceOverride,
     autoFetchIntervalMs: 0,
     ...automation,
-  })
+  }).service
 }
 
 /** 顶层会话夹具（header.cwd 在场 = eligibleSessionCwd 资格成立）。 */

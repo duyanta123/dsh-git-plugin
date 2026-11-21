@@ -77,10 +77,13 @@ import type {
 import { TimeoutReason, deadline } from '@deepseek-ai/dsh-timeout'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { gitError, gitRunError, logFailure, logWrite, sanitizeStderr } from './error-codes.ts'
+import { gitError, gitRunError, logFailure, logWrite, nullLogger, sanitizeStderr } from './error-codes.ts'
 import type { GitLoggerFace } from './error-codes.ts'
 import { DiffEngine } from './diff.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { currentBranchShortName } from './op-guards.ts'
+import { isNotARepositoryProbe } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { GeneratedCommitMessage, PrDescription } from './types.ts'
 
@@ -542,7 +545,7 @@ async function readFirstExisting(
 /** `git config --get-regexp ^(merge|pull)\.` 的值串（exit 1 = 无配置 ⇒ null；值各截 100 字符）。 */
 async function readMergeConfig(root: string, gitRead: GitRunner, signal?: AbortSignal): Promise<string | null> {
   const result = await gitRead.run(['config', '--get-regexp', MERGE_CONFIG_REGEXP], {
-    cwd: root, op: 'generatePrDescription(git config --get-regexp)', signal: signal ?? neverAborted(),
+    cwd: root, op: 'generatePrDescription(git config --get-regexp)', signal: signalOf(signal),
   })
   if (result.exitCode === 1) return null
   if (result.exitCode !== 0) return null
@@ -573,8 +576,8 @@ export interface MessageGenEngineOptions {
   logger?: GitLoggerFace
 }
 
-/** 引擎内 logFailure 的空实现（logger 可选注入的兜底面；commit.ts 同款）。 */
-const nullLogger: GitLoggerFace = { debug() {}, info() {}, warn() {}, error() {} }
+// 引擎内 logFailure 的空实现（logger 可选注入的兜底面）已收口至 error-codes.ts
+// nullLogger（commit.ts 同款私有副本一并不留）。
 
 /**
  * AI 提交信息引擎（spec §1.7）。只读 git 实例 + DiffEngine（staged 路）+
@@ -634,7 +637,7 @@ export class MessageGenEngine {
    *   git/git-error（diff listing 失败兜底）。
    */
   async generate(signal?: AbortSignal): Promise<GeneratedCommitMessage> {
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const startedAt = Date.now()
     const { root } = await this.workspace.resolve()
 
@@ -644,7 +647,7 @@ export class MessageGenEngine {
     const staged = await this.gitRead.run(['diff', '--cached', '--quiet'], {
       cwd: root, op: 'generateCommitMessage(diff --cached --quiet)', signal: active,
     })
-    if (staged.exitCode === 128 && /not a git repository/i.test(staged.stderr)) {
+    if (isNotARepositoryProbe(staged)) {
       throw gitError('git/no-repository', `not a git repository: ${root}`, { probed: root })
     }
     if (staged.exitCode === 0) {
@@ -694,7 +697,7 @@ export class MessageGenEngine {
    *   git/llm-failed {stage:'trim'|'call'|'parse'}、git/timeout、git/git-error。
    */
   async generatePrDescription(signal?: AbortSignal): Promise<PrDescription> {
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const startedAt = Date.now()
     const { root } = await this.workspace.resolve()
 
@@ -900,14 +903,12 @@ export class MessageGenEngine {
     }
   }
 
-  /** 当前分支短名；detached（输出 'HEAD'）⇒ null（commit.ts 同语义）。 */
+  /**
+   * 当前分支短名；detached（输出 'HEAD'）⇒ null（commit.ts 同语义）——共享实现在
+   * op-guards.ts currentBranchShortName（commit.ts ≡ message-gen.ts 同款收口）。
+   */
   private async currentBranch(root: string, signal: AbortSignal): Promise<string | null> {
-    const result = await this.gitRead.run(['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: root, op: 'generateCommitMessage(rev-parse --abbrev-ref HEAD)', signal,
-    })
-    if (result.exitCode !== 0) return null
-    const name = result.stdout.trim()
-    return name === '' || name === 'HEAD' ? null : name
+    return currentBranchShortName(this.gitRead, root, 'generateCommitMessage(rev-parse --abbrev-ref HEAD)', signal)
   }
 }
 
@@ -935,7 +936,3 @@ function llmCallFailure(cause: unknown, deadlineSignal: AbortSignal, callerSigna
   })
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

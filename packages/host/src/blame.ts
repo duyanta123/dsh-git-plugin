@@ -35,6 +35,8 @@ import { createReadStream } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { assertGitOk, gitError } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { BlameCommit, BlameOptions, BlameRange, BlameResult } from './types.ts'
 
@@ -256,7 +258,7 @@ export class BlameEngine {
     if (window !== null) args.push('-L', `${String(window.start)},${String(window.end)}`)
     if (ref !== null) args.push(ref)
     args.push('--', path)
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     const result = await this.git.run(args, { cwd: repoRoot, op: 'blame', signal: active })
     assertGitOk(result, 'blame')
     const parsed = parseBlamePorcelain(result.stdout)
@@ -323,7 +325,7 @@ export class BlameEngine {
 
   /** ref 版本行数：numstat（空树基线，added 列）→ 二进制/缺行回落 `git show` 计数。 */
   private async countRefLines(repoRoot: string, ref: string, path: string, signal?: AbortSignal): Promise<number | null> {
-    const active = signal ?? neverAborted()
+    const active = signalOf(signal)
     // 空树现算（`hash-object -t tree --stdin` 不带 `-w`：零写入计算——评审修复。原
     // `git mktree` 实测会向 .git/objects 写入空树对象（本机临时仓 object 数 3→4），
     // 与 blame 只读纪律相悖；hash-object 空 stdin 同 oid 且零落盘，sha256 仓库同样成立。
@@ -353,19 +355,10 @@ export class BlameEngine {
     return countLinesInText(shown.stdout)
   }
 
-  /** repo 发现（graph.ts resolveRepoRoot 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.git.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: 'blame(rev-parse --show-toplevel)',
-      signal: signal ?? neverAborted(),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, 'blame(rev-parse --show-toplevel)')
-    return resolve(resolution.root, probe.stdout.trim())
+    return resolve(resolution.root, await probeRepoRoot(this.git, resolution.root, 'blame', signal))
   }
 }
 
@@ -404,7 +397,3 @@ function requireRange(range: BlameOptions['range']): { start: number; end: numbe
   return { start, end }
 }
 
-function neverAborted(): AbortSignal {
-  const controller = new AbortController()
-  return controller.signal
-}

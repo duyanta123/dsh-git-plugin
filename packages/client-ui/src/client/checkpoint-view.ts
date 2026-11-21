@@ -21,7 +21,7 @@
  */
 
 import type {
-  AttributionEntry, AttributionResult, CheckpointEntry, CheckpointFileDiff, CheckpointRestoreOptions,
+  AttributionEntry, CheckpointEntry, CheckpointFileDiff, CheckpointRestoreOptions,
   CheckpointRestoreResult, DiffFile,
 } from 'dsh-gitkit/types'
 import { relativeTime } from './blame-view.js'
@@ -215,11 +215,6 @@ export interface AttributionBadgeView {
 /** attributionGet 出参 → path 映射（卡片徽标的查询面）。 */
 export function attributionMap(entries: readonly AttributionEntry[]): Map<string, AttributionEntry> {
   return new Map(entries.map((entry) => [entry.path, entry]))
-}
-
-/** `AttributionResult`（mount 面的 ok 值）→ path 映射。 */
-export function attributionMapOf(result: AttributionResult): Map<string, AttributionEntry> {
-  return attributionMap(result.entries)
 }
 
 /**

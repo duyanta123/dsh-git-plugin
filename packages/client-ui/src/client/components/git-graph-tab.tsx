@@ -39,10 +39,13 @@ import { GRAPH_LOAD_MORE_TAIL } from '../store/git-graph-store.js'
 import type { GraphIntentState } from '../store/graph-intent-store.js'
 import type { GitStatusSourceState } from '../store/git-status-source.js'
 import type { GraphTabStoreHandle } from '../store/graph-tab-store.js'
+import { useAsyncAction } from '../hooks/useAsyncAction.js'
 import { CommitDetailPanel } from './commit-detail-panel.js'
 import { GitComparePanel } from './GitComparePanel.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
+// V2 批次四（[8]）：非 git 目录空态引导卡片（变更 tab 同款 JSX 的共享组件收口）。
+import { GitInitCard } from './GitInitCard.js'
 import { GitTagCreateDialog } from './GitTagCreateDialog.js'
 
 /** 插件投给 tab body 的业务面（inject 工厂产物；hooks 由渲染器合成 use* 选择器）。 */
@@ -95,6 +98,11 @@ export type GitGraphTabProps = PropsRuntime<'sidebar.right.pane.tab'>
   & InjectFace<GraphInjected>
   & PropsLocale<typeof NS>
 
+// cherry-pick / revert 的任务形态（泛型签名拆行别名——check-locale 的行级 JSX
+// 扫描会把「同一行内 `>`…`<` 相邻」误判成裸文本，AdminTask 同款规避）。
+type GraphTaskResult = Promise<RemoteResult<unknown>>
+type GraphTask = () => GraphTaskResult
+
 /**
  * 提交图 tab body（注册 key = 'dsh-plugin.git.graph'）。
  * @param props - 框架组合 props。
@@ -115,29 +123,51 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
   // ── V2 批次一 tag chip 菜单（[30]）：删 tag 确认 / 在该提交打标签对话框 + 错误面 ──
   const [tagIntent, setTagIntent] = useState<string | null>(null)
   const [deleteTagAsk, setDeleteTagAsk] = useState<string | null>(null)
-  const [tagBusy, setTagBusy] = useState(false)
   const [adminError, setAdminError] = useState<GitErrorLike | null>(null)
   // ── V2 批次四 [8]：初始化引导卡片的动作态（空态卡片渲染决策 = initEmptyStateView）──
-  const [initRunning, setInitRunning] = useState(false)
   const [initError, setInitError] = useState<GitErrorLike | null>(null)
   // ── V2 批次二：顶栏搜索草稿（[35]）+ 时间旅行确认意图（[37]）──
   const [queryDraft, setQueryDraft] = useState('')
   const [authorDraft, setAuthorDraft] = useState('')
   const [travelAsk, setTravelAsk] = useState<{ kind: 'cherry-pick' | 'revert'; oid: string; shortOid: string; subject: string } | null>(null)
-  const [travelBusy, setTravelBusy] = useState(false)
+
+  // ── Phase 2·client：三个直跑动作（deleteTag / runTravel / runInit）的在途闸收敛到
+  // useAsyncAction 同步闸（createBusyGate——判定与置位原子同帧，先于任何 await；
+  // 原布尔 busy 是 setState 写的闭包值，同帧二次点击会漏闸）。错误面保留原语义：
+  // deleteTag/runTravel 失败进共享 adminError（成功动作不清除——清除面维持原状）；
+  // runInit 失败进就地 initError。──
+  const tagDeleteRef = useRef<string | null>(null)
+  const tagAction = useAsyncAction<null>({
+    run: async () => {
+      const name = tagDeleteRef.current as string
+      setDeleteTagAsk(null)
+      const result = await admin.tagDelete(name)
+      if (!result.ok) {
+        setAdminError(result.error)
+        return { ok: true, value: null }
+      }
+      refreshRefs() // refs 快照刷新 → 行 chips 重算
+      return { ok: true, value: null }
+    },
+  })
+  const tagBusy = tagAction.busy
+
+  /** cherry-pick / revert 的任务闭包（点击时按 kind 组装——options 依赖当轮 headOid）。 */
+  const travelTaskRef = useRef<GraphTask | null>(null)
+  const travelAction = useAsyncAction<null>({
+    run: async () => {
+      const done = await (travelTaskRef.current as GraphTask)()
+      if (!done.ok) setAdminError(done.error)
+      else refreshRefs()
+      return { ok: true, value: null }
+    },
+  })
+  const travelBusy = travelAction.busy
 
   const deleteTag = (name: string): void => {
     if (tagBusy) return
-    setDeleteTagAsk(null)
-    setTagBusy(true)
-    void admin.tagDelete(name).then((result) => {
-      setTagBusy(false)
-      if (!result.ok) {
-        setAdminError(result.error)
-        return
-      }
-      refreshRefs() // refs 快照刷新 → 行 chips 重算
-    })
+    tagDeleteRef.current = name
+    void tagAction.trigger()
   }
 
   // ── 跨槽位意图消费（V2 批次二 [36]/[60]）：compare → 对比面板；path → path 模式 ──
@@ -149,25 +179,20 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
     consumeIntent()
   }, [intent.request, compareOpen, setHistoryPath, consumeIntent])
 
-  /** [37] 时间旅行确认后的执行半（acknowledged + baseRevision 组装在纯半 timeTravelOptions）。 */
+  /** [37] 时间旅行确认后的执行半（acknowledged + baseRevision 组装在纯半 timeTravelOptions；
+      acknowledged 语义 = UI 已过确认闸——原实现同口径，task 组装在闸前完成）。 */
   const runTravel = (kind: 'cherry-pick' | 'revert', oid: string): void => {
     if (headOid === null || travelBusy) return
-    let task: Promise<{ ok: true; value: unknown } | { ok: false; error: GitErrorLike }>
     if (kind === 'cherry-pick') {
       const options = timeTravelOptions('cherry-pick', { oid, baseRevision: headOid })
       if (options === null) return
-      task = admin.cherryPick(options)
+      travelTaskRef.current = () => admin.cherryPick(options)
     } else {
       const options = timeTravelOptions('revert', { oid, baseRevision: headOid })
       if (options === null) return
-      task = admin.revert(options)
+      travelTaskRef.current = () => admin.revert(options)
     }
-    setTravelBusy(true)
-    void task.then((result) => {
-      setTravelBusy(false)
-      if (!result.ok) setAdminError(result.error)
-      else refreshRefs()
-    })
+    void travelAction.trigger()
   }
 
   // 整表重跑布局（追加页后 commits 引用变化 → 重算；G2 前缀稳定在 layout 内保证）。
@@ -241,16 +266,18 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
   })
 
   /** [8] 初始化动作：成功后状态帧由 host afterWrite 通知驱动（workspace
-      unresolved → resolved，流不断开——plan §6.3）；失败 → 就地错误条。 */
-  const runInit = (): void => {
-    if (initRunning) return
-    setInitRunning(true)
-    setInitError(null)
-    void initRepository().then((result) => {
-      setInitRunning(false)
+      unresolved → resolved，流不断开——plan §6.3）；失败 → 就地错误条。
+      在途闸收敛到 useAsyncAction 同步闸（Phase 2·client）。 */
+  const initAction = useAsyncAction<null>({
+    run: async () => {
+      setInitError(null)
+      const result = await initRepository()
       if (!result.ok) setInitError(result.error)
-    })
-  }
+      return { ok: true, value: null }
+    },
+  })
+  const initRunning = initAction.busy
+  const runInit = (): void => { void initAction.trigger() }
   const selectedState = selectedOid !== null ? graph.details[selectedOid] : undefined
   // 时间旅行的乐观并发基线（discard 三重守卫同款）：当前 HEAD oid。
   const headOid = status.status?.branch.oid ?? null
@@ -299,22 +326,10 @@ export function GitGraphTab(props: GitGraphTabProps): ReactNode {
         </div>
       )}
       {/* [8] 空态引导卡片（plan §6.6：说明 + 初始化按钮——图 tab 的空态半；
-          init 失败就地错误条，成功后状态帧驱动图 reload）。 */}
+          init 失败就地错误条，成功后状态帧驱动图 reload）。共享组件 GitInitCard
+          （变更 tab 同款 JSX 收口）。 */}
       {unavailable && initView !== null && (
-        <div className='dsh-git-init-card' data-git-init-card=''>
-          <p className='dsh-git-init-card__title' data-git-init-title=''>{t(initView.titleKey)}</p>
-          <p className='dsh-git-init-card__body' data-git-init-body=''>{t(initView.bodyKey)}</p>
-          {initError !== null && <GitErrorNotice error={initError} t={t} />}
-          <button
-            type='button'
-            className='dsh-git-init-card__action'
-            data-git-init-action=''
-            disabled={initRunning}
-            onClick={runInit}
-          >
-            {initRunning ? t(initView.runningKey) : t(initView.actionKey)}
-          </button>
-        </div>
+        <GitInitCard initView={initView} initError={initError} initRunning={initRunning} runInit={runInit} t={t} />
       )}
       {adminError !== null && (
         <div className='dsh-git-graph__notice' data-git-graph-admin-notice=''>

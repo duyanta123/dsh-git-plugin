@@ -13,9 +13,8 @@
 
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { LogPage } from '../src/types.ts'
 import { GraphEngine } from '../src/graph.ts'
 import { DEFAULT_OUTPUT_MAX_BYTES, GitRunner, READONLY_PREFIX } from '../src/git-runner.ts'
@@ -23,9 +22,7 @@ import { DiffEngine } from '../src/diff.ts'
 import { GitService } from '../src/index.ts'
 import { WorkspaceResolver } from '../src/workspace.ts'
 import { execFileSync } from 'node:child_process'
-import { git, localSubprocess, scratchRepo } from './support.ts'
-
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
+import { git, localSubprocess, makeGitService, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
@@ -43,10 +40,8 @@ async function makeEngine(): Promise<{ engine: GraphEngine; repo: string }> {
 }
 
 function makeService(workspaceOverride: string): InstanceType<typeof GitService> {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  return new GitService(ctx, { gitCommand: 'git', fastTimeoutMs: 15_000, workspaceOverride, autoFetchIntervalMs: 0 })
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return makeGitService(workspaceOverride, { autoFetchIntervalMs: 0 }).service
 }
 
 function gitAs(cwd: string, author: { name: string; email: string }, ...args: string[]): void {

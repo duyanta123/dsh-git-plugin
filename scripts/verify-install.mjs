@@ -65,7 +65,6 @@
  * Verify install matrix 步以 DSH_SPEC 跑 npm 列）。
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -78,6 +77,15 @@ import {
   npmInstallToPrefix,
   resolveTarget,
 } from './verify-target.mjs'
+import {
+  assert,
+  exchangeTokenForCookie,
+  extractJsonAfter,
+  killTree,
+  rpcCall,
+  tail,
+  tokenQueryCookie,
+} from './verify-rpc.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(here, '..')
@@ -117,9 +125,12 @@ const fail = (message) => {
   // stdout 镜像一行：runGate tail 取 stderr 优先，若 stderr 中继异常，stdout 仍带结论。
   console.log(`[verify-install] FAIL: ${message}`)
 }
-function assert(condition, message) {
-  if (!condition) throw new Error(message)
-}
+// assert / killTree / tail / extractJsonAfter / rpcCall / tokenQueryCookie /
+// exchangeTokenForCookie 收口至 ./verify-rpc.mjs（verify 系公共助手单源）。本脚本为
+// install 列语义：RPC/cookie fetch 一律带 AbortSignal.timeout(RPC_TIMEOUT_MS) 上界
+// （signalMs 参数），extractJsonAfter 缺失消息 'not found in served HTML'（法医诊断
+// 措辞漂移按登记保真），cookie 助手的 step 行经本模块 step 落 '[verify-install]'
+// 前缀 + journal。
 
 /** spawn once, capture output, enforce a timeout, kill the tree on timeout.
  *  shell 透传（P6 干净 clone 相）：win32 下 pnpm 是 .cmd 垫片，无 shell 直启返回
@@ -148,82 +159,15 @@ function run(cmd, args, { cwd, env, timeoutMs, shell }) {
   })
 }
 
-/** Windows process-tree kill (runbook §6.9: taskkill /PID /T /F). */
-function killTree(pid) {
-  if (!pid) return
-  try {
-    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    killer.on('error', () => { /* best effort */ })
-  } catch { /* best effort */ }
-}
+// killTree（Windows 进程树 taskkill，runbook §6.9）、extractJsonAfter（balanced-brace
+// JSON 提取）、rpcCall（POST one Connection unary RPC）、tokenQueryCookie
+// （/?token= → 303 + 浏览器 cookie）、exchangeTokenForCookie（/connect?token= → 302 +
+// API 操作员 cookie）与 tail 均收口至 ./verify-rpc.mjs——install 列差异以参数表达
+// （signalMs 上界 / missingMessage 措辞），行为逐字节保真。
 
-/** Extract a balanced-brace JSON object starting at the first `{` after `marker`. */
-function extractJsonAfter(text, marker) {
-  const at = text.indexOf(marker)
-  assert(at >= 0, `marker ${JSON.stringify(marker)} not found in served HTML`)
-  const start = text.indexOf('{', at)
-  assert(start >= 0, `no object after ${JSON.stringify(marker)}`)
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') inString = true
-    else if (ch === '{') depth++
-    else if (ch === '}') {
-      depth--
-      if (depth === 0) return JSON.parse(text.slice(start, i + 1))
-    }
-  }
-  throw new Error(`unbalanced JSON after ${JSON.stringify(marker)}`)
-}
-
-/** POST one Connection unary RPC（client/rpc.ts 线格式，同 verify-load）。 */
-async function rpcCall(origin, cookie, endpoint, args) {
-  const rpcId = randomUUID()
-  const response = await fetch(`${origin}/api/${endpoint}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', cookie },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload: { args } }),
-    signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-  })
-  const text = await response.text()
-  assert(response.status === 200, `POST /api/${endpoint} → HTTP ${response.status}: ${text}`)
-  const envelope = JSON.parse(text)
-  assert(envelope?.type === 'server-response', `unexpected envelope type: ${JSON.stringify(envelope)?.slice(0, 200)}`)
-  assert(envelope.rpcId === rpcId, `rpcId mismatch: sent ${rpcId}, got ${envelope.rpcId}`)
-  return envelope.result
-}
-
-/** GET /?token=… → 303 + 浏览器 cookie（browser-auth.ts authorizeIndex）。 */
-async function tokenQueryCookie(origin, token) {
-  const response = await fetch(`${origin}/?token=${encodeURIComponent(token)}`, { redirect: 'manual', signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
-  assert(response.status === 303, `index token exchange → HTTP ${response.status}（expected 303）`)
-  const setCookie = response.headers.get('set-cookie')
-  assert(typeof setCookie === 'string' && setCookie.length > 0, 'index token exchange returned no set-cookie')
-  step('browser cookie acquired via /?token=')
-  return setCookie.split(';', 1)[0]
-}
-
-/** GET /connect?token=… → 302 + API 操作员 cookie（browser-auth.ts:308-351）。 */
-async function exchangeTokenForCookie(origin, token) {
-  const response = await fetch(`${origin}/connect?token=${encodeURIComponent(token)}`, { redirect: 'manual', signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
-  assert(response.status === 302, `/connect token exchange → HTTP ${response.status}（expected 302）`)
-  const setCookie = response.headers.get('set-cookie')
-  assert(typeof setCookie === 'string' && setCookie.length > 0, '/connect returned no set-cookie')
-  step('API operator cookie acquired via /connect')
-  return setCookie.split(';', 1)[0]
-}
-
-function tail(text, limit = 2500) {
-  return text.length <= limit ? text : `…${text.slice(-limit)}`
-}
+const rpcCallOptions = { signalMs: RPC_TIMEOUT_MS }
+const cookieCallOptions = { step, signalMs: RPC_TIMEOUT_MS }
+const extractOptions = { missingMessage: 'not found in served HTML' }
 
 /**
  * 干净 clone 相准备（P6 §2.6③）：`git clone` 本仓库 → 断言无 node_modules / lib 产物 →
@@ -464,13 +408,13 @@ async function installFlow(repoRoot, phaseLabel) {
     }
 
     // ── 4. client 服务 HTML 含两个包 ──
-    const browserCookie = await tokenQueryCookie(base.origin, token)
+    const browserCookie = await tokenQueryCookie(base.origin, token, cookieCallOptions)
     const indexResponse = await fetch(base.origin, { headers: { cookie: browserCookie }, redirect: 'manual', signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
     assert(indexResponse.status === 200, `authenticated index returned ${indexResponse.status}`)
     const indexHtml = await indexResponse.text()
     assert(indexHtml.includes('dsh-gitkit') && indexHtml.includes('dsh-gitkit-ui'),
       'served index HTML does not contain both package names')
-    const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__')
+    const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__', extractOptions)
     const entries = boot.entries ?? []
     const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit-ui')
     assert(clientEntry !== undefined,
@@ -484,12 +428,12 @@ async function installFlow(repoRoot, phaseLabel) {
     phaseStep(`served HTML contains both packages; client bundle served (${bundleBody.length} bytes, closure factory)`)
 
     // ── 5. git/status RPC：workspaceOverride 夹具仓库的 ready 快照 ──
-    const apiCookie = await exchangeTokenForCookie(base.origin, token)
-    const ping = await rpcCall(base.origin, apiCookie, 'git/ping', {})
+    const apiCookie = await exchangeTokenForCookie(base.origin, token, cookieCallOptions)
+    const ping = await rpcCall(base.origin, apiCookie, 'git/ping', {}, rpcCallOptions)
     assert(ping.ok === true && /^git version \S+/.test(ping.value?.gitVersion ?? ''),
       `git/ping failed: ${JSON.stringify(ping)}`)
     phaseStep(`ping RPC OK: ${ping.value.gitVersion}`)
-    const status = await rpcCall(base.origin, apiCookie, 'git/status', {})
+    const status = await rpcCall(base.origin, apiCookie, 'git/status', {}, rpcCallOptions)
     assert(status.ok === true, `git/status failed: ${JSON.stringify(status)}`)
     const snapshot = status.value ?? {}
     const branch = snapshot.branch ?? {}

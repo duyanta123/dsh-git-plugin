@@ -9,11 +9,10 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { Context } from '@deepseek-ai/cordis'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { GitService } from '../src/index.ts'
-import { localSubprocess, scratchDir, scratchGlobalConfig, scratchRepo } from './support.ts'
+import { makeGitService, scratchDir, scratchGlobalConfig, scratchRepo } from './support.ts'
 
 const cleanups: Array<() => Promise<unknown>> = []
 const globalCleanups: Array<() => Promise<unknown>> = []
@@ -45,16 +44,8 @@ interface Harness {
 }
 
 function makeService(workspaceOverride: string): Harness {
-  const ctx = new Context() as never
-  const face = ctx as { provide(name: string, value: unknown): void }
-  face.provide('subprocess', localSubprocess())
-  const service = new GitService(ctx, {
-    gitCommand: 'git',
-    fastTimeoutMs: 15_000,
-    outputMaxBytes: 1_048_576,
-    workspaceOverride,
-  })
-  return { service }
+  // 装配去重：Context+subprocess 面经 support.makeGitService；差异键照旧逐键表达。
+  return { service: makeGitService(workspaceOverride, { outputMaxBytes: 1_048_576 }).service }
 }
 
 /** 顶层会话 turn/start 注入（构造期 ctx.on('session/event') 的记忆路径）。 */

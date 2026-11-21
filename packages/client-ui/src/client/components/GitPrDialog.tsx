@@ -16,15 +16,16 @@
  * 渲染决策收敛在 pr-view-model.prDialogView（tests/pr-dialog.spec 断言）。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Checkbox, Menu, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PrResult } from 'dsh-gitkit/types'
 import type { RefInfo } from 'dsh-gitkit/types'
-import type { GitErrorLike } from '../remote/mount.js'
 import type { NS } from '../locales.js'
 import type { GitPrFace } from '../pr-face.js'
 import { prBaseChoices, prDialogView, prLinkView } from '../pr-view-model.js'
+import { useDialogAction } from '../hooks/useDialogAction.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 
@@ -53,11 +54,23 @@ export function GitPrDialog(props: GitPrDialogProps): ReactNode {
   const [body, setBody] = useState('')
   const [draft, setDraft] = useState(false)
   const [generating, setGenerating] = useState(false)
-  const [pending, setPending] = useState(false)
   const [dangerAsk, setDangerAsk] = useState(false)
   const [overwriteAsk, setOverwriteAsk] = useState(false)
   const [createdUrl, setCreatedUrl] = useState<string | null>(null)
-  const [error, setError] = useState<GitErrorLike | null>(null)
+  // runCreate 点击时组装的终态入参（useDialogAction 的 run 闭包经 ref 读取）。
+  const prOptionsRef = useRef<Parameters<GitPrFace['createPr']>[0] | null>(null)
+
+  // pending/error 的 open 重置（false→true 边沿清陈旧错误）+ 防重入 + 「先置
+  // pending=false 再调 onDone」时序收敛到 useDialogAction；AI 生成的错误面与
+  // 创建共用同一错误条（hook 的 setError）。
+  const { pending, error, run, setError } = useDialogAction<PrResult>({
+    open,
+    run: async () => face.createPr(prOptionsRef.current!),
+    onDone: (value) => {
+      setCreatedUrl(value.url)
+      onDone()
+    },
+  })
 
   // 开框重置 + 取 refs（base picker 数据；失败进错误条——可取消重开）。
   useEffect(() => {
@@ -69,11 +82,9 @@ export function GitPrDialog(props: GitPrDialogProps): ReactNode {
     setBody('')
     setDraft(false)
     setGenerating(false)
-    setPending(false)
     setDangerAsk(false)
     setOverwriteAsk(false)
     setCreatedUrl(null)
-    setError(null)
     let cancelled = false
     void face.listRefs().then((result) => {
       if (cancelled) return
@@ -115,21 +126,12 @@ export function GitPrDialog(props: GitPrDialogProps): ReactNode {
   }
 
   const runCreate = (): void => {
-    // acked = danger 勾选闸已过（GitConfirmDialog 的「不可逆」复选框承担）。
-    const final = prDialogView({ title, body, base: effectiveBase, head, draft, acked: true, pending }, baseChoices)
+    // acked = danger 勾选闸已过（GitConfirmDialog 的「不可逆」复选框承担）；
+    // pending 不影响 options 组装（canConfirm 语义由视图面承担），防重入归 hook 闸。
+    const final = prDialogView({ title, body, base: effectiveBase, head, draft, acked: true, pending: false }, baseChoices)
     if (final.options === null) return
-    setPending(true)
-    setError(null)
-    void face.createPr(final.options).then((result) => {
-      if (!result.ok) {
-        setPending(false)
-        setError(result.error)
-        return
-      }
-      setPending(false)
-      setCreatedUrl(result.value.url)
-      onDone()
-    })
+    prOptionsRef.current = final.options
+    void run()
   }
 
   const onConfirm = (): void => {

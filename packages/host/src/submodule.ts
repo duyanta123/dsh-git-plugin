@@ -20,8 +20,10 @@
  * 不探 submodule 内部工作区脏净（status 只比较 commit；[61] 只列不递归）。
  */
 
-import { assertGitOk, gitError } from './error-codes.ts'
+import { assertGitOk } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { probeRepoRoot } from './repo-root.ts'
 import type { WorkspaceResolver } from './workspace.ts'
 import type { SubmoduleEntry, SubmoduleStatusResult } from './types.ts'
 
@@ -122,11 +124,11 @@ export class SubmoduleEngine {
   async submoduleStatus(signal?: AbortSignal): Promise<SubmoduleStatusResult> {
     const repoRoot = await this.resolveRepoRoot('submoduleStatus', signal)
     const checkedOut = await this.gitRead.run(['submodule', 'status'], {
-      cwd: repoRoot, op: 'submoduleStatus(git submodule status)', signal: active(signal),
+      cwd: repoRoot, op: 'submoduleStatus(git submodule status)', signal: signalOf(signal),
     })
     assertGitOk(checkedOut, 'submoduleStatus(git submodule status)')
     const recorded = await this.gitRead.run(['submodule', 'status', '--cached'], {
-      cwd: repoRoot, op: 'submoduleStatus(git submodule status --cached)', signal: active(signal),
+      cwd: repoRoot, op: 'submoduleStatus(git submodule status --cached)', signal: signalOf(signal),
     })
     assertGitOk(recorded, 'submoduleStatus(git submodule status --cached)')
     const entries = assembleSubmoduleEntries(parseSubmoduleLines(checkedOut.stdout), parseSubmoduleLines(recorded.stdout))
@@ -134,24 +136,10 @@ export class SubmoduleEngine {
     return { submodules: entries }
   }
 
-  /** repo 发现（blame.ts 同款：exit 128 + not a git repository ⇒ git/no-repository）。 */
+  /** repo 发现（共享实现 probeRepoRoot——repo-root.ts：exit 128 + not a git repository ⇒ git/no-repository）。 */
   private async resolveRepoRoot(op: string, signal?: AbortSignal): Promise<string> {
     const resolution = await this.workspace.resolve()
-    const probe = await this.gitRead.run(['rev-parse', '--show-toplevel'], {
-      cwd: resolution.root,
-      op: `${op}(rev-parse --show-toplevel)`,
-      signal: signal ?? active(signal),
-    })
-    if (probe.exitCode === 128 && /not a git repository/i.test(probe.stderr)) {
-      throw gitError('git/no-repository', `not a git repository: ${resolution.root}`, { probed: resolution.root })
-    }
-    assertGitOk(probe, `${op}(rev-parse --show-toplevel)`)
-    return probe.stdout.trim()
+    return probeRepoRoot(this.gitRead, resolution.root, op, signal)
   }
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

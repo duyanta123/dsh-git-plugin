@@ -37,8 +37,11 @@
 
 import { assertGitOk, gitError, gitRunError } from './error-codes.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { scanFresh } from './scan-fresh.ts'
 import type { StatusEngine } from './status.ts'
 import { detectOperation } from './conflicts.ts'
+import { readHeadAfterOperation, throwOpFailure } from './op-guards.ts'
 import type {
   AbortOperationResult, CherryPickOptions, RevertOptions, ResetOptions,
   TimeTravelResult,
@@ -78,12 +81,12 @@ export class TimeTravelEngine {
     const { repoRoot, oldOid } = await this.runGuards(options.acknowledged, options.baseRevision, 'cherryPick', signal)
     const oid = await this.requireRevision(repoRoot, 'cherryPick', options.oid, signal)
     const result = await this.gitWrite.run(['cherry-pick', oid], {
-      cwd: repoRoot, op: 'cherryPick(git cherry-pick)', signal: active(signal),
+      cwd: repoRoot, op: 'cherryPick(git cherry-pick)', signal: signalOf(signal),
     })
     // await：throwOpFailure 是 async（冲突回读）——漏 await 会把 merge-conflict 变成
     // 未处理 rejection 而主流程继续走到 readHead（首跑实修）。
-    if (result.exitCode !== 0) await this.throwOpFailure(result, 'cherry-pick', repoRoot, signal)
-    const newOid = await this.readHead(repoRoot, 'cherryPick', signal)
+    if (result.exitCode !== 0) await throwOpFailure(this.gitRead, result, 'cherry-pick', 'time-travel', repoRoot, signal)
+    const newOid = await readHeadAfterOperation(this.gitRead, repoRoot, 'cherryPick', signal)
     this.logger?.debug(`git cherryPick: oid=${oid.slice(0, 12)} oldOid=${oldOid.slice(0, 12)} newOid=${newOid.slice(0, 12)}`)
     return { op: 'cherry-pick', oldOid, newOid }
   }
@@ -98,10 +101,10 @@ export class TimeTravelEngine {
     const { repoRoot, oldOid } = await this.runGuards(options.acknowledged, options.baseRevision, 'revert', signal)
     const oid = await this.requireRevision(repoRoot, 'revert', options.oid, signal)
     const result = await this.gitWrite.run(['revert', '--no-edit', oid], {
-      cwd: repoRoot, op: 'revert(git revert)', signal: active(signal),
+      cwd: repoRoot, op: 'revert(git revert)', signal: signalOf(signal),
     })
-    if (result.exitCode !== 0) await this.throwOpFailure(result, 'revert', repoRoot, signal)
-    const newOid = await this.readHead(repoRoot, 'revert', signal)
+    if (result.exitCode !== 0) await throwOpFailure(this.gitRead, result, 'revert', 'time-travel', repoRoot, signal)
+    const newOid = await readHeadAfterOperation(this.gitRead, repoRoot, 'revert', signal)
     this.logger?.debug(`git revert: oid=${oid.slice(0, 12)} oldOid=${oldOid.slice(0, 12)} newOid=${newOid.slice(0, 12)}`)
     return { op: 'revert', oldOid, newOid }
   }
@@ -128,10 +131,10 @@ export class TimeTravelEngine {
     const target = typeof options.target === 'string' && options.target !== '' ? options.target : 'HEAD'
     await this.requireRevision(repoRoot, 'reset', target, signal)
     const result = await this.gitWrite.run(['reset', `--${kind}`, target], {
-      cwd: repoRoot, op: `reset(git reset --${kind})`, signal: active(signal),
+      cwd: repoRoot, op: `reset(git reset --${kind})`, signal: signalOf(signal),
     })
     if (result.exitCode !== 0) throw gitRunError(`reset(git reset --${kind})`, result.exitCode, result.stderr, result.truncated)
-    const newOid = await this.readHead(repoRoot, 'reset', signal)
+    const newOid = await readHeadAfterOperation(this.gitRead, repoRoot, 'reset', signal)
     this.logger?.debug(`git reset: kind=${kind} target=${target} oldOid=${oldOid.slice(0, 12)} newOid=${newOid.slice(0, 12)}`)
     return { op: 'reset', oldOid, newOid }
   }
@@ -156,7 +159,7 @@ export class TimeTravelEngine {
       return { aborted: null }
     }
     const result = await this.gitWrite.run([operation, '--abort'], {
-      cwd: repoRoot, op: `abortOperation(git ${operation} --abort)`, signal: active(signal),
+      cwd: repoRoot, op: `abortOperation(git ${operation} --abort)`, signal: signalOf(signal),
     })
     assertGitOk(result, `abortOperation(git ${operation} --abort)`)
     this.logger?.debug(`git abortOperation: aborted=${operation}`)
@@ -220,7 +223,7 @@ export class TimeTravelEngine {
       })
     }
     const probed = await this.gitRead.run(['rev-parse', '--verify', '--quiet', revision], {
-      cwd: repoRoot, op: `${op}(rev-parse --verify)`, signal: active(signal),
+      cwd: repoRoot, op: `${op}(rev-parse --verify)`, signal: signalOf(signal),
     })
     if (probed.exitCode !== 0) {
       throw gitError('git/unknown-revision', `git ${op}: revision '${revision}' could not be resolved`, {
@@ -231,71 +234,18 @@ export class TimeTravelEngine {
   }
 
   /**
-   * cherry-pick/revert 非零退出 → 域错误映射：输出含 CONFLICT ⇒ git/merge-conflict
-   * （conflicted = diff-filter=U 回读；abortable = 共享 detectOperation 在场——冲突
-   * 路径恒 true，防御性探测如实回值）；其余（空 cherry-pick / 空 revert 等）⇒ git-error。
+   * cherry-pick/revert 非零退出 → 域错误映射（throwOpFailure）、未合并路径回读（-z
+   * 口径，conflictedPaths）与操作后 HEAD 回读（readHeadAfterOperation）已收口至
+   * op-guards.ts 共享实现——time-travel ≡ merge-rebase 同款，行为逐字保真（op 词汇
+   * 'time-travel' 经参数保留）。
    */
-  private async throwOpFailure(
-    result: { exitCode: number | null; stdout: string; stderr: string; truncated: boolean },
-    op: 'cherry-pick' | 'revert',
-    repoRoot: string,
-    signal?: AbortSignal,
-  ): Promise<never> {
-    if (/CONFLICT/.test(result.stdout) || /CONFLICT/.test(result.stderr)) {
-      const conflicted = await this.conflictedPaths(repoRoot, signal)
-      const inProgress = await detectOperation(repoRoot, this.gitRead, signal)
-      throw gitError('git/merge-conflict', `git ${op}: conflict; the repository is left in an intermediate state (abort or resolve it)`, {
-        op,
-        conflicted,
-        abortable: inProgress !== null,
-      })
-    }
-    throw gitRunError(op, result.exitCode, result.stderr, result.truncated)
-  }
-
-  /** 未合并路径回读（`diff --name-only --diff-filter=U`）。 */
-  /**
-   * 未合并路径回读（`diff --name-only --diff-filter=U -z`）：-z 口径（NUL 分隔、路径
-   * 原样字节不加引号）——merge-rebase.ts conflictedPaths / conflicts.ts scanUnmerged
-   * 同口径（评审收口统一；不 trim——`-z` 输出无填充，条目即路径本身）。
-   */
-  private async conflictedPaths(repoRoot: string, signal?: AbortSignal): Promise<string[]> {
-    const listing = await this.gitRead.run(['diff', '--name-only', '--diff-filter=U', '-z'], {
-      cwd: repoRoot, op: 'time-travel(diff --diff-filter=U -z)', signal: active(signal),
-    })
-    assertGitOk(listing, 'time-travel(diff --diff-filter=U -z)')
-    return listing.stdout.split('\0').filter((entry) => entry !== '')
-  }
-
-  /** 操作后 HEAD 回读（`rev-parse --verify HEAD`；时间旅行三操作均不产生 unborn）。 */
-  private async readHead(repoRoot: string, op: string, signal?: AbortSignal): Promise<string> {
-    const head = await this.gitRead.run(['rev-parse', '--verify', 'HEAD'], {
-      cwd: repoRoot, op: `${op}(rev-parse --verify HEAD)`, signal: active(signal),
-    })
-    assertGitOk(head, `${op}(rev-parse --verify HEAD)`)
-    const oid = head.stdout.trim()
-    if (oid === '') {
-      throw gitError('git/git-error', `git ${op}: empty HEAD after a successful operation`, {
-        op: `${op}(rev-parse --verify HEAD)`, exitCode: head.exitCode, stderr: '', truncated: false,
-      })
-    }
-    return oid
-  }
 
   /** fresh status 扫描（守卫世界读取 + repoRoot；三态 error 就地抛出）。 */
-  private async scanFresh(
+  private scanFresh(
     op: string,
     signal?: AbortSignal,
   ): Promise<{ repoRoot: string; snapshot: GitStatusSnapshot }> {
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
-    return { repoRoot: state.snapshot.repoRoot, snapshot: state.snapshot }
+    return scanFresh(this.status, this.logger, op, signal)
   }
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

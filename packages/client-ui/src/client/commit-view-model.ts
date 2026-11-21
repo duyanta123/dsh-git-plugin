@@ -19,7 +19,7 @@ import type {
 } from 'dsh-gitkit/types'
 import type { HeadCommitInfo } from './commit-dialog-face.js'
 import type { GitErrorLike } from './remote/mount.js'
-import { redactTail } from './m13/redact.js'
+import { redactTail } from './redaction/redact.js'
 
 /**
  * Conventional Commits 非阻断提示正则（client 镜像；与 host `CONVENTIONAL_COMMIT_HINT_RE`

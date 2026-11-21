@@ -4,10 +4,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { redact, redactTail } from '../src/client/m13/redact.ts'
+import { redact, redactTail } from '../src/client/redaction/redact.ts'
 // P3-2（v2 plan §10，批次四）：死代码 scanConflictLines 已删除——只保留行级分类器
 // 的测试面；markConflictRows 走 classifyConflictLine（patch-hunks.ts:168）。
-import { classifyConflictLine } from '../src/client/m13/conflict-markers.ts'
+// （收尾：模块目录 m13/ 更名 redaction/，本 spec 文件名保留不改。）
+import { classifyConflictLine } from '../src/client/redaction/conflict-markers.ts'
 
 describe('redact — 显示面凭证脱敏', () => {
   it('URL userinfo 全遮（保留 scheme 与 host）', () => {
@@ -68,7 +69,7 @@ describe('classifyConflictLine — 冲突标记行分类', () => {
 
 describe('P3-2 — 死代码删除（v2 plan §10）', () => {
   it('scanConflictLines / ConflictMarkedLine 已随批次四删除（classifyConflictLine 保留）', async () => {
-    const module = await import('../src/client/m13/conflict-markers.ts')
+    const module = await import('../src/client/redaction/conflict-markers.ts')
     expect('scanConflictLines' in module).toBe(false)
     expect(typeof module.classifyConflictLine).toBe('function')
   })

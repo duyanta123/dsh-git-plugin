@@ -43,6 +43,12 @@
  *    终态（succeeded）：对话框保持打开、折叠区默认展开，footer 换单关按钮由用户
  *    收尾；豁免勾选绑定产生它的违规集签名（violationsSignature），点提交前的 fresh
  *    扫描违规集已变 ⇒ 旧豁免失效（TOCTOU 闸）。
+ *
+ * **Phase 3·client 收尾**：四处自包含渲染半拆为模块内子组件——CommitDialogFooter
+ * （footer 三按钮 / 成功终态单关按钮）、TrailerEditor（① trailer 编辑区）、GuardPanel
+ * （② 护栏结果面板）、ProcessFoldout（③ hook 输出折叠区）。全部状态与动作闭包留守
+ * 主组件（子组件是纯渲染面，props 传值 + 回调）；data-* 锚、aria-keyshortcuts 透传
+ * 面、条件渲染与词典键组逐字节迁移不变；「成功转已提交终态不关框」行为不动。
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -51,19 +57,31 @@ import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CommitScanResult, GeneratedCommitMessage, GitIdentityResult, GitStatusSnapshot } from 'dsh-gitkit/types'
 import type { GitCommitDialogFace, HeadCommitInfo } from '../commit-dialog-face.js'
-import type { CommitPending, GuardScanPhase, ProcessOutputView } from '../commit-view-model.js'
+import type { CommitDialogView, CommitPending, GuardScanPhase, GuardScanView, ProcessOutputView } from '../commit-view-model.js'
 import {
   commitAllowedByGuard, commitDialogView, commitOptionsOf, guardScanView, invalidTrailerLine,
   processFromHookError, processOutputView, pushOptionsOf, trailerLines, violationsSignature,
 } from '../commit-view-model.js'
 import type { GitErrorLike, RemoteResult } from '../remote/mount.js'
 import type { ErrorAction } from '../error-map.js'
-import type { NS } from '../locales.js'
+import type { GitLocaleKey, NS } from '../locales.js'
 import { GitConfirmDialog } from './GitConfirmDialog.js'
 import { GitErrorNotice } from './GitErrorNotice.js'
 
 /** 提交对话框的拉起意图（默认动作 = Ctrl/Cmd+Enter 的目标）。 */
 export type CommitDialogIntent = 'commit' | 'commit-push'
+
+/**
+ * busy 态按钮文案查表（pending 四态 → 词典键；取代原四层嵌套三元）。`pending=false`
+ * 不是 busy 态（无渲染位消费该文案），键类型层面即排除；查表处的 false → 'pull'
+ * 显式兜底只复刻原三元 fallback 分支的形状，语义不变。
+ */
+const BUSY_LABEL_KEYS: Record<Exclude<CommitPending, false>, GitLocaleKey> = {
+  commit: 'commit.committing',
+  push: 'commit.pushing',
+  fetch: 'commit.fetching',
+  pull: 'commit.pulling',
+}
 
 export interface GitCommitDialogProps {
   /** false = 不渲染（原语 Modal 亦不挂载）。 */
@@ -86,6 +104,241 @@ type IdentityState =
   | { phase: 'idle' }
   | { phase: 'checking' }
   | { phase: 'ready'; identity: GitIdentityResult | null; error: GitErrorLike | null }
+
+// ── Phase 3·client 收尾：四处自包含渲染半拆为模块内子组件（全部状态与动作闭包留守
+// 主组件——子组件是纯渲染面，props 传值 + 回调；data-* 锚与条件渲染逐字节迁移）。──
+
+/**
+ * footer 三按钮（/成功终态单关按钮）。aria-keyshortcuts 经 Button 的 rest 透传落在
+ * 按钮元素上（verify-load 的快捷键组断言依赖该透传面）。Esc 快捷键语义随 Modal 层栈。
+ */
+function CommitDialogFooter(props: {
+  view: CommitDialogView
+  pending: CommitPending
+  busyLabel: string
+  defaultAction: CommitDialogIntent
+  onCommit(pushAfter: boolean): void
+  onDone(): void
+  onClose(): void
+  t: TranslateNS<typeof NS>
+}): ReactNode {
+  const { view, pending, busyLabel, defaultAction, onCommit, onDone, onClose, t } = props
+  // 评审修复：提交成功转「已提交」终态——footer 换单关按钮（onDone 收尾关框），
+  // [63] 的 process 折叠区在关框前保持可见（成功路径自此可达）。
+  if (view.succeeded) {
+    return (
+      <Button
+        variant='primary'
+        className='dsh-git-commit-dialog__close'
+        data-git-commit-do='close'
+        aria-keyshortcuts='Escape'
+        onClick={() => { onDone() }}
+      >
+        {t('common.close')}
+      </Button>
+    )
+  }
+  return (
+    <>
+      <Button
+        variant='outline'
+        className='dsh-git-commit-dialog__cancel'
+        data-git-commit-cancel=''
+        aria-keyshortcuts='Escape'
+        onClick={() => { onClose() }}
+      >
+        {t('confirm.cancel')}
+      </Button>
+      <Button
+        variant='primary'
+        className='dsh-git-commit-dialog__commit'
+        data-git-commit-do='commit'
+        disabled={!view.commitEnabled}
+        aria-keyshortcuts={defaultAction === 'commit' ? 'Control+Enter Meta+Enter' : undefined}
+        onClick={() => { onCommit(false) }}
+      >
+        {pending === 'commit' && defaultAction !== 'commit-push' ? busyLabel : t('commit.commit')}
+      </Button>
+      <Button
+        variant='primary'
+        className='dsh-git-commit-dialog__commit-push'
+        data-git-commit-do='commit-push'
+        disabled={!view.pushEnabled}
+        aria-keyshortcuts={defaultAction === 'commit-push' ? 'Control+Enter Meta+Enter' : undefined}
+        onClick={() => { onCommit(true) }}
+      >
+        {pending !== false && defaultAction === 'commit-push' ? busyLabel : t('commit.commitPush')}
+      </Button>
+    </>
+  )
+}
+
+/** trailer 编辑区（[18]）：预设 Co-authored-by / Generated-by 行可增删；非法行即时
+ *  警示不阻断（镜像 Conventional 预检形态——invalid 由主组件按 invalidTrailerLine 折算）。 */
+function TrailerEditor(props: {
+  trailers: string
+  onTrailersChange(value: string): void
+  /** 非法行在位（invalidTrailerLine ≠ null——警示不阻断）。 */
+  invalid: boolean
+  /** 动作 pending（≠ false）时增删禁用。 */
+  busy: boolean
+  onAddPreset(trailerKey: string): void
+  t: TranslateNS<typeof NS>
+}): ReactNode {
+  const { trailers, onTrailersChange, invalid, busy, onAddPreset, t } = props
+  return (
+    <div className='dsh-git-commit-dialog__trailers' data-git-commit-trailers=''>
+      <label className='dsh-git-commit-dialog__trailers-label' htmlFor='dsh-git-commit-trailers'>
+        {t('commit.trailers.label')}
+      </label>
+      <textarea
+        id='dsh-git-commit-trailers'
+        className='dsh-git-commit-dialog__trailers-editor'
+        data-git-commit-trailers-editor=''
+        value={trailers}
+        rows={2}
+        onChange={(event) => { onTrailersChange(event.target.value) }}
+      />
+      <div className='dsh-git-commit-dialog__trailers-actions' data-git-commit-trailers-actions=''>
+        <button
+          type='button'
+          className='dsh-git-commit-dialog__trailer-add'
+          data-git-commit-trailer-add='coauthored'
+          disabled={busy}
+          onClick={() => { onAddPreset('Co-authored-by') }}
+        >
+          {t('commit.trailers.addCoauthored')}
+        </button>
+        <button
+          type='button'
+          className='dsh-git-commit-dialog__trailer-add'
+          data-git-commit-trailer-add='generated'
+          disabled={busy}
+          onClick={() => { onAddPreset('Generated-by') }}
+        >
+          {t('commit.trailers.addGenerated')}
+        </button>
+        {invalid && (
+          <span className='dsh-git-commit-dialog__trailers-invalid' data-git-commit-trailers-invalid=''>
+            {t('commit.trailers.invalid')}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 护栏结果面板（[21][22]）：违规列表 + 可豁免类 danger 勾选豁免入口（D5：secret
+ *  硬阻断不可豁免）；blocked ⇒ 提交按钮禁用由 commit-view-model 闸半承担（可见性
+ *  判据 guard.visible 留在主组件调用位）。 */
+function GuardPanel(props: {
+  guard: GuardScanView
+  scanError: GitErrorLike | null
+  overrideAcknowledged: boolean
+  onToggleOverride(checked: boolean): void
+  t: TranslateNS<typeof NS>
+}): ReactNode {
+  const { guard, scanError, overrideAcknowledged, onToggleOverride, t } = props
+  return (
+    <div className='dsh-git-commit-dialog__guard' data-git-commit-guard=''>
+      <p className='dsh-git-commit-dialog__guard-title' data-git-commit-guard-title=''>{t('commit.guard.title')}</p>
+      {guard.scanning && (
+        <p className='dsh-git-commit-dialog__guard-status' role='status' data-git-commit-guard-status='scanning'>
+          {t('commit.guard.scanning')}
+        </p>
+      )}
+      {scanError !== null && (
+        <GitErrorNotice error={scanError} t={t} />
+      )}
+      {guard.clean && (
+        <p className='dsh-git-commit-dialog__guard-status' data-git-commit-guard-status='clean'>
+          {t('commit.guard.clean')}
+        </p>
+      )}
+      {guard.blocked && (
+        <p className='dsh-git-commit-dialog__guard-status' data-git-commit-guard-status='blocked'>
+          {t('commit.guard.blocked', { count: guard.violations.length })}
+        </p>
+      )}
+      {guard.violations.length > 0 && (
+        <ul className='dsh-git-commit-dialog__guard-list' data-git-commit-guard-list=''>
+          {guard.violations.map((violation) => (
+            <li
+              key={`${violation.kind}:${violation.path}:${violation.line ?? ''}`}
+              className='dsh-git-commit-dialog__guard-item'
+              data-git-commit-guard-item={violation.kind}
+            >
+              <span className='dsh-git-commit-dialog__guard-kind'>{t(`commit.guard.kind.${violation.kind}`)}</span>
+              <span className='dsh-git-commit-dialog__guard-path'>{violation.path}</span>
+              <span className='dsh-git-commit-dialog__guard-detail'>{violation.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {guard.hasSecret && (
+        <p className='dsh-git-commit-dialog__guard-secret' data-git-commit-guard-secret-hint=''>
+          {t('commit.guard.secretHint')}
+        </p>
+      )}
+      {guard.blocked && guard.overridable && (
+        <Checkbox
+          className='dsh-git-commit-dialog__guard-override'
+          checked={overrideAcknowledged}
+          label={t('commit.guard.override')}
+          onChange={onToggleOverride}
+        />
+      )}
+    </div>
+  )
+}
+
+/** hook 输出折叠区（[63]）：成功 = CommitResult.process（git commit 进程整体输出，
+ *  含 hooks）；hook-failed 失败 = details.stderr。长输出尾保留 = redactTail（P3-3
+ *  复活点），先脱敏再保尾。可见性判据（processView 非空且 visible）留在主组件调用位。 */
+function ProcessFoldout(props: {
+  processView: ProcessOutputView
+  /** 终态（已提交）默认展开；hook-failed 失败路径保持折叠（错误条已承接第一可视面）。 */
+  open: boolean
+  t: TranslateNS<typeof NS>
+}): ReactNode {
+  const { processView, open, t } = props
+  return (
+    <details
+      className='dsh-git-commit-dialog__process'
+      data-git-commit-process=''
+      /* 评审修复：成功路径的输出面板默认展开（终态对话框的主内容就是它）；
+          hook-failed 失败路径保持折叠（错误条已承接第一可视面）。 */
+      open={open}
+    >
+      <summary className='dsh-git-commit-dialog__process-summary' data-git-commit-process-summary=''>
+        {t('commit.process.title')}
+      </summary>
+      {processView.timedOut && (
+        <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-timeout=''>{t('commit.process.timedOut')}</p>
+      )}
+      {processView.durationMs !== null && (
+        <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-duration=''>
+          {t('commit.process.duration', { ms: processView.durationMs })}
+        </p>
+      )}
+      {processView.truncated && (
+        <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-truncated=''>{t('commit.process.truncated')}</p>
+      )}
+      {processView.stdout !== '' && (
+        <div className='dsh-git-commit-dialog__process-section' data-git-commit-process-stdout=''>
+          <span className='dsh-git-commit-dialog__process-label'>{t('commit.process.stdout')}</span>
+          <pre className='dsh-git-commit-dialog__process-output'>{processView.stdout}</pre>
+        </div>
+      )}
+      {processView.stderr !== '' && (
+        <div className='dsh-git-commit-dialog__process-section' data-git-commit-process-stderr=''>
+          <span className='dsh-git-commit-dialog__process-label'>{t('commit.process.stderr')}</span>
+          <pre className='dsh-git-commit-dialog__process-output'>{processView.stderr}</pre>
+        </div>
+      )}
+    </details>
+  )
+}
 
 /**
  * 提交对话框（原语 Modal 浮层）。
@@ -421,60 +674,23 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
   // V2 批次三：trailer 非法行（警示不阻断）与护栏面板视图。
   const trailerInvalid = invalidTrailerLine(trailers)
   const guard = guardScanView(scanPhase, scan)
-  const busyLabel = pending === 'commit'
-    ? t('commit.committing')
-    : pending === 'push'
-      ? t('commit.pushing')
-      : pending === 'fetch'
-        ? t('commit.fetching')
-        : t('commit.pulling')
+  const busyLabel = t(BUSY_LABEL_KEYS[pending === false ? 'pull' : pending])
 
   // footer（原语 Button；aria-keyshortcuts 经 Button 的 rest 透传落在按钮元素
   // 上——verify-load 的快捷键组断言依赖该透传面）。Esc 快捷键语义随 Modal 层栈。
-  // 评审修复：提交成功转「已提交」终态——footer 换单关按钮（onDone 收尾关框），
-  // [63] 的 process 折叠区在关框前保持可见（成功路径自此可达）。
-  const footer = view.succeeded ? (
-    <Button
-      variant='primary'
-      className='dsh-git-commit-dialog__close'
-      data-git-commit-do='close'
-      aria-keyshortcuts='Escape'
-      onClick={() => { onDone() }}
-    >
-      {t('common.close')}
-    </Button>
-  ) : (
-    <>
-      <Button
-        variant='outline'
-        className='dsh-git-commit-dialog__cancel'
-        data-git-commit-cancel=''
-        aria-keyshortcuts='Escape'
-        onClick={() => { onClose() }}
-      >
-        {t('confirm.cancel')}
-      </Button>
-      <Button
-        variant='primary'
-        className='dsh-git-commit-dialog__commit'
-        data-git-commit-do='commit'
-        disabled={!view.commitEnabled}
-        aria-keyshortcuts={defaultAction === 'commit' ? 'Control+Enter Meta+Enter' : undefined}
-        onClick={() => { void runCommit(false) }}
-      >
-        {pending === 'commit' && defaultAction !== 'commit-push' ? busyLabel : t('commit.commit')}
-      </Button>
-      <Button
-        variant='primary'
-        className='dsh-git-commit-dialog__commit-push'
-        data-git-commit-do='commit-push'
-        disabled={!view.pushEnabled}
-        aria-keyshortcuts={defaultAction === 'commit-push' ? 'Control+Enter Meta+Enter' : undefined}
-        onClick={() => { void runCommit(true) }}
-      >
-        {pending !== false && defaultAction === 'commit-push' ? busyLabel : t('commit.commitPush')}
-      </Button>
-    </>
+  // 渲染半拆为 CommitDialogFooter（Phase 3·client 收尾）——成功终态单关按钮 /
+  // 三按钮分支在该子组件内，行为逐字节保真。
+  const footer = (
+    <CommitDialogFooter
+      view={view}
+      pending={pending}
+      busyLabel={busyLabel}
+      defaultAction={defaultAction}
+      onCommit={(pushAfter) => { void runCommit(pushAfter) }}
+      onDone={onDone}
+      onClose={onClose}
+      t={t}
+    />
   )
 
   return (
@@ -555,98 +771,27 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
         </button>
 
         {/* ① trailer 编辑区（[18]）：预设 Co-authored-by / Generated-by 行，可增删；
-            非法行即时警示不阻断（镜像 Conventional 预检形态）。 */}
-        <div className='dsh-git-commit-dialog__trailers' data-git-commit-trailers=''>
-          <label className='dsh-git-commit-dialog__trailers-label' htmlFor='dsh-git-commit-trailers'>
-            {t('commit.trailers.label')}
-          </label>
-          <textarea
-            id='dsh-git-commit-trailers'
-            className='dsh-git-commit-dialog__trailers-editor'
-            data-git-commit-trailers-editor=''
-            value={trailers}
-            rows={2}
-            onChange={(event) => { setTrailers(event.target.value) }}
-          />
-          <div className='dsh-git-commit-dialog__trailers-actions' data-git-commit-trailers-actions=''>
-            <button
-              type='button'
-              className='dsh-git-commit-dialog__trailer-add'
-              data-git-commit-trailer-add='coauthored'
-              disabled={pending !== false}
-              onClick={() => { addTrailerPreset('Co-authored-by') }}
-            >
-              {t('commit.trailers.addCoauthored')}
-            </button>
-            <button
-              type='button'
-              className='dsh-git-commit-dialog__trailer-add'
-              data-git-commit-trailer-add='generated'
-              disabled={pending !== false}
-              onClick={() => { addTrailerPreset('Generated-by') }}
-            >
-              {t('commit.trailers.addGenerated')}
-            </button>
-            {trailerInvalid !== null && (
-              <span className='dsh-git-commit-dialog__trailers-invalid' data-git-commit-trailers-invalid=''>
-                {t('commit.trailers.invalid')}
-              </span>
-            )}
-          </div>
-        </div>
+            非法行即时警示不阻断（镜像 Conventional 预检形态）。渲染半 = TrailerEditor。 */}
+        <TrailerEditor
+          trailers={trailers}
+          onTrailersChange={setTrailers}
+          invalid={trailerInvalid !== null}
+          busy={pending !== false}
+          onAddPreset={addTrailerPreset}
+          t={t}
+        />
 
         {/* ② 护栏结果面板（[21][22]）：blocked ⇒ 提交按钮禁用（commit-view-model 闸半）
-            + 违规列表 + 可豁免类 danger 勾选豁免入口（D5：secret 硬阻断不可豁免）。 */}
+            + 违规列表 + 可豁免类 danger 勾选豁免入口（D5：secret 硬阻断不可豁免）。
+            渲染半 = GuardPanel（可见性判据 guard.visible 留守调用位）。 */}
         {guard.visible && (
-          <div className='dsh-git-commit-dialog__guard' data-git-commit-guard=''>
-            <p className='dsh-git-commit-dialog__guard-title' data-git-commit-guard-title=''>{t('commit.guard.title')}</p>
-            {guard.scanning && (
-              <p className='dsh-git-commit-dialog__guard-status' role='status' data-git-commit-guard-status='scanning'>
-                {t('commit.guard.scanning')}
-              </p>
-            )}
-            {scanError !== null && (
-              <GitErrorNotice error={scanError} t={t} />
-            )}
-            {guard.clean && (
-              <p className='dsh-git-commit-dialog__guard-status' data-git-commit-guard-status='clean'>
-                {t('commit.guard.clean')}
-              </p>
-            )}
-            {guard.blocked && (
-              <p className='dsh-git-commit-dialog__guard-status' data-git-commit-guard-status='blocked'>
-                {t('commit.guard.blocked', { count: guard.violations.length })}
-              </p>
-            )}
-            {guard.violations.length > 0 && (
-              <ul className='dsh-git-commit-dialog__guard-list' data-git-commit-guard-list=''>
-                {guard.violations.map((violation) => (
-                  <li
-                    key={`${violation.kind}:${violation.path}:${violation.line ?? ''}`}
-                    className='dsh-git-commit-dialog__guard-item'
-                    data-git-commit-guard-item={violation.kind}
-                  >
-                    <span className='dsh-git-commit-dialog__guard-kind'>{t(`commit.guard.kind.${violation.kind}`)}</span>
-                    <span className='dsh-git-commit-dialog__guard-path'>{violation.path}</span>
-                    <span className='dsh-git-commit-dialog__guard-detail'>{violation.detail}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {guard.hasSecret && (
-              <p className='dsh-git-commit-dialog__guard-secret' data-git-commit-guard-secret-hint=''>
-                {t('commit.guard.secretHint')}
-              </p>
-            )}
-            {guard.blocked && guard.overridable && (
-              <Checkbox
-                className='dsh-git-commit-dialog__guard-override'
-                checked={overrideAcknowledged}
-                label={t('commit.guard.override')}
-                onChange={toggleGuardOverride}
-              />
-            )}
-          </div>
+          <GuardPanel
+            guard={guard}
+            scanError={scanError}
+            overrideAcknowledged={overrideAcknowledged}
+            onToggleOverride={toggleGuardOverride}
+            t={t}
+          />
         )}
 
         <div className='dsh-git-commit-dialog__staged' data-git-commit-staged=''>
@@ -692,42 +837,10 @@ export function GitCommitDialog(props: GitCommitDialogProps): ReactNode {
 
         {/* ③ hook 输出折叠区（[63]）：成功 = CommitResult.process（git commit 进程整体
             输出，含 hooks）；hook-failed 失败 = details.stderr。长输出尾保留 = redactTail
-            （P3-3 复活点），先脱敏再保尾。 */}
+            （P3-3 复活点），先脱敏再保尾。渲染半 = ProcessFoldout（可见性判据留守
+            调用位；终态默认展开的 open={view.succeeded} 逐字节保真）。 */}
         {processView !== null && processView.visible && (
-          <details
-            className='dsh-git-commit-dialog__process'
-            data-git-commit-process=''
-            /* 评审修复：成功路径的输出面板默认展开（终态对话框的主内容就是它）；
-                hook-failed 失败路径保持折叠（错误条已承接第一可视面）。 */
-            open={view.succeeded}
-          >
-            <summary className='dsh-git-commit-dialog__process-summary' data-git-commit-process-summary=''>
-              {t('commit.process.title')}
-            </summary>
-            {processView.timedOut && (
-              <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-timeout=''>{t('commit.process.timedOut')}</p>
-            )}
-            {processView.durationMs !== null && (
-              <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-duration=''>
-                {t('commit.process.duration', { ms: processView.durationMs })}
-              </p>
-            )}
-            {processView.truncated && (
-              <p className='dsh-git-commit-dialog__process-note' data-git-commit-process-truncated=''>{t('commit.process.truncated')}</p>
-            )}
-            {processView.stdout !== '' && (
-              <div className='dsh-git-commit-dialog__process-section' data-git-commit-process-stdout=''>
-                <span className='dsh-git-commit-dialog__process-label'>{t('commit.process.stdout')}</span>
-                <pre className='dsh-git-commit-dialog__process-output'>{processView.stdout}</pre>
-              </div>
-            )}
-            {processView.stderr !== '' && (
-              <div className='dsh-git-commit-dialog__process-section' data-git-commit-process-stderr=''>
-                <span className='dsh-git-commit-dialog__process-label'>{t('commit.process.stderr')}</span>
-                <pre className='dsh-git-commit-dialog__process-output'>{processView.stderr}</pre>
-              </div>
-            )}
-          </details>
+          <ProcessFoldout processView={processView} open={view.succeeded} t={t} />
         )}
 
         </div>

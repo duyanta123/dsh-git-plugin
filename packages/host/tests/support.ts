@@ -14,9 +14,12 @@ import { stat } from 'node:fs/promises'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, resolve, join } from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
 import { watch as chokidarWatch } from 'chokidar'
 import type { SubprocessFace } from '../src/git-runner.ts'
 import type { GitFsWatchFace } from '../src/watcher.ts'
+import type { Config } from '../src/index.ts'
+import { GitService } from '../src/index.ts'
 
 /** Run git synchronously inside a fixture repository（world 重读用）。 */
 export function git(cwd: string, ...args: string[]): string {
@@ -287,4 +290,52 @@ export function rejectingFsFace(): GitFsWatchFace & { resolveCalls: number; watc
     },
   }
   return face
+}
+
+// ---------- GitService 测试装配工厂（各 spec 局部 makeService 的共用半） ----------
+
+/** makeGitService 的返回 harness：ctx 供后置 provide（attachTools）与 session 事件发射用。 */
+export interface GitServiceHarness {
+  service: InstanceType<typeof GitService>
+  ctx: Context
+}
+
+/**
+ * makeGitService 的差异面 = Config 全键（optional）+ 三个装配设施键。
+ * 设施键不是 Config 键（host Config 无 record/subprocess/provides 同名键），
+ * `| undefined` 显式给出以兼容 exactOptionalPropertyTypes 的条件赋值。
+ */
+export interface GitServiceTestConfig extends Config {
+  /** localSubprocess 的 spawn 记录数组（前缀/env 断言用；缺省不记录）。 */
+  record?: SpawnRecord[] | undefined
+  /** 自定义 SubprocessFace 替身（status/diff 注入包装替身用；缺省 localSubprocess(record)）。 */
+  subprocess?: SubprocessFace | undefined
+  /** 构造前按序注入的额外 face（agent-tools 的 tools / message-gen 的 llm / checkpoints 的 workspaceChanges）。 */
+  provides?: ReadonlyArray<readonly [string, unknown]> | undefined
+}
+
+/**
+ * GitService 测试装配工厂：26 个 spec 局部 makeService 的共用半收敛于此——
+ * `new Context() as never` + provide('subprocess', localSubprocess(…)) + 构造前
+ * provides + `new GitService(ctx, config)`，装配语义逐 spec 保真：
+ *   - `repo` → `workspaceOverride`（位置参数，调用方原样传入）；
+ *   - 基线 Config 只放**全部 spec 一致**的两键（gitCommand: 'git'、fastTimeoutMs:
+ *     15_000）；其余差异键（commitTimeoutMs、networkTimeoutMs、outputMaxBytes、
+ *     autoFetchIntervalMs、llm 三键、agentTools、guard 三键、ghCommand、autoCommit
+ *     六键等）由调用方经 `config` 逐键表达——**不归一化**：spec 原本省略的键继续
+ *     缺席，保持原有的「缺省走 schemastery 默认 / undefined 语义」（例如省略
+ *     autoFetchIntervalMs 与显式 0 在运行时同为不挂定时器，但键面照旧）；
+ *   - `record`/`subprocess`/`provides` 在构造前生效，注入时序与原 spec 相同
+ *     （subprocess → provides → 构造）。
+ */
+export function makeGitService(repo: string, config: GitServiceTestConfig = {}): GitServiceHarness {
+  const { record, subprocess, provides, ...overrides } = config
+  const ctx = new Context() as never
+  const face = ctx as { provide(name: string, value: unknown): void }
+  face.provide('subprocess', subprocess ?? localSubprocess(record))
+  for (const [name, value] of provides ?? []) face.provide(name, value)
+  const service = new GitService(ctx, {
+    gitCommand: 'git', fastTimeoutMs: 15_000, workspaceOverride: repo, ...overrides,
+  })
+  return { service, ctx }
 }

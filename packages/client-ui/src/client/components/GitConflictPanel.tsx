@@ -26,13 +26,14 @@
  * 快捷键，故无 aria-keyshortcuts 声明面。
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConflictListResult, OperationInProgressOp } from 'dsh-gitkit/types'
 import type { NS } from '../locales.js'
 import type { GitChangesOpsFace } from '../changes-ops-face.js'
 import type { GitErrorLike } from '../remote/mount.js'
+import { useAsyncAction } from '../hooks/useAsyncAction.js'
 import {
   conflictRows, continueEnabled, continueHintKey, continueReducer, ddAcceptDeleteChoice,
   initialContinueState, operationActionsEnabled,
@@ -60,6 +61,10 @@ export interface GitConflictPanelProps {
 /** 在途动作类别（busy 闸的判别域；null = 空闲）。 */
 type BusyKind = 'resolve' | 'mark' | 'continue' | 'abort' | null
 
+/** 冲突动作任务形态（泛型签名拆行别名——check-locale 行级扫描同款规避）。 */
+type ConflictTaskResult = Promise<void>
+type ConflictTask = () => ConflictTaskResult
+
 /** 冲突解决面板（changes tab 内嵌区域；非 Modal）。 */
 export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
   const { open, t, ops, onClose, onMutated, onSummary } = props
@@ -67,7 +72,8 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
   const [result, setResult] = useState<ConflictListResult | null>(null)
   const [loadError, setLoadError] = useState<GitErrorLike | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
-  const [busy, setBusy] = useState<BusyKind>(null)
+  // busy 文案类别（resolve/mark/continue/abort——按钮 busy 态查表；闸本身归 hook）。
+  const [busyKind, setBusyKind] = useState<Exclude<BusyKind, null> | null>(null)
   const [actionError, setActionError] = useState<GitErrorLike | null>(null)
   // DD 两向同效的两段式确认臂位（armed = 已点一次待确认的 path；换行/收起即撤臂）。
   const [ddArmed, setDdArmed] = useState<string | null>(null)
@@ -113,13 +119,35 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
     load()
   }
 
+  // ── Phase 2·client：四动作共用的在途闸收敛到 useAsyncAction 同步闸（createBusyGate
+  // ——判定与置位原子同帧，先于任何 await；原 `if (busy !== null) return` 读的是
+  // setState 写的闭包值，同帧二次点击会漏闸）。busy 文案类别（busyKind）保留独立
+  // state——闸过闸后由 run 的同步首段置位/finally 复位。──
+  const conflictTaskRef = useRef<{ kind: Exclude<BusyKind, null>; task: ConflictTask } | null>(null)
+  const conflictAction = useAsyncAction<null>({
+    run: async () => {
+      const { kind, task } = conflictTaskRef.current!
+      setBusyKind(kind)
+      try {
+        await task()
+      } finally {
+        setBusyKind(null)
+      }
+      return { ok: true, value: null }
+    },
+  })
+  const busy = conflictAction.busy
+
+  const runAction = (kind: Exclude<BusyKind, null>, task: ConflictTask): void => {
+    conflictTaskRef.current = { kind, task }
+    void conflictAction.trigger()
+  }
+
   const runResolve = (row: ConflictRowView, resolution: 'ours' | 'theirs'): void => {
-    if (busy !== null) return
-    setBusy('resolve')
-    setActionError(null)
-    setDdArmed(null)
-    void ops.conflictResolve({ choices: [{ path: row.path, resolution }] }).then((done) => {
-      setBusy(null)
+    runAction('resolve', async () => {
+      setActionError(null)
+      setDdArmed(null)
+      const done = await ops.conflictResolve({ choices: [{ path: row.path, resolution }] })
       if (!done.ok) {
         setActionError(done.error)
         return
@@ -138,11 +166,9 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
   }
 
   const runMarkResolved = (row: ConflictRowView): void => {
-    if (busy !== null) return
-    setBusy('mark')
-    setActionError(null)
-    void ops.conflictMarkResolved({ paths: [row.path] }).then((done) => {
-      setBusy(null)
+    runAction('mark', async () => {
+      setActionError(null)
+      const done = await ops.conflictMarkResolved({ paths: [row.path] })
       if (!done.ok) {
         setActionError(done.error)
         return
@@ -152,12 +178,10 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
   }
 
   const runContinue = (): void => {
-    if (busy !== null) return
-    setBusy('continue')
-    setActionError(null)
-    setContinueState((state) => continueReducer(state, { type: 'invoke' }))
-    void ops.operationContinue().then((done) => {
-      setBusy(null)
+    runAction('continue', async () => {
+      setActionError(null)
+      setContinueState((state) => continueReducer(state, { type: 'invoke' }))
+      const done = await ops.operationContinue()
       if (!done.ok) {
         setContinueState((state) => continueReducer(state, { type: 'fail', error: done.error }))
         setActionError(done.error)
@@ -172,11 +196,9 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
 
   const runAbort = (): void => {
     setPendingAbort(false)
-    if (busy !== null) return
-    setBusy('abort')
-    setActionError(null)
-    void ops.abortOperation().then((done) => {
-      setBusy(null)
+    runAction('abort', async () => {
+      setActionError(null)
+      const done = await ops.abortOperation()
       if (!done.ok) {
         setActionError(done.error)
         return
@@ -242,10 +264,10 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
                 type='button'
                 className='dsh-git-conflict__dd'
                 data-git-conflict-dd=''
-                disabled={busy !== null}
+                disabled={busy}
                 onClick={() => { runDdAccept(selected) }}
               >
-                {busy === 'resolve' ? t('conflict.resolving') : t('conflict.ddAccept')}
+                {busyKind === 'resolve' ? t('conflict.resolving') : t('conflict.ddAccept')}
               </button>
               {ddArmed === selected.path && (
                 <p className='dsh-git-conflict__dd-hint' data-git-conflict-dd-hint=''>
@@ -259,7 +281,7 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
                 type='button'
                 className='dsh-git-conflict__side'
                 data-git-conflict-ours=''
-                disabled={!selected.oursEnabled || busy !== null}
+                disabled={!selected.oursEnabled || busy}
                 onClick={() => { runResolve(selected, 'ours') }}
               >
                 {t('conflict.ours')}
@@ -268,7 +290,7 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
                 type='button'
                 className='dsh-git-conflict__side'
                 data-git-conflict-theirs=''
-                disabled={!selected.theirsEnabled || busy !== null}
+                disabled={!selected.theirsEnabled || busy}
                 onClick={() => { runResolve(selected, 'theirs') }}
               >
                 {t('conflict.theirs')}
@@ -279,7 +301,7 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
             type='button'
             className='dsh-git-conflict__mark'
             data-git-conflict-mark=''
-            disabled={busy !== null}
+            disabled={busy}
             onClick={() => { runMarkResolved(selected) }}
           >
             {t('conflict.markResolved')}
@@ -317,16 +339,16 @@ export function GitConflictPanel(props: GitConflictPanelProps): ReactNode {
           type='button'
           className='dsh-git-conflict__continue'
           data-git-conflict-continue=''
-          disabled={!continueEnabled(operation, rows.length) || busy !== null}
+          disabled={!continueEnabled(operation, rows.length) || busy}
           onClick={runContinue}
         >
-          {busy === 'continue' ? t('conflict.continueRunning') : t('conflict.continue')}
+          {busyKind === 'continue' ? t('conflict.continueRunning') : t('conflict.continue')}
         </button>
         <button
           type='button'
           className='dsh-git-conflict__abort'
           data-git-conflict-abort=''
-          disabled={!operationActionsEnabled(operation) || busy !== null}
+          disabled={!operationActionsEnabled(operation) || busy}
           onClick={() => { setPendingAbort(true) }}
         >
           {t('conflict.abort')}

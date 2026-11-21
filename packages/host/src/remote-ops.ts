@@ -65,6 +65,9 @@
  *   多个 ⇒ git/choose-remote { remotes }（任务口径 ③；spec §1.5-1 同场景落
  *   git/no-remote——details 同形，deviation 记 ModuleResult.openIssues）。
  *   分支 remote 为 '.'（upstream 指向本仓库内分支）对 fetch 无意义，跳过进链。
+ *   push 侧不做对称过滤（已知限制，2026-11-21 scratch repo 实测裁决——实测与现状
+ *   行为明细见 push() normal 路径内注释）：fetch 只读，跳过 '.' 进链无害；push 跳过
+ *   则把 '.'-跟踪分支推往配置从未指名的远端，意外网络扩权比 `git push .` 现状更差。
  *
  * push 的 remote/远端分支名：normal 路径取 branch.<name>.remote + branch.<name>.merge
  * （剥 refs/heads/ 前缀——权威面；upstream 短名首段拆分为回落，remote 名含 '/' 的
@@ -72,10 +75,13 @@
  * 的两侧都用本地分支名（此时无 upstream 可拆，spec §1.5-3）。
  */
 
-import { assertGitOk, classifyStderr, gitError, gitRunError, sanitizeStderr } from './error-codes.ts'
+import { assertGitOk, classifyStderr, gitError, sanitizeStderr } from './error-codes.ts'
 import type { GitStderrClass } from './error-codes.ts'
 import { revListCounts } from './rev-count.ts'
 import type { GitRunner } from './git-runner.ts'
+import { signalOf } from './git-runner.ts'
+import { configGetScalar } from './op-guards.ts'
+import { scanFresh } from './scan-fresh.ts'
 import type { GitRunResult } from './git-runner.ts'
 import type { StatusEngine } from './status.ts'
 import type { FetchResult, GitStatusSnapshot, PullResult, PushResult } from './types.ts'
@@ -118,8 +124,16 @@ export function rejectionReason(stderr: string): string {
 
 // ---------- 上游三态 ----------
 
-/** 上游三态（任务口径 ①）。 */
-export type UpstreamState = 'no-upstream' | 'gone' | 'normal'
+/**
+ * 上游三态判别联合（任务口径 ①）：`state` 为判别键。normal/gone 分支携带 porcelain
+ * `# branch.upstream` 原文（string，gone 态该行在而 `# branch.ab` 不在——本机
+ * git 2.55.0.windows.2 实测），no-upstream 分支 upstream=null——push/pull 的
+ * normal 路径经 state 窄化直接取 upstream: string，免 `as string` 断言。
+ */
+export type UpstreamState =
+  | { state: 'no-upstream'; upstream: null }
+  | { state: 'gone'; upstream: string }
+  | { state: 'normal'; upstream: string }
 
 /**
  * 由 porcelain v2 branch 头推导三态（依据见文件头注释；本机 git 2.55.0.windows.2
@@ -128,9 +142,9 @@ export type UpstreamState = 'no-upstream' | 'gone' | 'normal'
  * no-upstream，同样走 set-upstream 路径，行为收敛（老 git 的差异记 openIssues）。
  */
 export function upstreamStateOf(branch: GitStatusSnapshot['branch']): UpstreamState {
-  if (branch.upstream === null) return 'no-upstream'
-  if (branch.ahead === null || branch.behind === null) return 'gone'
-  return 'normal'
+  if (branch.upstream === null) return { state: 'no-upstream', upstream: null }
+  if (branch.ahead === null || branch.behind === null) return { state: 'gone', upstream: branch.upstream }
+  return { state: 'normal', upstream: branch.upstream }
 }
 
 /** remote-ops 引擎构造项。 */
@@ -186,8 +200,8 @@ export class RemoteOpsEngine {
     }
     const { repoRoot, snapshot } = await this.scanFresh('push', signal)
     const branch = this.requireBranch(snapshot)
-    const state = upstreamStateOf(snapshot.branch)
-    this.logger?.debug(`git push: upstream state=${state} upstream=${String(snapshot.branch.upstream)}`)
+    const up = upstreamStateOf(snapshot.branch)
+    this.logger?.debug(`git push: upstream state=${up.state} upstream=${String(up.upstream)}`)
 
     // 显式 remote（v2 批次一 [清单 57]）：非空字符串 = 直查存在性，不走缺省解析链。
     const explicitRemote = typeof options.remote === 'string' && options.remote !== '' ? options.remote : null
@@ -195,22 +209,24 @@ export class RemoteOpsEngine {
       await this.requireRemote(repoRoot, branch, explicitRemote, 'push', signal)
     }
 
-    if (state !== 'normal') {
+    if (up.state !== 'normal') {
       // 无上游 / gone → set-upstream 路径（任务口径 ①）；未确认 ⇒ no-upstream 引导
       // （首次推送目标属 Tier C 决策，不静默自动 set-upstream——spec §1.5-1）。
       if (options.setUpstream !== true) {
-        throw gitError('git/no-upstream', `git push: branch ${branch} has ${state === 'gone' ? 'a gone upstream (remote-tracking ref missing)' : 'no upstream'}`, {
+        throw gitError('git/no-upstream', `git push: branch ${branch} has ${up.state === 'gone' ? 'a gone upstream (remote-tracking ref missing)' : 'no upstream'}`, {
           branch,
           hint: 'set-upstream',
         })
       }
+      // branchRemote 不滤 '.'（已知限制，probe 明细见 normal 路径内注释）：remote='.'
+      // 且 no-upstream/gone 时此处取 '.'，`git push --set-upstream . …` 本地执行。
       const remote = explicitRemote
         ?? (await this.branchRemote(repoRoot, branch, signal))
         ?? (await this.resolveDefaultRemote(repoRoot, branch, 'push', signal))
       const refspec = `refs/heads/${branch}:refs/heads/${branch}`
       const result = await this.gitNetwork.run(
         ['push', ...(options.force === true ? ['--force'] : []), '--set-upstream', remote, refspec],
-        { cwd: repoRoot, op: 'push(set-upstream)', signal: active(signal) },
+        { cwd: repoRoot, op: 'push(set-upstream)', signal: signalOf(signal) },
       )
       if (result.exitCode !== 0) this.throwPushFailure(result, remote, branch, 'push(set-upstream)')
       return { remote, branch, upstream: `${remote}/${branch}`, setUpstreamUsed: true }
@@ -228,7 +244,18 @@ export class RemoteOpsEngine {
     // 路径下 `<remote>/<remoteBranch>` 按构造 ≡ upstream（行为不变）；显式远端无该分支的
     // tracking 引用（从未 fetch）⇒ revListCounts null ⇒ 不预检（非 ff 拒绝由运行期
     // stderr 分类落 git/push-rejected，与 v1 口径一致）。
-    const upstream = snapshot.branch.upstream as string
+    const upstream = up.upstream
+    // 已知限制（2026-11-21 scratch repo 实测，git 2.55.0.windows.2）：branch.<name>.remote
+    // = '.'（upstream 指向本仓库内分支）时 porcelain v2 照报 `# branch.upstream <本地分支名>`
+    // （无 remote 前缀）且 branch.ab 可在——normal 态可达，branchRemote 返回 '.'，push 侧
+    // 不做 fetch 同款 '.' 过滤：fetch 只读，跳过 '.' 进 origin/唯一 remote 解析链无害；push
+    // 若同样跳过，等于把 '.'-跟踪分支推往配置从未指名的网络远端（Tier C 意外扩权，比现状差）。
+    // 现状实测：`git push . refs/heads/<branch>:refs/heads/<dst>`（dst = branch.<name>.merge
+    // 剥 refs/heads/）本地执行——dst 为其他本地分支时移动该分支（git 非 ff 检查仍兜底）、
+    // dst 为自身时 "Everything up-to-date" 无操作；diverged 预检 `<remote>/<remoteBranch>`
+    //（'./x' 形态）rev-list exit 128 ⇒ revListCounts null ⇒ 预检静默跳过；PushResult.remote/
+    // upstream 原样 '.'/'./<dst>' 过线。set-upstream 路径（no-upstream/gone 且 remote='.'）
+    // 同不滤：实测 `--set-upstream .` 本地 no-op 并重写 branch.<name>.merge。
     const remote = explicitRemote ?? (await this.branchRemote(repoRoot, branch, signal)) ?? splitFirst(upstream, '/')
     const merge = await this.configGet(repoRoot, `branch.${branch}.merge`, signal)
     const remoteBranch = merge !== null && merge.startsWith('refs/heads/')
@@ -256,7 +283,7 @@ export class RemoteOpsEngine {
     const refspec = `refs/heads/${branch}:refs/heads/${remoteBranch}`
     const result = await this.gitNetwork.run(
       ['push', ...(options.force === true ? ['--force'] : []), remote, refspec],
-      { cwd: repoRoot, op: 'push', signal: active(signal) },
+      { cwd: repoRoot, op: 'push', signal: signalOf(signal) },
     )
     if (result.exitCode !== 0) this.throwPushFailure(result, remote, branch, 'push')
     return { remote, branch, upstream: `${remote}/${remoteBranch}`, setUpstreamUsed: false }
@@ -314,15 +341,15 @@ export class RemoteOpsEngine {
       })
     }
 
-    const state = upstreamStateOf(snapshot.branch)
-    if (state !== 'normal') {
+    const up = upstreamStateOf(snapshot.branch)
+    if (up.state !== 'normal') {
       // gone 的治愈路径是 fetch（重建跟踪引用）而非 pull——复用 no-upstream 引导。
-      throw gitError('git/no-upstream', `git pull: branch ${branch} has ${state === 'gone' ? 'a gone upstream (remote-tracking ref missing)' : 'no upstream'}`, {
+      throw gitError('git/no-upstream', `git pull: branch ${branch} has ${up.state === 'gone' ? 'a gone upstream (remote-tracking ref missing)' : 'no upstream'}`, {
         branch,
         hint: 'set-upstream',
       })
     }
-    const upstream = snapshot.branch.upstream as string
+    const upstream = up.upstream
 
     // diverged 预检（spec §1.6 同 §1.5-2；分叉 ⇒ git/pull-diverged）。
     const counts = await revListCounts(this.gitRead, repoRoot, upstream, 'HEAD', 'pull', signal)
@@ -346,12 +373,12 @@ export class RemoteOpsEngine {
     // 裸 --ff-only 会被 rebase 改写历史——spec §1.6 只做 ff 的安全细化）。
     const result = await this.gitNetwork.run(
       ['pull', '--ff-only', '--no-rebase'],
-      { cwd: repoRoot, op: 'pull', signal: active(signal) },
+      { cwd: repoRoot, op: 'pull', signal: signalOf(signal) },
     )
     if (result.exitCode !== 0) await this.throwPullFailure(result, repoRoot, branch, upstream, signal)
 
     const head = await this.gitRead.run(['rev-parse', '--verify', 'HEAD'], {
-      cwd: repoRoot, op: 'pull(rev-parse --verify HEAD)', signal: active(signal),
+      cwd: repoRoot, op: 'pull(rev-parse --verify HEAD)', signal: signalOf(signal),
     })
     assertGitOk(head, 'pull(rev-parse --verify HEAD)')
     return { fastForwarded: true, oldOid, newOid: head.stdout.trim(), remote }
@@ -411,7 +438,7 @@ export class RemoteOpsEngine {
 
     const result = await this.gitNetwork.run(
       ['fetch', '--prune', remote],
-      { cwd: repoRoot, op: 'fetch', signal: active(signal) },
+      { cwd: repoRoot, op: 'fetch', signal: signalOf(signal) },
     )
     if (result.exitCode !== 0) {
       const clean = sanitizeStderr(result.stderr)
@@ -457,7 +484,7 @@ export class RemoteOpsEngine {
     signal?: AbortSignal,
   ): Promise<void> {
     const listing = await this.gitRead.run(['remote'], {
-      cwd: repoRoot, op: `${op}(git remote)`, signal: active(signal),
+      cwd: repoRoot, op: `${op}(git remote)`, signal: signalOf(signal),
     })
     assertGitOk(listing, `${op}(git remote)`)
     const remotes = listing.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '')
@@ -477,7 +504,7 @@ export class RemoteOpsEngine {
     signal?: AbortSignal,
   ): Promise<string> {
     const listing = await this.gitRead.run(['remote'], {
-      cwd: repoRoot, op: `${op}(git remote)`, signal: active(signal),
+      cwd: repoRoot, op: `${op}(git remote)`, signal: signalOf(signal),
     })
     assertGitOk(listing, `${op}(git remote)`)
     const remotes = listing.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '')
@@ -489,28 +516,27 @@ export class RemoteOpsEngine {
     throw gitError('git/choose-remote', `git ${op}: multiple remotes and none is the default (${remotes.join(', ')})`, { remotes })
   }
 
-  /** 单键 `git config --get`（exit 0+非空 ⇒ 值；exit 1 / 空值 ⇒ null；其余 git-error）。 */
+  /**
+   * 单键 `git config --get`（exit 0+非空 ⇒ 值；exit 1 / 空值 ⇒ null；其余 git-error）
+   * ——共享实现在 op-guards.ts configGetScalar（四份同语义实现收口；本引擎无 logger，
+   * 不传 onFailure）。
+   */
   private async configGet(repoRoot: string, key: string, signal?: AbortSignal): Promise<string | null> {
-    const result = await this.gitRead.run(['config', '--get', key], {
-      cwd: repoRoot, op: `config --get ${key}`, signal: active(signal),
-    })
-    if (result.exitCode === 0) {
-      const value = result.stdout.trim()
-      return value === '' ? null : value
-    }
-    if (result.exitCode === 1) return null
-    throw gitRunError(`config --get ${key}`, result.exitCode, result.stderr, result.truncated)
+    return configGetScalar(
+      this.gitRead,
+      repoRoot,
+      ['config', '--get', key],
+      `config --get ${key}`,
+      signal,
+    )
   }
 
   /** fresh status 扫描（守卫世界读取 + repoRoot；三态 error 就地抛出）。 */
-  private async scanFresh(
+  private scanFresh(
     op: string,
     signal?: AbortSignal,
   ): Promise<{ repoRoot: string; snapshot: GitStatusSnapshot }> {
-    const state = await this.status.current(signal, { fresh: true })
-    if (state.error !== null) throw state.error
-    this.logger?.debug(`git ${op}: fresh status scan (repoRoot resolved)`)
-    return { repoRoot: state.snapshot.repoRoot, snapshot: state.snapshot }
+    return scanFresh(this.status, this.logger, op, signal)
   }
 }
 
@@ -532,8 +558,3 @@ function splitFirst(value: string, separator: string): string {
   return index === -1 ? value : value.slice(0, index)
 }
 
-function active(signal?: AbortSignal): AbortSignal {
-  if (signal !== undefined) return signal
-  const controller = new AbortController()
-  return controller.signal
-}

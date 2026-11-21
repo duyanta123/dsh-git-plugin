@@ -12,46 +12,18 @@ import type {
 import type { DiffFile, GitStatusSnapshot } from 'dsh-gitkit/types'
 import { createChangesTabStore } from '../src/client/store/changes-tab-store.ts'
 import { createGitChangesStore, diffCacheKey } from '../src/client/store/git-changes-store.ts'
+import type { GitChangesRpcFace } from '../src/client/store/git-changes-store.ts'
 import { createGitStatusSource } from '../src/client/store/git-status-source.ts'
 import type { GitRpcFace, GitStreamHandle, RemoteResult } from '../src/client/remote/mount.ts'
+import { FakeStream, mkSnapshot, statusFrame } from './support.ts'
 
-/** 内存流句柄（推帧驱动状态源；照 tests/git-status-source.spec 的假实现切片）。 */
-class FakeStream implements GitStreamHandle<GitStatusFrame, GitFollowCommand> {
-  readonly sent: GitFollowCommand[] = []
-  disposed = 0
-  private readonly queue: GitStatusFrame[] = []
-  private readonly waiters: Array<() => void> = []
-  private finished = false
-
-  push(frame: GitStatusFrame): void {
-    this.queue.push(frame)
-    for (const waiter of this.waiters.splice(0)) waiter()
-  }
-
-  send(item: GitFollowCommand): void { this.sent.push(item) }
-  end(): void { /* 半关上行——本套用例不消费 */ }
-  dispose(): void {
-    this.disposed += 1
-    this.finished = true
-    for (const waiter of this.waiters.splice(0)) waiter()
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<GitStatusFrame> {
-    return {
-      next: async (): Promise<IteratorResult<GitStatusFrame>> => {
-        for (;;) {
-          const frame = this.queue.shift()
-          if (frame !== undefined) return { done: false, value: frame }
-          if (this.finished) return { done: true, value: undefined }
-          await new Promise<void>((resolve) => { this.waiters.push(resolve) })
-        }
-      },
-    }
-  }
-}
-
-/** 可编程假 RPC（diff/写操作逐路径响应；调用记录供断言）。 */
-class FakeRpc implements GitRpcFace {
+/**
+ * 可编程假 RPC（结构化切片——graph-store.spec FakeGraphRpc 同款形态）：只实现变更
+ * store 实际消费的 GitChangesRpcFace（diff + 写操作）与状态源的 followStatus
+ * （+ status 断言守卫——数据面走流，status 被调即表明消费面漂移）；全量镜像守卫桩
+ * 已收敛删除（support.ts 收纳 FakeStream 与假快照工厂同批）。调用记录供断言。
+ */
+class FakeRpc implements GitChangesRpcFace, Pick<GitRpcFace, 'followStatus' | 'status'> {
   readonly streams: FakeStream[] = []
   readonly diffCalls: Array<{ scope: DiffScope; path: string | null }> = []
   /** discard 的 wire 入参（host 三重守卫形状：paths + acknowledged + baseRevision）。 */
@@ -109,233 +81,6 @@ class FakeRpc implements GitRpcFace {
     return this.takeMutation()
   }
 
-  // F7 提交图数据层模块扩展 GitRpcFace（log/refs/getCommitDetail）后的适配面：
-  // 变更面板 store 不消费这些端点——断言守卫同 status。
-  async log(): Promise<never> {
-    throw new Error('FakeRpc.log must not be called by the changes store')
-  }
-
-  async refs(): Promise<never> {
-    throw new Error('FakeRpc.refs must not be called by the changes store')
-  }
-
-  async getCommitDetail(): Promise<never> {
-    throw new Error('FakeRpc.getCommitDetail must not be called by the changes store')
-  }
-
-  // ④-K 提交对话框模块补齐 GitRpcFace 全量镜像（ping/identity/commit/push/pull/fetch/
-  // generateCommitMessage）后的适配面：变更面板 store 不消费这些端点——断言守卫同 status。
-  async ping(): Promise<never> {
-    throw new Error('FakeRpc.ping must not be called by the changes store')
-  }
-
-  async identity(): Promise<never> {
-    throw new Error('FakeRpc.identity must not be called by the changes store')
-  }
-
-  async commit(): Promise<never> {
-    throw new Error('FakeRpc.commit must not be called by the changes store')
-  }
-
-  async push(): Promise<never> {
-    throw new Error('FakeRpc.push must not be called by the changes store')
-  }
-
-  async pull(): Promise<never> {
-    throw new Error('FakeRpc.pull must not be called by the changes store')
-  }
-
-  async fetch(): Promise<never> {
-    throw new Error('FakeRpc.fetch must not be called by the changes store')
-  }
-
-  async generateCommitMessage(): Promise<never> {
-    throw new Error('FakeRpc.generateCommitMessage must not be called by the changes store')
-  }
-
-  // V2 批次一管理面扩展 GitRpcFace（9 admin 方法）后的适配面：
-  // 变更面板 store 不消费这些端点——断言守卫同 status。
-  async branchCreate(): Promise<never> {
-    throw new Error('FakeRpc.branchCreate must not be called by the changes store')
-  }
-
-  async branchSwitch(): Promise<never> {
-    throw new Error('FakeRpc.branchSwitch must not be called by the changes store')
-  }
-
-  async branchDelete(): Promise<never> {
-    throw new Error('FakeRpc.branchDelete must not be called by the changes store')
-  }
-
-  async tagCreate(): Promise<never> {
-    throw new Error('FakeRpc.tagCreate must not be called by the changes store')
-  }
-
-  async tagDelete(): Promise<never> {
-    throw new Error('FakeRpc.tagDelete must not be called by the changes store')
-  }
-
-  async remoteList(): Promise<never> {
-    throw new Error('FakeRpc.remoteList must not be called by the changes store')
-  }
-
-  async worktreeList(): Promise<never> {
-    throw new Error('FakeRpc.worktreeList must not be called by the changes store')
-  }
-
-  async worktreeAdd(): Promise<never> {
-    throw new Error('FakeRpc.worktreeAdd must not be called by the changes store')
-  }
-
-  async worktreeRemove(): Promise<never> {
-    throw new Error('FakeRpc.worktreeRemove must not be called by the changes store')
-  }
-
-  // V2 批次二历史面 6 方法（blame/compareBranches/cherryPick/revert/reset/
-  // abortOperation）——变更面板 store 不消费；断言守卫桩（FakeRpc.status 同款）。
-  async blame(): Promise<never> {
-    throw new Error('FakeRpc.blame must not be called by the changes store')
-  }
-
-  async compareBranches(): Promise<never> {
-    throw new Error('FakeRpc.compareBranches must not be called by the changes store')
-  }
-
-  async cherryPick(): Promise<never> {
-    throw new Error('FakeRpc.cherryPick must not be called by the changes store')
-  }
-
-  async revert(): Promise<never> {
-    throw new Error('FakeRpc.revert must not be called by the changes store')
-  }
-
-  async reset(): Promise<never> {
-    throw new Error('FakeRpc.reset must not be called by the changes store')
-  }
-
-  async abortOperation(): Promise<never> {
-    throw new Error('FakeRpc.abortOperation must not be called by the changes store')
-  }
-
-  // V2 批次三提交链路与护栏 7 方法（stagePatch/stashPush/stashList/stashPop/stashDrop/
-  // scanStaged/repoDiagnostics）——变更面板 store 不消费（stagePatch/stash 走
-  // changes-ops-face 的直通 rpc，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
-  async stagePatch(): Promise<never> {
-    throw new Error('FakeRpc.stagePatch must not be called by the changes store')
-  }
-
-  async stashPush(): Promise<never> {
-    throw new Error('FakeRpc.stashPush must not be called by the changes store')
-  }
-
-  async stashList(): Promise<never> {
-    throw new Error('FakeRpc.stashList must not be called by the changes store')
-  }
-
-  async stashPop(): Promise<never> {
-    throw new Error('FakeRpc.stashPop must not be called by the changes store')
-  }
-
-  async stashDrop(): Promise<never> {
-    throw new Error('FakeRpc.stashDrop must not be called by the changes store')
-  }
-
-  async scanStaged(): Promise<never> {
-    throw new Error('FakeRpc.scanStaged must not be called by the changes store')
-  }
-
-  async repoDiagnostics(): Promise<never> {
-    throw new Error('FakeRpc.repoDiagnostics must not be called by the changes store')
-  }
-
-  // V2 批次四体验集成 6 方法（initRepository/submoduleStatus/auditLog/
-  // generatePrDescription/createPr/prForBranch）——变更面板 store 不消费（init 走
-  // changes-ops-face、pr 走 pr-face，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
-  async initRepository(): Promise<never> {
-    throw new Error('FakeRpc.initRepository must not be called by the changes store')
-  }
-
-  async submoduleStatus(): Promise<never> {
-    throw new Error('FakeRpc.submoduleStatus must not be called by the changes store')
-  }
-
-  async auditLog(): Promise<never> {
-    throw new Error('FakeRpc.auditLog must not be called by the changes store')
-  }
-
-  async generatePrDescription(): Promise<never> {
-    throw new Error('FakeRpc.generatePrDescription must not be called by the changes store')
-  }
-
-  async createPr(): Promise<never> {
-    throw new Error('FakeRpc.createPr must not be called by the changes store')
-  }
-
-  async prForBranch(): Promise<never> {
-    throw new Error('FakeRpc.prForBranch must not be called by the changes store')
-  }
-
-  // V3 批次一冲突解决 4 方法（conflictList/conflictResolve/conflictMarkResolved/
-  // operationContinue）——变更面板 store 不消费（冲突面板走 changes-ops-face 直通，
-  // 不经本 store）；断言守卫桩（FakeRpc.status 同款）。
-  async conflictList(): Promise<never> {
-    throw new Error('FakeRpc.conflictList must not be called by the changes store')
-  }
-
-  async conflictResolve(): Promise<never> {
-    throw new Error('FakeRpc.conflictResolve must not be called by the changes store')
-  }
-
-  async conflictMarkResolved(): Promise<never> {
-    throw new Error('FakeRpc.conflictMarkResolved must not be called by the changes store')
-  }
-
-  async operationContinue(): Promise<never> {
-    throw new Error('FakeRpc.operationContinue must not be called by the changes store')
-  }
-
-  // V3 批次二 merge / rebase 2 方法（branchMerge/rebase）——变更面板 store 不消费
-  // （对话框走 admin-face 直通，不经本 store）；断言守卫桩（FakeRpc.status 同款）。
-  async branchMerge(): Promise<never> {
-    throw new Error('FakeRpc.branchMerge must not be called by the changes store')
-  }
-
-  async rebase(): Promise<never> {
-    throw new Error('FakeRpc.rebase must not be called by the changes store')
-  }
-
-  // V3 批次三 Agent 工具观测面（agentToolsStatus）——变更 store 不消费；断言守卫桩
-  // （FakeRpc.status 同款）。
-  async agentToolsStatus(): Promise<never> {
-    throw new Error('FakeRpc.agentToolsStatus must not be called by the changes store')
-  }
-
-  // V3 批次四检查点/归因面（checkpointList/checkpointDiff/checkpointRestore/
-  // attributionGet）——变更 store 不消费；断言守卫桩（GitRpcFace 方法对账的面补齐，
-  // v3-implementation-plan §6.3）。
-  async checkpointList(): Promise<never> {
-    throw new Error('FakeRpc.checkpointList must not be called by the changes store')
-  }
-
-  async checkpointDiff(): Promise<never> {
-    throw new Error('FakeRpc.checkpointDiff must not be called by the changes store')
-  }
-
-  async checkpointRestore(): Promise<never> {
-    throw new Error('FakeRpc.checkpointRestore must not be called by the changes store')
-  }
-
-  async attributionGet(): Promise<never> {
-    throw new Error('FakeRpc.attributionGet must not be called by the changes store')
-  }
-
-  // V3 批次五自动化观测面（automationStatus）——变更 store 不消费（header 菜单状态
-  // 行走 admin-face 直通）；断言守卫桩（GitRpcFace 方法对账的面补齐，
-  // v3-implementation-plan §7.3）。
-  async automationStatus(): Promise<never> {
-    throw new Error('FakeRpc.automationStatus must not be called by the changes store')
-  }
-
   private takeMutation<T>(): RemoteResult<T> {
     const plan = this.mutationPlan
     if (plan instanceof Error) throw plan
@@ -352,23 +97,6 @@ function mkFile(path: string, overrides: Partial<DiffFile> = {}): DiffFile {
   }
 }
 
-function mkSnapshot(overrides: Partial<GitStatusSnapshot> = {}): GitStatusSnapshot {
-  return {
-    repoRoot: 'D:/repo',
-    generatedAt: new Date().toISOString(),
-    branch: {
-      name: 'main', oid: 'a'.repeat(40), abbrevOid: 'aaaaaaa', upstream: null,
-      ahead: null, behind: null, detached: false, unborn: false,
-    },
-    staged: [], unstaged: [], untracked: [], conflicted: [], clean: true,
-    ...overrides,
-  }
-}
-
-function statusFrame(snapshot: GitStatusSnapshot) {
-  return { kind: 'status' as const, reason: 'change' as const, snapshot }
-}
-
 function change(path: string) {
   return { path, origPath: null, kind: 'modified' as const, x: 'M', y: 'M', conflicted: false, binary: false, additions: 1, deletions: 1, submodule: false }
 }
@@ -381,7 +109,7 @@ async function settled(): Promise<void> {
 /** 装配：真实状态源（推帧驱动 revision）+ 假 RPC。 */
 function setup() {
   const rpc = new FakeRpc()
-  const status = createGitStatusSource(rpc)
+  const status = createGitStatusSource(rpc as unknown as GitRpcFace)
   const store = createGitChangesStore(rpc, status)
   return { rpc, status, store }
 }
