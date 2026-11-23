@@ -49,6 +49,13 @@ import type {
  */
 export type GitRemoteContext = {
   remote: TypertClientRemote
+  /**
+   * Cordis 反射读（`ctx.get` 的服务查找面）——**无 inject 守卫**。本插件不 inject
+   * `remote.git`（声明即装载死锁，见文件头硬事实①），而属性读 `ctx.remote.git` 会被
+   * Service 的 traceable 代理按 `associate` 前缀改写成受守卫的 `ctx['remote.git']`，
+   * 故命名空间只能经本方法读取（dsh 自身 client-hmr 读自挂命名空间即同款写法）。
+   */
+  get(name: string): unknown
 }
 
 /** client 侧错误投影（spec §3.2：按 code 判别，不按 instanceof——map §2.4）。 */
@@ -226,9 +233,12 @@ export async function mountGitRemote(ctx: GitRemoteContext): Promise<() => Promi
 export function createGitRpcClient(ctx: GitRemoteContext, ready: Promise<void>): GitRpcFace {
   const namespace = async (): Promise<GitNamespaceFace> => {
     await ready
-    // 挂载完成后 `git` 命名空间已在 TypertRemoteNamespaceMap 合并面可用
-    // （生成产物的 declare module）。以结构面窄化，隔离协议类型别名差异。
-    const git = ctx.remote['git'] as GitNamespaceFace | undefined
+    // 读法：`ctx.get('remote.git')`（无 inject 守卫的反射读；dsh 自身 client-hmr 读自挂
+    // 命名空间同款）。**不能**写 `ctx.remote.git`——Service 的 traceable 代理带
+    // `associate = 'remote'`，该属性读会被改写成受守卫的 `ctx['remote.git']` 访问；本插件
+    // 刻意不 inject `remote.git`（声明即装载死锁，见文件头硬事实①），于是必抛
+    // `cannot get property "remote.git" without inject`（cordis reflect.ts 的 get 陷阱）。
+    const git = ctx.get('remote.git') as GitNamespaceFace | undefined
     if (git === undefined) {
       throw new Error('dsh-plugin-git: remote.git namespace is not mounted')
     }

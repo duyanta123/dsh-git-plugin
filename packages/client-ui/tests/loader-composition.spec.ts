@@ -30,6 +30,17 @@ import type { GitStatusSourceState } from '../src/client/store/git-status-source
 import type { GitStatusSnapshot } from 'dsh-gitkit/types'
 import { GATEWAY_UNAVAILABLE } from '../src/client/remote/mount.ts'
 
+import type { GitRemoteContext } from '../src/client/remote/mount.ts'
+
+/**
+ * 假 Context（生产读法）：命名空间经 `ctx.get('remote.git')` 领取——`ctx.remote.git`
+ * 在真宿主会被 Service 的 traceable 代理改写成受 inject 守卫的访问（见 mount.ts 注记）。
+ * 本文件的假体仍把命名空间平铺在 remote 上，只作取值的便捷源。
+ */
+function fakeGitContext(remote: TypertClientRemote & { git?: unknown }): GitRemoteContext {
+  return { remote, get: (name: string) => (name === 'remote.git' ? remote.git as unknown as Record<string, unknown> | undefined : undefined) }
+}
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const clientSrc = (rel: string): string => path.join(repoRoot, 'packages', 'client-ui', 'src', 'client', rel)
 
@@ -62,7 +73,7 @@ describe('M10 模块表三方对账（host REMOTE_METHODS ⇄ 生成描述符 �
     const ready = Promise.resolve()
     const git = Object.fromEntries(GIT_NAMESPACE_METHODS.map((name) => [name, async () => ({ ok: true, value: {} })]))
     const remote = { $mount: async () => async () => {}, git } as unknown as TypertClientRemote
-    const rpc = createGitRpcClient({ remote }, ready)
+    const rpc = createGitRpcClient(fakeGitContext(remote), ready)
     const produced = Object.keys(rpc)
       .filter((key) => typeof (rpc as unknown as Record<string, unknown>)[key] === 'function')
       .sort()
@@ -285,7 +296,7 @@ describe('Phase 2·client 前置 — RPC 装配对账（GIT_NAMESPACE_METHODS �
   it('循环：清单每键在产物上存在、调用穿透命名空间、返回 RemoteResult 而非 TypeError（followStatus 直返流句柄）；AbortSignal 逐一以同一实例透传为末位实参', async () => {
     const calls: RecordedNamespaceCall[] = []
     const remote = { $mount: async () => async () => {}, git: recordingNamespaceFace(calls) } as unknown as TypertClientRemote
-    const rpc = createGitRpcClient({ remote }, Promise.resolve())
+    const rpc = createGitRpcClient(fakeGitContext(remote), Promise.resolve())
     const signal = new AbortController().signal
     const argsTable = callArgs(signal)
     // 实参表先对账：覆盖清单全键、无多余行（与编译面 Record<字面量联合> 键穷举双保险）。
@@ -316,7 +327,7 @@ describe('Phase 2·client 前置 — RPC 装配对账（GIT_NAMESPACE_METHODS �
   it('AbortSignal 透传（代表性两方法，类型面直调）：status（signal-only 形）与 fetch（options+signal 形）的 signal 以同一实例抵达命名空间', async () => {
     const calls: RecordedNamespaceCall[] = []
     const remote = { $mount: async () => async () => {}, git: recordingNamespaceFace(calls) } as unknown as TypertClientRemote
-    const rpc = createGitRpcClient({ remote }, Promise.resolve())
+    const rpc = createGitRpcClient(fakeGitContext(remote), Promise.resolve())
     const controller = new AbortController()
     // 类型面直调（rpc: GitRpcFace）——签名声明即行为：signal 缺席/换实例在此即红。
     await rpc.status(controller.signal)
@@ -334,7 +345,7 @@ describe('Phase 2·client 前置 — RPC 装配对账（GIT_NAMESPACE_METHODS �
   it('载波失败折叠（现状锁定）：命名空间方法 reject ⇒ 产物 resolve 为 {ok:false, error.code=gateway/service-unavailable}（不 reject、不 TypeError）', async () => {
     const calls: RecordedNamespaceCall[] = []
     const remote = { $mount: async () => async () => {}, git: recordingNamespaceFace(calls, new Set(['status'])) } as unknown as TypertClientRemote
-    const rpc = createGitRpcClient({ remote }, Promise.resolve())
+    const rpc = createGitRpcClient(fakeGitContext(remote), Promise.resolve())
     const result = await rpc.status(new AbortController().signal)
     expect(result).toEqual({
       ok: false,
