@@ -10,7 +10,7 @@
  *      zh/en 同步」；键集权威 = zh 词典（map §3.5）。
  *   2. **占位符相等**：每键值的 `{name}` 插位集合 zh/en 一致（插值参数拼写漂移会让
  *      运行期插值丢参数）。
- *   3. **JSX 无裸字符串**（规则化 grep，非完整解析器）：扫描 packages/client-ui/src
+ *   3. **JSX 无裸字符串**（规则化 grep，非完整解析器）：扫描 packages/host/src/client
  *      下 `.tsx` 的 JSX 文本子与用户可见属性字面量——文本节点里含字母且不是 `{expr}`
  *      的裸文案、`title=`/`placeholder=`/`aria-label=`/`alt=` 的字符串字面量都算违规
  *      （className、data-前缀、aria-枚举属性（haspopup 等）是结构锚不是用户文案；
@@ -28,8 +28,8 @@ import { createRequire } from 'node:module'
 
 const here = (() => fileURLToPath(new URL('.', import.meta.url)))()
 const repo = resolveRepo(here)
-const LOCALES_TS = join(repo, 'packages', 'client-ui', 'src', 'client', 'locales.ts')
-const TSX_ROOT = join(repo, 'packages', 'client-ui', 'src')
+const LOCALES_TS = join(repo, 'packages', 'host', 'src', 'client', 'locales.ts')
+const TSX_ROOT = join(repo, 'packages', 'host', 'src', 'client')
 
 const require = createRequire(import.meta.url)
 const ts = require('typescript')

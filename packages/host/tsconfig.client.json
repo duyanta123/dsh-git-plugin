@@ -1,0 +1,13 @@
+{
+  // Web client 编译面（单包合并：client 半与 host 同包，目录 = src/client、tests/client）。
+  // 参照 dsh D:\DeepSeekHarness\tsconfig.base.client.json —— React JSX + 浏览器 lib。
+  // 对 `dsh-gitkit/remote`、`dsh-gitkit/types` 的引用按同包 self-reference 解析到
+  // 本包 exports（lib/ 下的生成物与声明，故 typecheck 必须先跑 build:host）。
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2024", "DOM", "DOM.Iterable", "ESNext.Disposable"]
+  },
+  "include": ["src/client", "tests/client"]
+}

@@ -4,12 +4,12 @@
  *
  * 依据 research/notes/real-host-install-startup-test.md（任务口径的
  * host-debug-runbook.md 不存在 —— map ⑧.1，本脚本按其正对本 runbook 的第⑤节施工）：
- *   ① 隔离 DSH_HOME（mktemp），`dsh plugin --profile <dbg> add file:<包>` 安装两个包
- *      （通道 A 生产形态，file: 零下载）；
+ *   ① 隔离 DSH_HOME（mktemp），`dsh plugin --profile <dbg> add file:<packages/host>` 安装单包
+ *      dsh-gitkit（host + client 同包；通道 A 生产形态，file: 零下载）；
  *   ② 启动真实 web 宿主 `node --import tsx/esm apps/cli/src/bin.ts web --no-open --port 0`
  *      （runbook §2.1 实测命令；--port 0 = 随机，runbook §2.2）；
  *   ③ 断言：
- *      A. 两个包安装 exit 0 且 profile package.json 记入 dependencies；
+ *      A. 安装 exit 0 且 profile package.json 记入 dependencies（且无已退役的 dsh-gitkit-ui）；
  *      B. boot 日志打印 `dsh web: http://…/?token=…`，且无 "did not activate" / "failed to import"；
  *      C. client 半进入 `window.__DSH_BOOT__` 花名册（entry id = 包名，
  *         packages/client/modules/src/client/manifest.ts:52-54），其 url 服务出的 bundle
@@ -331,8 +331,10 @@ function phasePrecheck(ctx) {
   const hostTypert = join(hostPkgDir, 'lib', 'typert.host.js')
   const hostRemoteClient = join(hostPkgDir, 'lib', 'typert.remote-client.js')
   const hostPatch = join(REPO, 'packages', 'host', 'cordis.patch.yml')
-  const clientPkg = join(REPO, 'packages', 'client-ui')
+  // 单包合并：client 半与 host 同包（packages/host），client bundle = packages/host/lib/client.js。
+  const clientPkg = hostPkgDir
   const clientLib = join(clientPkg, 'lib', 'client.js')
+  assert(existsSync(clientLib), `client bundle missing: ${clientLib} — run \`pnpm build\` first`)
   if (target.kind === 'dev-tree') {
     // binTs 断言仅 dev-tree 列执行（npm 发布包只有 lib/*.js，无 src —— P3 根因①）。
     const binTs = join(target.cliCwd, 'apps', 'cli', 'src', 'bin.ts')
@@ -343,7 +345,6 @@ function phasePrecheck(ctx) {
   assert(existsSync(hostRemoteClient), `generated remote-client artifact missing: ${hostRemoteClient} — run \`pnpm build\` first`)
   assert(readFileSync(hostPatch, 'utf8').includes("name: 'dsh-gitkit'"), 'host cordis.patch.yml mismatch')
   ctx.hostPkgDir = hostPkgDir
-  ctx.clientPkg = clientPkg
   step(`dsh target: ${target.label}; repo: ${REPO}`)
 }
 
@@ -409,7 +410,6 @@ async function main() {
     token: null,
     apiCookie: null,
     hostPkgDir: null,
-    clientPkg: null,
     fixtureRepo: null,
     fixtureBare: null,
     fixtureWt: null,
@@ -503,21 +503,23 @@ async function main() {
 
 /** 阶段①（§1 通道 A 安装 + §1.5 profile 层补丁；runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）。 */
 async function phaseInstall(ctx) {
-  const { env, profileDir, fixtureRepo, hostPkgDir, clientPkg } = ctx
+  const { env, profileDir, fixtureRepo, hostPkgDir } = ctx
   // ── 1. 通道 A 安装（runbook §3.A：file: 安装零下载，reconcile 自动挂 bundles）──
-    for (const [label, dir] of [['host dsh-gitkit', hostPkgDir], ['client dsh-gitkit-ui', clientPkg]]) {
-      step(`installing ${label}: dsh plugin --profile ${PROFILE} add file:${dir.replaceAll('\\', '/')}`)
-      const spec = `file:${dir.replaceAll('\\', '/')}`
-      const install = await run(target.cli, [...target.cliArgs, 'plugin', '--profile', PROFILE, 'add', spec], {
-        cwd: target.cliCwd, env, timeoutMs: INSTALL_TIMEOUT_MS,
-      })
-      assert(install.code === 0, `install failed for ${label} (exit ${install.code}):\n${install.out.slice(-2000)}`)
-      step(`installed ${label} (exit 0)`)
-    }
+    // 单包合并：一次 file: 安装 dsh-gitkit 即带入 host + client 两面（原「host + client-ui
+    // 两次安装」与 git-bundle 薄包形态退役）。
+    const label = 'dsh-gitkit（host + client 同包）'
+    const dir = hostPkgDir
+    step(`installing ${label}: dsh plugin --profile ${PROFILE} add file:${dir.replaceAll('\\', '/')}`)
+    const spec = `file:${dir.replaceAll('\\', '/')}`
+    const install = await run(target.cli, [...target.cliArgs, 'plugin', '--profile', PROFILE, 'add', spec], {
+      cwd: target.cliCwd, env, timeoutMs: INSTALL_TIMEOUT_MS,
+    })
+    assert(install.code === 0, `install failed for ${label} (exit ${install.code}):\n${install.out.slice(-2000)}`)
+    step(`installed ${label} (exit 0)`)
     const profilePackageJson = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
     const deps = profilePackageJson.dependencies ?? {}
     assert(deps['dsh-gitkit'] !== undefined, `profile dependencies missing dsh-gitkit: ${JSON.stringify(deps)}`)
-    assert(deps['dsh-gitkit-ui'] !== undefined, `profile dependencies missing dsh-gitkit-ui: ${JSON.stringify(deps)}`)
+    assert(deps['dsh-gitkit-ui'] === undefined, `profile dependencies still carry the retired dsh-gitkit-ui: ${JSON.stringify(deps)}`)
     // dsh plugin add 的 init 只给 DEFAULT_PROFILE_BUNDLES = [dsh-base]
     // （packages/util/official-bundles/src/bundles.ts:43-44 实读）；web 宿主需要 shipped
     // web 模板的 [dsh-base, dsh-web-app]（bundles.ts:18-21）。profile manifest 是用户层文件
@@ -621,11 +623,17 @@ async function phaseBundle(ctx) {
     const indexHtml = await indexResponse.text()
     const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__')
     const entries = boot.entries ?? []
-    const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit-ui')
+    const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit')
     assert(clientEntry !== undefined,
-      `boot graph has no entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
-    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('dsh-gitkit'),
-      `client entry inject edges missing 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
+      `boot graph has no entry 'dsh-gitkit'（单包合并后 client 条目 id = 包名）; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
+    assert(entries.every((entry) => entry.id !== 'dsh-gitkit-ui'),
+      `boot graph still carries the retired entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
+    // inject = 本行 factory 到达前须先到达的包行（manifest.ts WebBootEntry.inject）；同包后
+    // 自身不得出现在 inject 里（自依赖边）。
+    assert(Array.isArray(clientEntry.inject) && !clientEntry.inject.includes('dsh-gitkit'),
+      `client entry inject must not self-reference 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
+    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('@deepseek-ai/dsh-client-ui-slots'),
+      `client entry inject edges missing '@deepseek-ai/dsh-client-ui-slots': ${JSON.stringify(clientEntry.inject)}`)
     // v2 批次四（[清单 51] 命令面板/快捷键 spike 落地）：client 半 inject 增两个服务边。
     assert(clientEntry.inject.includes('@deepseek-ai/dsh-client-shortcuts')
       && clientEntry.inject.includes('@deepseek-ai/dsh-client-ui-commands'),

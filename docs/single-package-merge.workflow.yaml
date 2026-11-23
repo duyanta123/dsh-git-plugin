@@ -1,0 +1,164 @@
+# dsh-gitkit 单包合并工作流（host + client → 一个 npm 包 `dsh-gitkit`）
+#
+# 来源：2026-11-23 采纳的「单包合并实施计划」。本文件是执行口径的单源：
+# 步骤依赖、每步的验证闸门、必须单独授权的外部动作。
+#
+# 执行器：逐 步由 coding agent 顺序执行（本机未安装 claude-flow，不引入额外编排器）。
+# 纪律：
+#   - 任一 gate 失败即停在该步修复，不得跳步，不得把 skip 记为 pass；
+#   - external_actions 之外的步骤都只改本仓库工作树；push / tag / publish / deprecate 一律不做；
+#   - packages/typert-protocol 是 vendored 输入（含 lib/），任何清理步骤都不得触碰。
+#
+# 状态标记：[ ] 未开始 · [~] 进行中 · [x] 完成 · [!] 阻塞（在 progress 段登记）
+
+name: dsh-gitkit-single-package-merge
+version: 1
+goal: >
+  packages/host 保留目录与 npm 名 dsh-gitkit；packages/client-ui 的 client 半并入同包
+  （exports["./client"] + dsh.client），删除 packages/client-ui 与 git-bundle；
+  wire namespace `git`、RPC 方法、host id `dsh-plugin-git`、用户配置均不变。
+
+constants:
+  package_name: dsh-gitkit
+  package_dir: packages/host
+  client_bundle_id: dsh-gitkit          # 原 dsh-gitkit-ui；entry id 必须等于包名
+  host_entry_id: dsh-plugin-git
+  target_version_line: 0.4.0            # 破坏性安装变更；先 rc 后 stable
+
+steps:
+  - id: baseline
+    agent: orchestrator
+    status: done
+    task: >
+      复核 git status；把既有 3 个暂存修复（remote.git 经 ctx.get 读取）单独提交；
+      从该基线建本地分支 refactor/single-package。
+    gate:
+      - git status 干净，分支为 refactor/single-package，修复提交可独立回溯
+
+  - id: migrate-sources
+    agent: coder
+    depends: [baseline]
+    status: done
+    task: >
+      git mv packages/client-ui/src/client → packages/host/src/client；
+      packages/client-ui/tests → packages/host/tests/client；
+      测试导入 ../src/client → ../../src/client；修正 loader-composition / css-token-guard
+      的 repoRoot 层级；删除 client 空 Node 入口与 git-bundle/。
+    gate:
+      - 业务源码除路径/文件头注释/import 外无语义 diff
+      - 三处既有修复内容仍在移动后的文件里
+
+  - id: merge-manifest
+    agent: coder
+    depends: [migrate-sources]
+    status: done
+    task: >
+      host package.json：增 ./client 导出与 dsh.client（inject 去掉自身 dsh-gitkit）、
+      并入 client devDependencies、files 覆盖 client.js / lib/client/**/*.d.ts / remote map / README；
+      host tsconfig 排除 client，新增 tsconfig.client.json 与 tsconfig.build.client.json；
+      根 package.json 脚本；scripts/build-client.mjs 改路径、PACKAGE_ID、单包 fail-closed 检查；
+      pnpm install 重建 lockfile。
+    gate:
+      - typert 描述符 package 仍为 dsh-gitkit；Node tsc 不扫 client；client tsc 具备 JSX/DOM
+      - pnpm install --frozen-lockfile 通过，lockfile 无 client-ui importer 与 workspace:* 自依赖
+
+  - id: contracts-compliance
+    agent: tester
+    depends: [merge-manifest]
+    status: done
+    task: >
+      tests/skeleton.spec.ts 与 tests/licenses.spec.ts 改为单包合同；
+      NOTICE.md / PORTING.md 目标路径随迁移更新并同步包内副本；
+      check-locale.mjs、scripts/hooks/post-typecheck.mjs 路径修正。
+    gate:
+      - 合规测试能解析每个登记目标文件；来源/tier/文件头零丢失
+
+  - id: gates-release-scripts
+    agent: coder
+    depends: [merge-manifest]
+    status: done
+    task: >
+      verify-load.mjs / verify-install.mjs（dev-tree 严格列与 npm/bin 降级列、working-copy 与
+      clean-clone 两相）改单包安装与断言；verify-release-tarball.mjs 单包 + CSS 路径锚点；
+      release.yml 单 manifest 校验、只发 dsh-gitkit、按预发布后缀选 dist-tag。
+    gate:
+      - 脚本与 workflow 中不再残留 dsh-gitkit-ui / dsh-gitkit-bundle / dsh-plugin-client-ui-git 的现行假设
+
+  - id: docs-migration
+    agent: writer
+    depends: [merge-manifest]
+    status: done
+    task: >
+      根 README / AGENTS.md / CLAUDE.md / capability-spec 当前决议 / 根 description；
+      新增 packages/host/README.md（安装、双包升级、git-bundle 升级、共存警告、回滚）。
+    gate:
+      - 现行安装指令只有单包一种；历史计划文档保留历史包名但不作为现行指令
+
+  - id: acceptance
+    agent: tester
+    depends: [contracts-compliance, gates-release-scripts, docs-migration]
+    status: in_progress
+    task: >
+      pnpm install --frozen-lockfile → pnpm run typecheck → pnpm test → pnpm run check:locale →
+      pnpm run build → npm pack 内容检查 → pnpm run verify:load →
+      结构提交后 pnpm run verify:install（两相）→ npm dsh 列 verify-install。
+    gate:
+      - 全部命令退出码 0；pack 内容与单包合同一致；重新清点并记录 spec/用例数
+      - verify:install 的 SKIPPED-ALLOWED 不算通过
+
+  - id: commit
+    agent: orchestrator
+    depends: [acceptance]
+    status: todo
+    task: >
+      在 refactor/single-package 上提交 refactor!: merge client into dsh-gitkit；
+      版本号升 0.4.0-rc.0 走独立 chore(release) 提交（root 与 host 同值，description/README 锚同步）。
+    gate:
+      - 仅本地提交，不 push；提交后 verify:install clean-clone 相通过
+
+  - id: release
+    agent: orchestrator
+    depends: [commit]
+    status: blocked
+    task: >
+      见 external_actions。未获逐项授权前停在上一步的交付物（可发布提交 + pack 产物）。
+    gate:
+      - 每个外部动作执行前有用户明确授权；发布后侦探通过
+
+gates:
+  - id: G1-structure
+    after: migrate-sources
+    checks: [git status 可识别 rename, 无语义 diff]
+  - id: G2-build
+    after: merge-manifest
+    checks: [typecheck, build, frozen-lockfile]
+  - id: G3-contracts
+    after: contracts-compliance
+    checks: [pnpm test, check:locale]
+  - id: G4-real-host
+    after: acceptance
+    checks: [verify:load, verify:install × {working-copy, clean-clone} × {dev-tree, npm}]
+  - id: G5-pack
+    after: acceptance
+    checks: [npm pack --ignore-scripts 解包清单 = 单包合同]
+
+external_actions:   # 每一项都需要用户单独授权；默认不执行
+  - push 分支与 tag
+  - npm publish dsh-gitkit@<rc>（dist-tag next）
+  - npm publish dsh-gitkit@<stable>（dist-tag latest）
+  - npm dist-tag / npm deprecate dsh-gitkit-ui@*（稳定版验证后）
+
+rollback:
+  rc_stage_failure: latest 不动，修复后发下一个 rc；同版本不得重发
+  stable_stage_failure: 发 0.4.1；必要时把 dsh-gitkit 的 latest 指回 0.3.0
+  installed_profile: 退出 dsh → remove dsh-gitkit → 精确装 dsh-gitkit@0.3.0 + dsh-gitkit-ui@0.3.0 → 重启验证
+  local_file_users: 回到 v0.3.0 checkout 使用旧 git-bundle
+  data: host id 与 RPC schema 不变，dsh-plugin-git 配置可保留；不触碰用户 Git 仓库
+
+progress:
+  - { step: baseline, at: "2026-11-23", note: "fix 提交 60111eb 单独落在 refactor/single-package；工作流文件落盘" }
+  - { step: migrate-sources, at: "2026-11-23", note: "118 renamed / 14 deleted；96 处测试导入与 77 个文件头改写；三处 repoRoot 层级修正" }
+  - { step: merge-manifest, at: "2026-11-23", note: "typecheck exit 0；typert 七产物哈希与合并前逐字节一致（faces:['host']）；pnpm test 68/71（3 个为待重写的旧合同文件）" }
+  - { step: contracts-compliance, at: "2026-11-23", note: "skeleton / licenses 重写为单包合同；NOTICE/PORTING 目标路径随迁；三件套两份同文；check:locale exit 0" }
+  - { step: gates-release-scripts, at: "2026-11-23", note: "verify-load / verify-install / verify-release-tarball / release.yml / ci.yml 改单包；node --check 全过；真机实跑归 acceptance" }
+  - { step: docs-migration, at: "2026-11-23", note: "README / AGENTS.md / CLAUDE.md / capability-spec v2.1 修订记录 / packages/host/README.md" }

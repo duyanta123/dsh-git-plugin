@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * PostToolUse hook：编辑 host / client-ui 源码后，对该包跑窄口径 tsc --noEmit（约 5s），
- * 替代全量 `pnpm run typecheck`（4 次 tsc）作为编辑后的秒级类型反馈环。
+ * PostToolUse hook：编辑 host / client 源码后，对对应编译面跑窄口径 tsc --noEmit（约 5s），
+ * 替代全量 `pnpm run typecheck`（build:host + 3 次 tsc）作为编辑后的秒级类型反馈环。
  *
  * 协议（Claude Code hook）：stdin 收 { tool_name, tool_input: { file_path, ... } }；
  * 退出码 0 = 放行；2 = 把 stderr 作为反馈回传给模型。
  *
  * 设计约束：
  * - 本脚本绝不修改任何文件；
- * - 非目标路径（非 .ts/.tsx、不在两包 src/ 下）静默放行；
+ * - 非目标路径（非 .ts/.tsx、不在 packages/host/src/ 下）静默放行；
  * - 一切基础设施异常（stdin 非 JSON、tsc 缺失、tsc 超时）都 fail-open（exit 0），
  *   只有真实的 tsc 类型错误才 exit 2。
  */
@@ -20,9 +20,11 @@ import path from 'node:path'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const TSC = path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc')
 
+// 单包合并后两个编译面同在 packages/host：client 前缀必须排在 host 之前——
+// 匹配用 includes，client 路径同时命中两条前缀，先命中者胜。
 const TARGETS = [
+  { prefix: 'packages/host/src/client/', tsconfig: 'packages/host/tsconfig.client.json', label: 'client' },
   { prefix: 'packages/host/src/', tsconfig: 'packages/host/tsconfig.json', label: 'host' },
-  { prefix: 'packages/client-ui/src/', tsconfig: 'packages/client-ui/tsconfig.json', label: 'client-ui' },
 ]
 const MAX_OUTPUT = 8000
 const TSC_TIMEOUT_MS = 120_000

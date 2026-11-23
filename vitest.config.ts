@@ -45,10 +45,11 @@ export default defineConfig({
   plugins: [standardDecoratorPlugin()],
   test: {
     environment: 'node',
-    // 测试平面：包内 tests/（host 七个 spec、client 六个 spec，施工期落地）
-    // + 仓库级 tests/（loader-smoke 与骨架完整性测试）。dsh 树的 vitest 走
-    // vite-tsconfig-paths 源平面解析（runbook §4.1）；本仓库包间引用经
-    // workspace link 解析，无需 paths 插件。
+    // 测试平面：包内 tests/（packages/host/tests = host spec + tests/client/ 的 client spec；
+    // 单包合并后两半同在 packages/host）+ 仓库级 tests/（合规守卫与骨架完整性测试）。
+    // dsh 树的 vitest 走 vite-tsconfig-paths 源平面解析（runbook §4.1）；本仓库
+    // client 半对 `dsh-gitkit/remote` / `dsh-gitkit/types` 的引用是同包 self-reference，
+    // 经本包 exports 解析到 lib/ 产物，无需 paths 插件。
     include: ['packages/*/tests/**/*.spec.ts', 'tests/**/*.spec.ts'],
     // 并行上限：本仓用例大量真实 git 子进程与真实 fs/timer（watcher/diff/status），
     // vitest 4 默认 min(12, cpus-1)=12 worker 在本机（16 核 Windows）把 CPU 打满，

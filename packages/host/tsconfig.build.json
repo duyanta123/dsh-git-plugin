@@ -15,5 +15,8 @@
     // tsconfig 继承是整值替换，空对象即清空映射）。
     "paths": {}
   },
-  "include": ["src"]
+  // 单包合并：src/client 是 Web 编译面（tsconfig.client.json），其声明由
+  // tsconfig.build.client.json 产到 lib/client/；Node 声明构建显式排除它。
+  "include": ["src"],
+  "exclude": ["src/client"]
 }

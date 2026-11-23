@@ -1,13 +1,15 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-发布版本 **v0.3.0**（含 v0.2.0 全部内容——tag `v0.2.0` 已发布并实核；v0.3.0 = V3 五批功能面，四 manifest 已随批次五收口升版，**tag/npm 尚未发布**——发布动作属发布批，门禁实跑口径见 §6），由三部分组成（pnpm workspace）：
+代码版本 **v0.3.0**（含 v0.2.0 全部内容——tag `v0.2.0` 已发布并实核；v0.3.0 = V3 五批功能面，**tag/npm 尚未发布**——发布动作属发布批，门禁实跑口径见 §6）。
+**单包合并（2026-11-23）**：host 与 web 两半并入**同一个 npm 包 `dsh-gitkit`**，原 `dsh-gitkit-ui` 与安装薄包 `dsh-gitkit-bundle` 退役。
+npm 上已发布的 0.3.0 及更早版本仍是双包形态（`dsh-gitkit` + `dsh-gitkit-ui`）——单包版自 **0.4.0** 起发布，旧 `dsh-gitkit-ui` 届时被 deprecate 并指向 `dsh-gitkit`（见 §2）。
+仓库由一个发布包 + 一个 vendored 类型面包组成（pnpm workspace）：
 
 | 落点 | npm 名 | 半 | 内容（接口权威 = `docs/capability-spec.md`） |
 |---|---|---|---|
-| `packages/host` | `dsh-gitkit` | node（宿主插件） | TypertRemoteService `git` 命名空间：44 个 `@Remote` 方法（v1 十六：`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`；V2 四批二十八——批次一九：`branchCreate`/`branchSwitch`/`branchDelete`/`tagCreate`/`tagDelete`/`remoteList`/`worktreeList`/`worktreeAdd`/`worktreeRemove`、批次二六：`blame`/`compareBranches`/`cherryPick`/`revert`/`reset`/`abortOperation`、批次三七：`stagePatch`/`stashPush`/`stashList`/`stashPop`/`stashDrop`/`scanStaged`/`repoDiagnostics`、批次四六：`initRepository`/`submoduleStatus`/`auditLog`/`generatePrDescription`/`createPr`/`prForBranch`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系 37 码（spec §①②） |
-| `packages/client-ui` | `dsh-gitkit-ui` | web（client bundle） | header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
-| `git-bundle` | `dsh-gitkit-bundle` | 发布薄包（零代码） | 单一 `file:` 安装入口：一次 `dsh plugin add` 同时挂上 host/client 两包与其 bundle 补丁层 |
+| `packages/host` | `dsh-gitkit` | node（宿主插件）+ web（client bundle）——单包双面 | **node 半**：TypertRemoteService `git` 命名空间：44 个 `@Remote` 方法（v1 十六：`status`/`followStatus`/`diff`/`stage`/`unstage`/`discard`/`commit`/`push`/`pull`/`fetch`/`generateCommitMessage`/`log`/`refs`/`getCommitDetail` + `ping`/`identity`；V2 四批二十八——批次一九：`branchCreate`/`branchSwitch`/`branchDelete`/`tagCreate`/`tagDelete`/`remoteList`/`worktreeList`/`worktreeAdd`/`worktreeRemove`、批次二六：`blame`/`compareBranches`/`cherryPick`/`revert`/`reset`/`abortOperation`、批次三七：`stagePatch`/`stashPush`/`stashList`/`stashPop`/`stashDrop`/`scanStaged`/`repoDiagnostics`、批次四六：`initRepository`/`submoduleStatus`/`auditLog`/`generatePrDescription`/`createPr`/`prForBranch`），GitRunner 执行底座（四实例两套安全前缀）+ StatusEngine 刷新（fs watch / 兜底轮询 / 写后失效）+ 域码错误体系 37 码（spec §①②）。**web 半**（`packages/host/src/client`，经 `exports["./client"]` + `dsh.client` 交付）：header 入口 + 变更审查 tab（暂存/撤销/提交对话框 + FileDiff 视图）+ 提交图 tab（自研 lane 布局纯函数 + SVG + 虚拟滚动 + 分页），HostReadStore 轮询缓存，zh/en locale（spec §③④） |
+| `packages/typert-protocol` | `@deepseek-ai/dsh-typert-protocol` | （不发布） | dsh MIT 包的未改动 vendored 副本，仅构建期/类型面使用 |
 
 v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认边界：看清 + 提交 + 推送 + 图）；
 **多仓库口径：v1 单 session 单仓库**（spec §0.2-3）；dsh 插件事件广播不可用，v1 传输 = 轮询 + 写后失效（spec §②）。
@@ -126,20 +128,23 @@ v1 范围 = `docs/feature-checklist.md:105` 分期表约 35 项（用户确认�
 
 ```bash
 # 仓库根目录执行；<repo> = 本仓库 dsh-git-plugin/ 的绝对路径
-dsh plugin --profile <你的profile> add file:<repo>/git-bundle
+dsh plugin --profile <你的profile> add file:<repo>/packages/host
 ```
 
-一条命令完成安装：`dsh-gitkit-bundle` 经 `file:` 依赖把 `dsh-gitkit` 与
-`dsh-gitkit-ui` 带进 profile（宿主 profile 用 `nodeLinker: hoisted` 平铺安装），
-reconcile 自动把两层服务补丁追加进 `dsh.profile.bundles`。重启 dsh（或 patchReload）即生效，
+一条命令完成安装：`dsh-gitkit` 自带 `dsh.bundle`，reconcile 自动把服务补丁追加进 `dsh.profile.bundles`；
+web 半随同一个包进入 profile（宿主 profile 用 `nodeLinker: hoisted` 平铺安装）。重启 dsh（或 patchReload）即生效，
 无需重建 web 前端。
 
-> **⚠️ file: 安装会把源目录绝对路径钉进 profile**：`file:<绝对路径>/git-bundle` 会被**原样**写进 profile 的
+> **从旧双包形态迁移**（profile 里装过 `dsh-gitkit-bundle` 与 `dsh-gitkit-ui`，即 0.3.0 及更早）：
+> 先卸载旧入口再装新包——`dsh plugin --profile <你的profile> remove dsh-gitkit-bundle`，然后执行上面的安装命令，
+> 并用下方自检确认只剩一行 `dsh-plugin-git`、不再有 `dsh-plugin-client-ui-git`。
+
+> **⚠️ file: 安装会把源目录绝对路径钉进 profile**：`file:<绝对路径>/packages/host` 会被**原样**写进 profile 的
 > `package.json` 与 `pnpm-lock.yaml`（dsh 只对 `./`、`../` 开头的相对 spec 做锚定），而 pnpm 在该 profile 内的
 > 任何包操作（add/remove/install）都会整份重新解析这些依赖——**源目录一旦移动/重命名/删除，整个 profile 的
 > 包操作都会失败（含卸载本插件本身）**。出路：① 移动/删除源目录前先
-> `dsh plugin --profile <你的profile> remove dsh-gitkit-bundle`；② 目录已丢失的手动救援——编辑 profile 的
-> `package.json` 删掉 `dsh-gitkit-bundle` 条目、删除 profile 的 `pnpm-lock.yaml`、在 profile 目录内
+> `dsh plugin --profile <你的profile> remove dsh-gitkit`；② 目录已丢失的手动救援——编辑 profile 的
+> `package.json` 删掉 `dsh-gitkit` 条目、删除 profile 的 `pnpm-lock.yaml`、在 profile 目录内
 > `pnpm install`（或直接重开一个干净 profile）；③ 不想被绑定到源目录的用户走下方 npm 形态
 > （registry 依赖只钉版本号、不钉路径）。
 
@@ -147,42 +152,46 @@ reconcile 自动把两层服务补丁追加进 `dsh.profile.bundles`。重启 ds
 
 ```bash
 dsh --profile <你的profile> --dump-config | tail -5
-# 期待看到两行——判据是全文出现以下两行，不要求层标签在场
-# （部分宿主版本的 dump-config 输出不带 `# == dsh-gitkit-bundle` 层标签前缀）：
+# 期待看到一行——判据是全文出现以下行，不要求层标签在场
+# （部分宿主版本的 dump-config 输出不带 `# == dsh-gitkit` 层标签前缀）：
 #   - id: dsh-plugin-git
 #     name: 'dsh-gitkit'
-#   - id: dsh-plugin-client-ui-git
-#     name: 'dsh-gitkit-ui'
 ```
 
 之后打开 dsh web：会话 header 出现 Git 入口（角标 + 变更审查 tab + 提交图 tab）。
 默认工作区 = 当前 session 的 cwd；可在 profile 层补丁用 `workspaceOverride` 钉死（见 §3）。
 
-### npm 包（dsh-gitkit · dsh-gitkit-ui）
+### npm 包（dsh-gitkit）
 
-两个代码包同时发布到 npm（tag 驱动：推 `v*` 标签 → GitHub Actions 门禁（typecheck/test/build + verify
-安装矩阵 npm 列）→ 自动 `pnpm publish`，见 `.github/workflows/release.yml`）。**发布锚定**：tag
-`v<version>`、四 manifest `version`、根 description 与本 README 的版本号在 push CI 构建门禁中断言同值；
-`workflow_dispatch` 手动补发通道自带 fail-closed 锚定步——host/client 清单版本必须相等、tag `v<version>`
+**一个包**发布到 npm（tag 驱动：推 `v*` 标签 → GitHub Actions 门禁（typecheck/test/build + verify
+安装矩阵 npm 列）→ 自动 `pnpm publish`，见 `.github/workflows/release.yml`）。dist-tag 按版本形态选：
+预发布版本（如 `0.4.0-rc.0`）发到 `next`，正式版发到 `latest`——单包版的 `0.4.0` 才接管 `latest`，
+此前的 `latest = 0.3.0` 仍是双包形态。**发布锚定**：tag
+`v<version>`、根与 `packages/host` 两份 manifest 的 `version`、根 description 与本 README 的版本号在
+push CI 构建门禁中断言同值；
+`workflow_dispatch` 手动补发通道自带 fail-closed 锚定步——两份清单版本必须相等、tag `v<version>`
 必须存在且解析到本次 checkout 的 commit，否则拒发（Publish 不执行）。历史注记（如实）：npm 上的 0.1.1
 是锚定恢复前的唯一例外——它自 main HEAD 提交 266d1cf 经手动通道发布，与 tag `v0.1.1` 内容不一致
-（tag 版 host `files` 缺 `lib/*.d.ts`、client-ui devDependencies 为本机绝对路径）；0.1.2 起
+（tag 版 host `files` 缺 `lib/*.d.ts`、当时的 client 包 devDependencies 为本机绝对路径）；0.1.2 起
 恢复『已发布 == 已打 tag』。**NPM_TOKEN 口径（v0.3.0 三轮实证，2026-11-18）**：secret 必须是
 **可直发、免 OTP、非 staging-only** 的 token（Classic `Automation` 类型或等价 granular）——
 失效/过期 token 的 publish PUT 被 npm 伪装成 `404 Not Found`（v0.2.0 时期有效的 token 八天后
 即此形态）；staging-only token 报 `403 E_STAGE_REQUIRED`；带 2FA 强制的 token 报
-`ERR_PNPM_OTP_NON_INTERACTIVE`。发布后侦探步（tarball 逐字节比对）对 client 包内置
-CSS 源路径与 `workspace:*` 版本替换有归一豁免（`scripts/verify-release-tarball.mjs` 头注）；
-本地补跑侦探前必须先 `pnpm run build`（两包无 prepack——陈旧 lib 会产出假阳性）。npm 安装形态（适合想自行组装 profile 的用户）：
+`ERR_PNPM_OTP_NON_INTERACTIVE`。发布后侦探步（tarball 逐字节比对）对 client bundle 内置
+CSS 源路径有归一豁免（`scripts/verify-release-tarball.mjs` 头注）；
+本地补跑侦探前必须先 `pnpm run build`（包无 prepack——陈旧 lib 会产出假阳性）。
+
+**旧包 `dsh-gitkit-ui` 的处置**：已发布的 0.0.0-stage / 0.1.1 / 0.2.0 / 0.3.0 **不下架、不删除**（npm 不允许
+重发同版本，删除会破坏既有 profile 的可重装性）；单包版首个版本发布后执行
+`npm deprecate dsh-gitkit-ui@* "dsh-gitkit-ui 已并入 dsh-gitkit（单包，自 0.4.0 起）——请改装 dsh-gitkit"`。
+npm 安装形态（适合不想被 file: 路径绑定的用户；registry 依赖只钉版本号）：
 
 ```bash
-pnpm add dsh-gitkit dsh-gitkit-ui   # 在 profile 目录内
+dsh plugin --profile <你的profile> add dsh-gitkit   # 0.4.0 起为单包；预发布期需显式 dsh-gitkit@next
 ```
 
-随后需在 profile 的 `cordis.patch.yml` 自行追加两行 insert（内容即 `git-bundle/cordis.patch.yml`）。
-**推荐大多数用户走上面的 git-bundle 一条命令安装**——它同时完成依赖带入与补丁挂载；不想被 file:
-把源目录路径钉进 profile 的用户也优先选 npm 形态（registry 依赖只钉版本号、不钉路径，见上方警示块）。
-`git-bundle` 本身不发 npm（其 `file:` 相对依赖无法远程解析），保持 GitHub/本地分发。
+包自带 `dsh.bundle`，补丁行由 reconcile 自动挂载，**不再需要手工追加 insert 行**。
+已装过旧双包的 profile 请先按上方「从旧双包形态迁移」清理。
 
 ## 3. 配置（可选）
 
@@ -222,11 +231,11 @@ host 服务的 Config（schemastery；profile 层补丁示例）：
 ```bash
 # 在仓库根（dsh-git-plugin 的上一级）执行：
 pnpm --dir dsh-git-plugin install         # workspace 安装
-pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 三工程 tsc
-pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + git-bundle 一致性检查
-pnpm --dir dsh-git-plugin test            # vitest run（57 文件 = 26 host + 29 client + 2 root；820 用例，v0.2.0 终检实测——解析器快照、真仓库集成、合规守卫）
-pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 双包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
-pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 git-bundle 安装 → dump-config 两行 → web → status() ready → HTML 含两包；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
+pnpm --dir dsh-git-plugin run typecheck   # host tsdown 构建（含 typert 生成产物）+ 根聚合 / host 面 / client 面 tsc
+pnpm --dir dsh-git-plugin run build       # host typert/remote 产物 + client bundle + 单包发布面一致性检查
+pnpm --dir dsh-git-plugin test            # vitest run（71 文件 = 32 host + 37 client（tests/client）+ 2 root；1147 用例，2026-11-23 单包合并终检实测——解析器快照、真仓库集成、合规守卫）
+pnpm --dir dsh-git-plugin run verify:load   # 全断言联调：构建 → 单包直装 → web 启动 → RPC 往返（status/commit 链路、strict 注册判别）
+pnpm --dir dsh-git-plugin run verify:install  # 发布门禁（两相）：working-copy 相——全新 DSH_HOME/profile → 单条 packages/host 安装 → dump-config 单行 insert → web → status() ready → HTML 含单包 client 条目；clean-clone 相——git clone 本仓库（取已提交 HEAD）→ pnpm install --frozen-lockfile + build → 同一断言链
 ```
 
 verify 矩阵列（`verify:install` / `verify:load` 同构消费，列解析见 `scripts/verify-target.mjs` 头注）：
@@ -245,15 +254,14 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
   `Remove-Item Env:DSH_SPEC` 清除，残留会让后续命令意外落入 npm 列）；cmd 用
   `set "DSH_SPEC=@deepseek-ai/dsh@0.2.1-rc.5" && node scripts\verify-install.mjs`。
 
-- `verify:load`：开发者回归（覆盖深，跑得慢，装两个包）；
-- `verify:install`：发布冒烟（用户安装形态，装一个薄包；**两相各一轮**——working-copy 相 + clean-clone 相，
+- `verify:load`：开发者回归（覆盖深，跑得慢，装单包）；
+- `verify:install`：发布冒烟（用户安装形态，装一个包；**两相各一轮**——working-copy 相 + clean-clone 相，
   clone 相取已提交 HEAD、在 clone 内 `pnpm install --frozen-lockfile` + build 后走同一断言链；
   断言清单见脚本头注）。
 - 两者都会创建临时 `DSH_HOME` 与夹具仓库并在结束时 taskkill 宿主进程树、删除临时目录。
 - 测试范式：真实临时 git 仓库 + world 重读断言（照 dsh `workspace-changes/tests/support.ts`）。
 
-仓库结构速览：`packages/host`（src + tests + locale + 生成的 `lib/typert.*`）、
-`packages/client-ui`（src + tests + `lib/client.js` 闭包工厂 bundle）、`git-bundle/`（清单 + 补丁 + 许可三件套）、
+仓库结构速览：`packages/host`（node 半 src + tests + locale + 生成的 `lib/typert.*`；web 半 `src/client` + `tests/client` + `lib/client.js` 闭包工厂 bundle + `lib/client/*.d.ts`——单包双面）、
 `packages/typert-protocol`（dsh MIT npm 包未改动副本，仅构建期/类型面）、根级 `tests/`（骨架 + licenses 合规守卫）、
 `NOTICE.md` / `PORTING.md`（署名与移植登记 A/B/C 级）、`THIRD_PARTY_NOTICES.md`（全文许可）。
 

@@ -1,10 +1,12 @@
-# tag 驱动的 npm 自动发布：推送 v* 标签 → 门禁 → 发布 dsh-gitkit + dsh-gitkit-ui
+# tag 驱动的 npm 自动发布：推送 v* 标签 → 门禁 → 发布 dsh-gitkit（单包：host + client 同包）
 # workflow_dispatch：手动补发通道，经 fail-closed 锚定步锚定到发布 tag ——
-#   host/client 清单版本必须相等，且 v<version> 必须存在并指向本次 checkout 的
+#   根与 packages/host 清单版本必须相等，且 v<version> 必须存在并指向本次 checkout 的
 #   GITHUB_SHA（不再「跳过 tag 校验，按 manifest 版本发布」——npm 0.1.1 与 tag v0.1.1
 #   内容失配教训，报告 P4 第一层）。
+# dist-tag 按版本形态选：带预发布后缀（如 0.4.0-rc.0）→ next；正式版 → latest
+#   （合并后的首个正式版 0.4.0 才接管 latest；此前 latest 仍是双包形态的 0.3.0）。
 # 前置：GitHub 仓库 Secrets 配置 NPM_TOKEN（npm automation token，需拥有 dsh-plugin scope/org）
-# git-bundle 不走 npm（file: 相对依赖无法远程解析）——它保持 GitHub/本地分发通道（见 README §2）
+# 原 dsh-gitkit-ui 包不再由本工作流发布（单包合并后退役，见 docs/single-package-merge.workflow.yaml）
 name: release
 
 on:
@@ -45,12 +47,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开（$tag/$client 同理谨慎）
+          # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开
           $tagVersion = ${env:GITHUB_REF_NAME} -replace '^v', ''
-          $hostVersion = (Get-Content packages/host/package.json | ConvertFrom-Json).version
-          $clientVersion = (Get-Content packages/client-ui/package.json | ConvertFrom-Json).version
-          if ($tagVersion -ne $hostVersion -or $tagVersion -ne $clientVersion) {
-            throw "tag v$tagVersion 与清单版本不一致：host=$hostVersion client=$clientVersion（应同升四个 manifest 后再打 tag）"
+          $rootVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $pkgVersion = (Get-Content packages/host/package.json | ConvertFrom-Json).version
+          if ($tagVersion -ne $pkgVersion -or $tagVersion -ne $rootVersion) {
+            throw "tag v$tagVersion 与清单版本不一致：root=$rootVersion package=$pkgVersion（应同升根与 packages/host 两份 manifest 后再打 tag）"
           }
 
       # P4 第一层（fail-closed）：dispatch 补发必须锚定到已打 tag 的发布——0.1.1 案例
@@ -59,13 +61,13 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: |
-          # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开（$tag/$client 同理谨慎）
-          $hostVersion = (Get-Content packages/host/package.json | ConvertFrom-Json).version
-          $clientVersion = (Get-Content packages/client-ui/package.json | ConvertFrom-Json).version
-          if ($hostVersion -ne $clientVersion) {
-            throw "清单版本不一致：host=$hostVersion client=$clientVersion（应同升四个 manifest 后再补发）"
+          # 注意：$host 是 PowerShell 只读自动变量，变量名必须避开
+          $rootVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $pkgVersion = (Get-Content packages/host/package.json | ConvertFrom-Json).version
+          if ($pkgVersion -ne $rootVersion) {
+            throw "清单版本不一致：root=$rootVersion package=$pkgVersion（应同升根与 packages/host 两份 manifest 后再补发）"
           }
-          $tag = "v$hostVersion"
+          $tag = "v$pkgVersion"
           $tagCommit = git rev-parse "$tag^{commit}" 2>$null
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($tagCommit)) {
             throw "dispatch 补发被拒绝（fail-closed）：tag $tag 不存在——补发必须锚定到已打 tag 的发布内容"
@@ -80,7 +82,7 @@ jobs:
       - name: Test（真实临时 git 仓库集成测试）
         run: pnpm run test
 
-      - name: Build（host typert 产物 + client bundle + git-bundle 一致性）
+      - name: Build（host typert 产物 + client bundle + 单包发布面一致性）
         run: pnpm run build
 
       # P3 门禁矩阵：npm latest 列——npm publish 之前对已发布 dsh 形态（0.2.1-rc.5）
@@ -93,10 +95,17 @@ jobs:
           DSH_SPEC: '@deepseek-ai/dsh@0.2.1-rc.5'
           DSH_VERIFY_INSTALL_SKIP_CLONE: '1'
 
-      - name: Publish dsh-gitkit + dsh-gitkit-ui
-        # 只发两个发布包：pnpm -r publish 会把 workspace 内所有非 private 包一起发，
-        # 包括 vendored 的 @deepseek-ai/dsh-typert-protocol（不属于本仓库）。
-        run: pnpm -r --filter dsh-gitkit --filter dsh-gitkit-ui publish --access public --no-git-checks
+      # 只发 dsh-gitkit：pnpm -r publish 会把 workspace 内所有非 private 包一起发，
+      # 包括 vendored 的 @deepseek-ai/dsh-typert-protocol（不属于本仓库）。
+      # dist-tag：预发布版本（版本串含 '-'）→ next；正式版 → latest。
+      - name: Publish dsh-gitkit
+        shell: pwsh
+        run: |
+          $version = (Get-Content packages/host/package.json | ConvertFrom-Json).version
+          $distTag = if ($version -match '-') { 'next' } else { 'latest' }
+          Write-Host "publishing dsh-gitkit@$version with dist-tag $distTag"
+          pnpm --filter dsh-gitkit publish --access public --no-git-checks --tag $distTag
+          if ($LASTEXITCODE -ne 0) { throw "pnpm publish failed (exit $LASTEXITCODE)" }
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 

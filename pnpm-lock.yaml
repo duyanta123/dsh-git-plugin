@@ -24,7 +24,17 @@ importers:
         specifier: ^4.1.11
         version: 4.1.12(@types/node@22.20.5)(vite@8.2.2(@types/node@22.20.5))
 
-  packages/client-ui:
+  packages/host:
+    dependencies:
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: link:../typert-protocol
+        version: link:../typert-protocol
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.5
+        version: 3.18.5
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.6-alpha.1
@@ -56,9 +66,15 @@ importers:
       '@deepseek-ai/dsh-client-ui-slots':
         specifier: 0.2.2-alpha.2
         version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
-      '@deepseek-ai/dsh-typert-protocol':
-        specifier: link:../typert-protocol
-        version: link:../typert-protocol
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
+      '@deepseek-ai/dsh-timeout':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
+      '@deepseek-ai/dsh-typert-generator':
+        specifier: 0.2.2-alpha.2
+        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
       '@tanstack/react-virtual':
         specifier: 3.14.10
         version: 3.14.10(react-dom@18.2.0(react@18.3.1))(react@18.3.1)
@@ -68,9 +84,9 @@ importers:
       '@types/react-dom':
         specifier: 18.2.0
         version: 18.2.0
-      dsh-gitkit:
-        specifier: workspace:*
-        version: link:../host
+      chokidar:
+        specifier: ^5.0.0
+        version: 5.0.0
       immer:
         specifier: ^10.1.1
         version: 10.2.0
@@ -86,40 +102,12 @@ importers:
       rolldown:
         specifier: 1.2.7
         version: 1.2.7
-      zustand:
-        specifier: ~4.5.7
-        version: 4.5.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
-
-  packages/host:
-    dependencies:
-      '@deepseek-ai/dsh-typert-protocol':
-        specifier: link:../typert-protocol
-        version: link:../typert-protocol
-      '@deepseek-ai/schemastery':
-        specifier: ^3.18.5
-        version: 3.18.5
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@deepseek-ai/cordis':
-        specifier: ^4.0.6-alpha.1
-        version: 4.0.6-alpha.1
-      '@deepseek-ai/dsh-llm':
-        specifier: 0.2.2-alpha.2
-        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
-      '@deepseek-ai/dsh-timeout':
-        specifier: 0.2.2-alpha.2
-        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
-      '@deepseek-ai/dsh-typert-generator':
-        specifier: 0.2.2-alpha.2
-        version: 0.2.2-alpha.2(@deepseek-ai/cordis@4.0.6-alpha.1)
-      chokidar:
-        specifier: ^5.0.0
-        version: 5.0.0
       tsdown:
         specifier: ^0.22.2
         version: 0.22.14(typescript@6.0.3)
+      zustand:
+        specifier: ~4.5.7
+        version: 4.5.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
 
   packages/typert-protocol:
     dependencies:

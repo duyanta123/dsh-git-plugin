@@ -34,7 +34,7 @@ jobs:
       - name: Test（真实临时 git 仓库集成测试）
         run: pnpm run test
 
-      - name: Build（host typert 产物 + client bundle + git-bundle 一致性）
+      - name: Build（host typert 产物 + client bundle + 单包发布面一致性）
         run: pnpm run build
 
       # P3 门禁矩阵：npm latest 列——对已发布 dsh 形态（0.2.1-rc.5）做安装冒烟，

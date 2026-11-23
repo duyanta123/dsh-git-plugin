@@ -12,10 +12,11 @@
  *      `vscode-git-graph`、`gitamine` 的标识符/路径零出现——NOTICE §1 允许的
  *      「阅读参考、未使用代码」自我声明只许留在注释里（lane-layout.ts 文件头），
  *      不许进代码标识符面（spec §5.4(b)「vscode-git-graph 的标识符」口径）。
- *  (c) `THIRD_PARTY_NOTICES.md`（根 + 三包副本）不含 mhutchie 文本；四份同文；
- *      六个署名条目与 Apache-2.0/MIT 全文在场；根+三包（host/client-ui/git-bundle）
- *      LICENSE/NOTICE.md/THIRD_PARTY_NOTICES.md 三件套齐备且各包 `files` 已声明
- *      （§5.2 发布就绪；git-bundle 为 v0.1.0 发布薄包，许可随本项目）。
+ *  (c) `THIRD_PARTY_NOTICES.md`（根 + 包副本）不含 mhutchie 文本；两份同文；
+ *      六个署名条目与 Apache-2.0/MIT 全文在场；根+唯一发布包 `packages/host`
+ *      （单包合并后 client 半并入 dsh-gitkit，client-ui / git-bundle 目录退役）
+ *      LICENSE/NOTICE.md/THIRD_PARTY_NOTICES.md 三件套齐备且包 `files` 已声明
+ *      （§5.2 发布就绪）。
  *  本项目许可：Apache-2.0（`Copyright 2026 dsh-git-plugin contributors`；发布 ask
  *  改定，spec §5.2 原写 MIT —— THIRD_PARTY_NOTICES.md §1 版本注记）。
  */
@@ -88,11 +89,13 @@ async function resolveTargetFiles(cell: string): Promise<string[]> {
     '',
     'packages/host/src',
     'packages/host/tests',
-    'packages/client-ui/src/client',
-    'packages/client-ui/src/client/components',
-    'packages/client-ui/src/client/store',
-    'packages/client-ui/src/client/graph',
-    'packages/client-ui/src/client/diff',
+    // client 半并入同包（packages/host/src/client）；host/src 前缀在前只命中 host 自身文件，
+    // client 文件的短名靠下列前缀解析。
+    'packages/host/src/client',
+    'packages/host/src/client/components',
+    'packages/host/src/client/store',
+    'packages/host/src/client/graph',
+    'packages/host/src/client/diff',
   ]
   for (const group of groups) {
     if (group.endsWith('/') || !group.includes('.')) continue // 目录行/汇总行（typert-protocol 整包、client 组件交互等）
@@ -164,11 +167,10 @@ describe('licenses 合规守卫（spec §5.4）', () => {
   })
 
   it('(b) packages/*/src(+lib) 零 plus 边界字面量；剥离注释后零 mhutchie/vscode-git-graph/gitamine', async () => {
+    // 单包合并：host/src 已含 src/client，host/lib 已含 lib/client（client bundle）。
     const scanRoots = [
       'packages/host/src',
       'packages/host/lib',
-      'packages/client-ui/src',
-      'packages/client-ui/lib',
       'packages/typert-protocol/src',
     ]
     const files: string[] = []
@@ -189,15 +191,11 @@ describe('licenses 合规守卫（spec §5.4）', () => {
     expect(bannedHits, 'GPL/禁再发布来源标识符出现在代码面（只许留在「阅读参考」注释里）').toEqual([])
   })
 
-  it('(c) THIRD_PARTY_NOTICES 四份同文、无 mhutchie 文本、署名与全文齐备；发布三件套就绪（本项目 Apache-2.0）', async () => {
-    const noticePaths = [
-      'THIRD_PARTY_NOTICES.md',
-      'packages/host/THIRD_PARTY_NOTICES.md',
-      'packages/client-ui/THIRD_PARTY_NOTICES.md',
-      'git-bundle/THIRD_PARTY_NOTICES.md',
-    ]
+  it('(c) THIRD_PARTY_NOTICES 两份同文、无 mhutchie 文本、署名与全文齐备；发布三件套就绪（本项目 Apache-2.0）', async () => {
+    const packageDirs = ['.', 'packages/host']
+    const noticePaths = packageDirs.map((dir) => path.join(dir, 'THIRD_PARTY_NOTICES.md'))
     const contents = await Promise.all(noticePaths.map((rel) => readText(rel)))
-    expect(new Set(contents).size, '根与三包 THIRD_PARTY_NOTICES.md 必须同文').toBe(1)
+    expect(new Set(contents).size, '根与发布包 THIRD_PARTY_NOTICES.md 必须同文').toBe(1)
     const text = contents[0] ?? ''
 
     const mhutchieText = [/mhutchie/iu, /vscode-git-graph/iu, 'determinePath', 'registerUnavailablePoint', 'getAvailableColour']
@@ -212,7 +210,6 @@ describe('licenses 合规守卫（spec §5.4）', () => {
     expect(text).toContain('Permission is hereby granted, free of charge') // MIT 全文在场
     expect(text).toContain('Copyright (c) 2026 DeepSeek') // dsh 版权行原文（spec §0.4-8，经 typert-protocol/LICENSE 副本核实）
 
-    const packageDirs = ['.', 'packages/host', 'packages/client-ui', 'git-bundle']
     for (const dir of packageDirs) {
       for (const name of ['LICENSE', 'NOTICE.md', 'THIRD_PARTY_NOTICES.md']) {
         const rel = path.join(dir, name)
@@ -225,7 +222,7 @@ describe('licenses 合规守卫（spec §5.4）', () => {
       expect(license).toContain('Licensed under the Apache License, Version 2.0')
       expect(license).toContain('END OF TERMS AND CONDITIONS')
     }
-    // 三包同文（LICENSE / NOTICE.md 的副本面）。
+    // 发布包副本面（LICENSE / NOTICE.md 与根同文）。
     for (const name of ['LICENSE', 'NOTICE.md']) {
       const rootText = await readText(name)
       for (const dir of packageDirs.slice(1)) {
@@ -234,13 +231,12 @@ describe('licenses 合规守卫（spec §5.4）', () => {
     }
     expect(existsSync(path.join(repoRoot, 'packages/typert-protocol/LICENSE')), 'typert-protocol 副本须自带 dsh MIT LICENSE').toBe(true)
 
-    for (const pkg of ['packages/host/package.json', 'packages/client-ui/package.json', 'git-bundle/package.json']) {
-      const manifest = JSON.parse(await readText(pkg)) as { files?: string[]; license?: string; name?: string }
-      for (const name of ['LICENSE', 'NOTICE.md', 'THIRD_PARTY_NOTICES.md']) {
-        expect(manifest.files ?? [], `${pkg} files 缺 ${name}`).toContain(name)
-      }
-      expect(manifest.license, `${pkg} license 字段应为 Apache-2.0`).toBe('Apache-2.0')
-      expect(manifest.name, '包名面').toMatch(/^dsh-gitkit(-ui|-bundle)?$/u)
+    // 仓内带 package.json 的目录 = 根 + 唯一发布包 + vendored typert-protocol（不发布）。
+    const manifest = JSON.parse(await readText('packages/host/package.json')) as { files?: string[]; license?: string; name?: string }
+    for (const name of ['LICENSE', 'NOTICE.md', 'THIRD_PARTY_NOTICES.md']) {
+      expect(manifest.files ?? [], `packages/host/package.json files 缺 ${name}`).toContain(name)
     }
+    expect(manifest.license, 'license 字段应为 Apache-2.0').toBe('Apache-2.0')
+    expect(manifest.name, '包名面（单包：只有 dsh-gitkit）').toBe('dsh-gitkit')
   })
 })

@@ -4,8 +4,12 @@
 > spec §5.1；本文件是仓库内随施工维护的工作副本。
 > 工作流通用约定提到的 PORTING.md 自 ⑤ status 引擎模块（2026-10-31）起建立于本目录
 > （A/B/C 级定义与本模块登记行）；历史登记仍以本文件 §2 为准，两表互为镜像索引。
-> **当前状态（v0.1.2 / V2 前置口径，2026-11-07）**：v1 全部模块（④-A–④-L）落地并过门禁，代码定稿 0.1.2
-> （四 manifest 同版）——尚未打 tag / 未发 npm，**发布随 V2 首版一并打出**；2026-11-07 前置修复批已落
+> **当前状态（单包合并，2026-11-23）**：client 半（原 `packages/client-ui` → `dsh-gitkit-ui`）并入
+> `packages/host`（`dsh-gitkit`）同包：源码树落 `packages/host/src/client`，§2 / PORTING.md 登记行的目标
+> 路径已随迁（内容与移植分级不变）；`git-bundle/` 薄包与独立 client 包退役（见 §7），
+> 发布面只剩 `dsh-gitkit` 一个 npm 包（三件套 = 根 + `packages/host` 两份同文）。
+> **此前状态（v0.1.2 / V2 前置口径，2026-11-07）**：v1 全部模块（④-A–④-L）落地并过门禁，代码定稿 0.1.2
+> （当时四 manifest 同版）——尚未打 tag / 未发 npm，**发布随 V2 首版一并打出**；2026-11-07 前置修复批已落
 > （P1 client 丢帧修复等，见 `docs/capability-spec.md` 修订记录 v1.2/v1.3）。
 > 此前状态（v0.1.0 发布定稿，2026-11-01）：新增 `git-bundle/`（`dsh-gitkit-bundle` 单一 file: 安装薄包，见 §7）；
 > 本项目许可自 MIT 改定为 Apache-2.0（发布 ask 决议，见 §4 与 THIRD_PARTY_NOTICES.md §1）。
@@ -44,10 +48,10 @@
 | `packages/host/src/watcher.ts`（防抖结构） | ZCode `fileWatcherService.ts`（`DEBOUNCE_MS=150` :13 + 防抖窗结构 :78-92；登记口径含引用计数语义，SOURCES.md:36） | `3c5b2276` | Apache-2.0 | 只抄结构；node:fs.watch → 宿主 fs 能力面（ctx.fs.watch 三目标：.git/index、.git/HEAD、repoRoot depth:0）；R6 降级（warn 一次转纯轮询）与 R1–R5 帧规则为本模块设计（spec §2.3 的 chokidar 自带 watcher 方案按实测偏离，见 ModuleResult openIssues） | 已移植（M9，PORTING.md A 级） |
 | `packages/host/src/watcher.ts`（失效+重算 follow 范式对照） | dsh `workspace-files/src/changes.ts:39-109`（follow() 生命周期范式：resolve→watch→ready→失效重取） | dsh 树 `ce7073d512` | MIT（dsh） | 语义学习，零代码搬运 | 已登记（M9，PORTING.md C 级） |
 | `packages/host/tests/support.ts`（扩展：chokidarFsFace） | dsh `fs-local/src/index.ts:70-91`（LocalFileSystem.watch 语义：目录目标 depth:0 无忽略 / 文件目标监父目录 ignored 放行根与目标 / 失效回调不带内容） | dsh 树 `ce7073d512` | MIT（dsh） | 行为仿真（B 级）：fs-local 同形 chokidar@5 watch 面替身（M9 集成测试真实 fs 事件驱动，含嵌套目录无事件已知限制断言） | 已移植（M9，PORTING.md B 级） |
-| `packages/client-ui/src/client/diff/patch-hunks.ts` | dsh `ui-deliverables` FileDiff 纯函数（hunkRows/splitRows/renderedHunks） | dsh 树 `ce7073d512` | MIT（dsh） | 照抄纯函数进自己包（实际落点 `diff/patch-hunks.ts`，hunk 类型换本包自有 PatchHunk + 自研 parsePatch） | 已移植（F 变更面板，PORTING.md A 级，文件头已落；2026-11-08 目标格由 `diff/*.ts` 通配收窄为实际落点单文件——批次三新增的 `diff/patch-select.ts` 为自研组装逻辑（消费 parsePatch 产物，无第三方来源），不属本行照抄面，不再被通配扫入） |
-| `packages/client-ui/src/client/components/ChangeCard.tsx` | ZCode `GitPaneChangeCard.tsx`（行按钮+计数+展开 diff 区的卡片结构） | `3c5b2276` | Apache-2.0 | 结构对照（B 级）：逻辑重写、视觉随 dsh（dsh-git-* 类名 + data 锚）；勾选/行内动作/徽标为本模块 ask 扩展 | 已登记（F 变更面板，PORTING.md B 级，文件头就近注明） |
-| `packages/client-ui/src/client/components/GitChangesTab.tsx` / `FileDiffView.tsx` / `addresses.ts` | ZCode `GitPane.tsx`（单展开+懒加载+消失守卫语义）+ dsh `FileDiff.tsx` 渲染链 + dsh `changes.ts:143-165`（地址铸造/严格解析范式） | `3c5b2276` / dsh `ce7073d512` | Apache-2.0 + MIT（dsh） | 语义学习/范式移植，零逐行搬运（C 级） | 已登记（F 变更面板，PORTING.md C 级） |
-| `packages/client-ui/src/client/graph/lane-layout.ts`（类型面）+ `store/git-graph-store.ts`（single-writer） | GitLens MIT 区 `models/graph.ts`（行头/upstream 形状）+ `graphSession.ts`（single-writer 契约）+ `utils/graph.utils.ts`（窗口追加对照） | `020cfc1b` | **MIT 区** | C 级语义对照，零代码搬运；类型/契约按 spec §3.3.1/§3.2 自写（spec 的 graph-types.ts 落点 = lane-layout.ts 类型面；窗口追加简化为 push+oid 去重） | 已登记（F7 提交图数据层，PORTING.md C 级） |
+| `packages/host/src/client/diff/patch-hunks.ts` | dsh `ui-deliverables` FileDiff 纯函数（hunkRows/splitRows/renderedHunks） | dsh 树 `ce7073d512` | MIT（dsh） | 照抄纯函数进自己包（实际落点 `diff/patch-hunks.ts`，hunk 类型换本包自有 PatchHunk + 自研 parsePatch） | 已移植（F 变更面板，PORTING.md A 级，文件头已落；2026-11-08 目标格由 `diff/*.ts` 通配收窄为实际落点单文件——批次三新增的 `diff/patch-select.ts` 为自研组装逻辑（消费 parsePatch 产物，无第三方来源），不属本行照抄面，不再被通配扫入） |
+| `packages/host/src/client/components/ChangeCard.tsx` | ZCode `GitPaneChangeCard.tsx`（行按钮+计数+展开 diff 区的卡片结构） | `3c5b2276` | Apache-2.0 | 结构对照（B 级）：逻辑重写、视觉随 dsh（dsh-git-* 类名 + data 锚）；勾选/行内动作/徽标为本模块 ask 扩展 | 已登记（F 变更面板，PORTING.md B 级，文件头就近注明） |
+| `packages/host/src/client/components/GitChangesTab.tsx` / `FileDiffView.tsx` / `addresses.ts` | ZCode `GitPane.tsx`（单展开+懒加载+消失守卫语义）+ dsh `FileDiff.tsx` 渲染链 + dsh `changes.ts:143-165`（地址铸造/严格解析范式） | `3c5b2276` / dsh `ce7073d512` | Apache-2.0 + MIT（dsh） | 语义学习/范式移植，零逐行搬运（C 级） | 已登记（F 变更面板，PORTING.md C 级） |
+| `packages/host/src/client/graph/lane-layout.ts`（类型面）+ `store/git-graph-store.ts`（single-writer） | GitLens MIT 区 `models/graph.ts`（行头/upstream 形状）+ `graphSession.ts`（single-writer 契约）+ `utils/graph.utils.ts`（窗口追加对照） | `020cfc1b` | **MIT 区** | C 级语义对照，零代码搬运；类型/契约按 spec §3.3.1/§3.2 自写（spec 的 graph-types.ts 落点 = lane-layout.ts 类型面；窗口追加简化为 push+oid 去重） | 已登记（F7 提交图数据层，PORTING.md C 级） |
 | `packages/host/src/graph.ts`（log 分页取参段） | ZCode `gitCliRepo.ts` getCommitGraph :1013-1053 + normalize :386-400（A 级 over-fetch/钳制/unborn 守卫）；GitLens providers/graph.ts 的 over-walk/spurious-empty 模式未移植（host 无状态分页，spec §5.1「只摘模式」行的实际落法见 PORTING.md） | `3c5b2276` / `020cfc1b` | Apache-2.0 + MIT 区 | A 级逐段移植（文件头已落）+ C 级对照 | 已移植（F7 提交图数据层，PORTING.md） |
 | client 组件交互 | ZCode `GitActionMenu/useGitAutoRefresh`（GitPane/GitPaneChangeCard 已随 F 变更面板落地登记；GitActionMenu 提交对话框段已随 ④-K 登记 C 级——三动作闸/主快捷键/生成 pending 语义对照，PORTING.md） | `3c5b2276` | Apache-2.0 | 抄交互逻辑与状态流，不抄样式 | 已登记（④-K C 级；余项：header 菜单 push/pull/fetch 动作/自动刷新兜底） |
 | `packages/host/src/sync.ts`（命令选择） | opencode `git.ts` / `vcs/git.ts` | `b6c43a52` | MIT | 语义学习，不整文件移植；逐段搬运时升级登记 | 计划中 |
@@ -59,7 +63,7 @@
 | `packages/host/src/stash.ts` | 无第三方代码来源——stash push/list/pop/drop 命令形态与序号/冲突语义按 git 官方文档 + 本机 git 2.55.0.windows.2 实测（`GIT_LITERAL_PATHSPECS=1` 静默破坏 `-u` untracked 收集为环境实测发现，env 墓碑摘除）；`stash list` format 行解析自研（尾分隔纪律同仓库内 LOG_PRETTY_FORMAT 自研面） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；D4=B includeUntracked 缺省语义为任务口径） | 已登记（v2 批次三 stash 引擎，2026-11-08；PORTING.md「v2 批次三」C 级） |
 | `packages/host/src/staging-patch.ts` | 无第三方代码来源——`git apply --cached --recount --whitespace=nowarn [-R]` 命令形态与二进制/模式 hunk 前置拒绝按 git 官方文档 + 本机 git 2.55.0.windows.2 实测自研（方案 §5.3/§5.5；D7=B 两态） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；patch 文本经 stdin，免临时文件） | 已登记（v2 批次三 hunk 级暂存引擎，2026-11-08；PORTING.md「v2 批次三」C 级） |
 | `packages/host/src/diagnostics.ts` | 无第三方代码来源——`config --get core.autocrlf/core.eol` 两键 + 顶层文本后缀 CRLF 抽样口径按方案 §5.3 收窄（TEXT_SUFFIXES 表自研；node fs 抽样纪律同 blame.ts 已登记 node 面） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；mixedEolFiles 清单封顶 = wire 形状承载口径，类型注已记） | 已登记（v2 批次三 仓库诊断引擎，2026-11-08；PORTING.md「v2 批次三」C 级） |
-| `packages/client-ui/src/client/diff/patch-select.ts` | 无第三方代码来源——从既有 `parsePatch` 产物（`diff/patch-hunks.ts` 移植面）裁剪组装选中 patch 的纯函数自研（方案 §5.6/§5.7：hunk 头计数重算、整 hunk 原样透传、纯 add/del 块插入点锚） | —（git unified patch 文本口径，hunk-stage.spec 覆盖） | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；消费 patch-hunks.ts 的移植纯函数，本体无搬运） | 已登记（v2 批次三 行级勾选组装，2026-11-08；PORTING.md「v2 批次三」C 级） |
+| `packages/host/src/client/diff/patch-select.ts` | 无第三方代码来源——从既有 `parsePatch` 产物（`diff/patch-hunks.ts` 移植面）裁剪组装选中 patch 的纯函数自研（方案 §5.6/§5.7：hunk 头计数重算、整 hunk 原样透传、纯 add/del 块插入点锚） | —（git unified patch 文本口径，hunk-stage.spec 覆盖） | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；消费 patch-hunks.ts 的移植纯函数，本体无搬运） | 已登记（v2 批次三 行级勾选组装，2026-11-08；PORTING.md「v2 批次三」C 级） |
 | `packages/host/src/admin-repo.ts`（init 引擎） | 无第三方代码来源——`git init`（无 `-b` 旗标）/`rev-parse --show-toplevel`/`symbolic-ref --short` 回读语义按 git 官方文档 + 本机实测；编排骨架对照仓库内已登记 refs-admin.ts 纪律（先预检再变更后回读） | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；已是仓库前置拒绝 init-failed 零命令、stderr 脱敏进 message 面、失效链由服务面承担均为任务口径） | 已登记（v2 批次四 仓库初始化引擎，2026-11-10；PORTING.md「v2 批次四」C 级） |
 | `packages/host/src/submodule.ts`（submodule 引擎） | 无第三方代码来源——`git submodule status` 行形与前缀语义（空格=clean / `-`=uninitialized / `+`=mismatch / `U`=冲突）按 git 官方文档 + 本机 git 2.55.0.windows.2 实测；默认形态 + `--cached` 双读按 path 归并；行解析器自研 | git 2.55.0.windows.2 实测 | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；`U` 映射 'dirty' 为方案枚举缺口的最贴近映射、未知前缀前向容忍均为任务口径） | 已登记（v2 批次四 submodule 引擎，2026-11-10；PORTING.md「v2 批次四」C 级） |
 | `packages/host/src/pr.ts`（PR 引擎） | 无第三方代码来源——`gh auth status`/`gh pr create --title … --body-file -`（body stdin）/`gh pr view --json url,state` 命令形态按 gh CLI 官方文档语义；`rev-parse --abbrev-ref @{upstream}` head 推断按 git 官方文档；gh 非交互旗标行为未实测（方案 §6.10 施工验证点） | gh CLI 官方文档语义对照（正路径未实测，pr.spec 假 transport 承载成功形状） | —（无第三方材料入仓） | 自研实现，零代码搬运（C 级登记；acknowledged 闸/分支参数首字符 `-` 拒绝零命令、pr-tool-missing/pr-create-failed 域码、prForBranch 查询失败返回 null 静默降级均为任务口径） | 已登记（v2 批次四 PR 引擎，2026-11-10；PORTING.md「v2 批次四」C 级） |
@@ -102,12 +106,18 @@
 - 除 §2 登记行外，代码为原创；`lib/typert.*.js` 为 typert-generator 生成物（自带 Generated-by 头），不属人工移植登记范围。
 - 依赖项许可随各包自身声明；`packages/typert-protocol/` 是 §2 登记的 dsh MIT 再分发副本（上游文件零改动；另新增我们自己的 tsconfig.build.json——上游 npm 发布物自带 lib/，本仓库 .gitignore 排除 lib/，全新 checkout 需经它重建完整 lib/types 产物（*.js + *.d.ts，入口 exports[\".\"] 对齐 lib/types/index.js——上游 lib/index.js 为打包产物、本构建以 tsc 平铺等价替代）。
 
-## 7. `dsh-gitkit-bundle`（发布薄包，v0.1.0 新增）
+## 7. 发布薄包 `dsh-gitkit-bundle`（v0.1.0 新增；**单包合并后已退役**）
 
-- 落点 `git-bundle/`（workspace `packages/*` 之外——发布产物，不入 workspace 拓扑）：**零代码**薄包——只有 `package.json`（`dsh.bundle.patch` 指向自带
+- **退役（2026-11-23，docs/single-package-merge.workflow.yaml）**：host 与 client 合为单包后，
+  不再需要把两包带入 profile 的中间薄包——本地安装直接
+  `dsh plugin --profile <p> add file:<repo>/packages/host`（或 npm 安装 `dsh-gitkit`）；
+  `packages/host/cordis.patch.yml` 只剩一条 insert（`dsh-plugin-git` → `dsh-gitkit`），
+  Web 面经同包 `exports["./client"]` + `dsh.client` 编入 boot。该包从未发布到 npm，
+  退役不涉及下架。以下为 v0.1.0–v0.3.0 期间的历史形态，仅作溯源。
+- 历史落点 `git-bundle/`（workspace `packages/*` 之外——发布产物，不入 workspace 拓扑）：**零代码**薄包——只有 `package.json`（`dsh.bundle.patch` 指向自带
   `cordis.patch.yml`）、`cordis.patch.yml`（insert 两行：`dsh-plugin-git` → `dsh-gitkit`、
   `dsh-plugin-client-ui-git` → `dsh-gitkit-ui`）与三件套副本；无 src/lib。
-- 作用：`dsh plugin --profile <p> add file:<repo>/packages/git-bundle` 一次安装即把 host/client
+- 历史作用：`dsh plugin --profile <p> add file:<repo>/packages/git-bundle` 一次安装即把 host/client
   两包经 `file:` 依赖带入 profile（宿主 profile 用 `nodeLinker: hoisted`，`app-boot/src/profile.ts`
   `PROFILE_PNPM_WORKSPACE`），reconcile 按 git-bundle 的 `dsh.bundle` 把两行 insert 追加进
   `dsh.profile.bundles`（`plugin-manager/src/operations.ts` reconcile——按 profile 顶层 dependencies

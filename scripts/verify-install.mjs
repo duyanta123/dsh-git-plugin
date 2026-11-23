@@ -5,11 +5,11 @@
  * 列矩阵（列解析与发布形态安装见 ./verify-target.mjs，报告 §2.3）：
  *   - 缺省（无 DSH_SPEC/DSH_BIN）= dev-tree 列：与 v0.1.1 行为逐位一致 —— 被测 CLI 是
  *     开发树源码入口（`node --import tsx/esm apps/cli/src/bin.ts`，cwd=DSH_TREE），
- *     断言面全严格（# == dsh-gitkit-bundle 层标签 / 严格 boot 行 /
+ *     断言面全严格（# == dsh-gitkit 层标签 / 严格 boot 行 /
  *     "[dsh-plugin-git] GitService active" 全串 marker / strict typert）。
  *   - `DSH_SPEC=@deepseek-ai/dsh@<ver>` = npm 列：npm view 探活 + npm i --prefix <tmp>，
  *     装后 `node <tmp>/node_modules/@deepseek-ai/dsh/lib/bin.js` 裸启动、cwd=<tmp>；
- *     层标签/marker/boot 行按列放宽（无层标签 → 全文两行 id 判据 + WARN；
+ *     层标签/marker/boot 行按列放宽（无层标签 → 全文 id 行判据 + WARN；
  *     marker 降级 'GitService active' 子串 + WARN；boot 行加宽松兜底形）。
  *   - DSH_SPEC 命中 NEGATIVE_SPECS（@deepseek-ai/dsh@0.1.7-rc.2 / @deepseek-ai/dsh@0.2.1-rc.2）
  *     = 声明下限外观测列：KNOWN-UNSUPPORTED（exit 0，纯记录式）或 PASS-UNEXPECTED
@@ -23,7 +23,7 @@
  *   PHASE working-copy —— 本工作副本（REPO）走一遍完整安装断言链（下列 ①-⑥）；
  *   PHASE clean-clone —— prepareCleanClone()：`git clone` 本仓库到临时目录（取已提交
  *     HEAD，未提交改动不在其内——语义即「用户拿到的是仓库 HEAD」）→ 断言无
- *     node_modules / packages/host/lib / packages/client-ui/lib → 按 README §2 全新
+ *     node_modules / packages/host/lib → 按 README §2 全新
  *     clone 前提 `pnpm install --frozen-lockfile` + `pnpm run build`（win32 下 pnpm 是
  *     .cmd 垫片，Node ≥18.20 无 shell 直启 .cmd 返回 EINVAL → run() shell 透传；
  *     参数为固定常量，无注入面）→ 走与工作副本相同的单条 file: add 断言链。
@@ -34,17 +34,17 @@
  *
  * 与 verify-load.mjs（全断言联调）的分工：本脚本只验证「发布形态的安装链路」——
  * 用户拿到本仓库后唯一需要的安装动作是一条 file: 安装命令（两相各走一遍）：
+ * （单包合并：host + client 同属 dsh-gitkit，原 git-bundle 薄包与 dsh-gitkit-ui 退役。）
  *
  *   ① 全新临时 DSH_HOME + 全新 profile（名字带随机后缀，永不与既有 profile 撞名）；
- *   ② `dsh plugin --profile <新> add file:<git-bundle 绝对路径>` —— 单一安装入口：
- *      git-bundle 薄包经 file: 依赖带入 host/client 两包（宿主 profile 用
- *      nodeLinker: hoisted，app-boot/src/profile.ts PROFILE_PNPM_WORKSPACE），
- *      reconcile 按 git-bundle 的 dsh.bundle 把两行 insert 追加进 dsh.profile.bundles
- *      （packages/boot/plugin-manager/src/operations.ts reconcile：只扫 profile 顶层
- *      dependencies —— git-bundle 是唯一顶层依赖）；
- *   ③ `dsh --profile <新> --dump-config` 断言 git/ui-git 两行
- *      （`id: dsh-plugin-git` 与 `id: dsh-plugin-client-ui-git`，且都在
- *      `# == dsh-gitkit-bundle` 层标签之下；npm/bin 列无层标签时降级全文两行判据）；
+ *   ② `dsh plugin --profile <新> add file:<packages/host 绝对路径>` —— 单一安装入口：
+ *      包自带 dsh.bundle（宿主 profile 用 nodeLinker: hoisted，app-boot/src/profile.ts
+ *      PROFILE_PNPM_WORKSPACE），reconcile 按 dsh.bundle 把 insert 行追加进
+ *      dsh.profile.bundles（packages/boot/plugin-manager/src/operations.ts reconcile：
+ *      只扫 profile 顶层 dependencies —— dsh-gitkit 是唯一顶层依赖）；
+ *   ③ `dsh --profile <新> --dump-config` 断言 git 行（`id: dsh-plugin-git` +
+ *      `name: dsh-gitkit`，在 `# == dsh-gitkit` 层标签之下；npm/bin 列无层标签时降级
+ *      全文 id 行判据），且不得出现已退役的 `dsh-plugin-client-ui-git` 行；
  *   ④ boot web（`dsh --profile <新> --no-open --port 0`，runbook §2.1 实测命令形态；
  *      profile 需 dsh-web-app bundle 层——install 的 init 只给 dsh-base
  *      （official-bundles/src/bundles.ts:43-44），此为 profile 层用户文件补齐，
@@ -54,9 +54,9 @@
  *      GitStatusSnapshot，无 {kind:'ready'} 包装——{kind} 只在 followStatus 帧与
  *      host 引擎内部 StatusAvailability 'ready'（status.ts:50）；本脚本按实形断言
  *      ok:true + born 分支全量字段，语义等价「仓库就绪」，与 verify-load 头注同口径）；
- *   ⑥ client 服务 HTML（认证后的 index）含两个包：__DSH_BOOT__ entries 有
- *      `dsh-gitkit-ui`（inject 边含 `dsh-gitkit`），HTML 文本同时
- *      出现两个包名；其 url 服务出的 bundle 带闭包工厂标记；
+ *   ⑥ client 服务 HTML（认证后的 index）含该包：__DSH_BOOT__ entries 有
+ *      `dsh-gitkit`（单包的 client 条目 id = 包名；inject 边不含自身），HTML 文本
+ *      不得出现已退役的 `dsh-gitkit-ui`；其 url 服务出的 bundle 带闭包工厂标记；
  *   ⑦ 清理：taskkill 宿主进程树 + 删临时 DSH_HOME 与夹具仓库（runbook §6.9），
  *      退出码 0；任何一步失败退出码 1 并打印诊断。
  *
@@ -97,6 +97,14 @@ const DUMP_TIMEOUT_MS = 120_000
 const BUILD_TIMEOUT_MS = 600_000 // P6 干净 clone 相：pnpm run build 的超时上界
 const RPC_TIMEOUT_MS = 30_000 // 本机 fetch 一律带上界：无信号 fetch 可无限挂起（第 2 轮空输出失败的头号嫌疑）
 const PROFILE = `dshgit-install-${Date.now().toString(36)}`
+// 单包合并后的发布身份：唯一 npm 包 / 唯一 profile 顶层依赖 / 唯一 bundle 层 / client 条目 id。
+const PKG_NAME = 'dsh-gitkit'
+const PKG_DIR_REL = ['packages', 'host']
+const BUNDLE_LAYER_LABEL = `# == ${PKG_NAME}` // dump-config 的层标签（app-boot index.ts:727 `# == ${label}`）
+const HOST_ENTRY_ID = 'dsh-plugin-git'
+// 已退役的双包身份：任何一处出现 = 迁移不完整或旧安装残留。
+const RETIRED_NAMES = ['dsh-gitkit-ui', 'dsh-gitkit-bundle']
+const RETIRED_ENTRY_IDS = ['dsh-plugin-client-ui-git']
 
 // 运行日志（法医通道，第 2 轮 verify:install 空输出失败后增设）：step/phaseStep/fail/
 // RESULT 同步 append 落盘——runGate 的 tail 取 stderr 优先（stdout 可能整段被丢弃），
@@ -188,7 +196,8 @@ async function prepareCleanClone(repoRoot) {
     execFileSync('git', ['clone', '--quiet', repoRoot, cloneDir], { stdio: 'ignore' })
     assert(!existsSync(join(cloneDir, 'node_modules')), `clean clone unexpectedly contains node_modules — ${repoRoot} working copy is dirty?`)
     assert(!existsSync(join(cloneDir, 'packages', 'host', 'lib')), 'clean clone unexpectedly contains packages/host/lib — build artifacts must not be committed')
-    assert(!existsSync(join(cloneDir, 'packages', 'client-ui', 'lib')), 'clean clone unexpectedly contains packages/client-ui/lib — build artifacts must not be committed')
+    assert(!existsSync(join(cloneDir, 'packages', 'client-ui')) && !existsSync(join(cloneDir, 'git-bundle')),
+      'clean clone unexpectedly contains the retired packages/client-ui or git-bundle directory')
     step('clean clone: no node_modules, no committed lib/ build artifacts')
     step('clean clone: pnpm install --frozen-lockfile（README §2 全新 clone 前提，与 ci.yml/发布门禁同口径）')
     const pnpmInstall = await run('pnpm', ['install', '--frozen-lockfile'], {
@@ -212,8 +221,8 @@ async function prepareCleanClone(repoRoot) {
 
 /**
  * 单相安装断言链（P6 §2.6③ 参数化）：对 repoRoot 指向的插件仓库副本走 ①-⑥ 全链。
- * 依赖 repoRoot 的恰为 6 个路径常量（repoRoot 本体 + bundleDir / bundleManifestPath /
- * hostLib / hostTypert / clientLib）与 1 处 step（打印 repo）；不再自行 process.exit ——
+ * 依赖 repoRoot 的恰为 4 个路径常量（pkgDir / hostLib / hostTypert / clientLib）与
+ * 1 处 step（打印 repo）；不再自行 process.exit ——
  * 返回 { outcome, exit }，退出点唯一收口到模块底部统一 finally 之后的 process.exit。
  */
 async function installFlow(repoRoot, phaseLabel) {
@@ -221,22 +230,26 @@ async function installFlow(repoRoot, phaseLabel) {
     console.log(`[verify-install][${phaseLabel}] ${message}`)
     journal(`[${phaseLabel}] ${message}`)
   }
-  // ── 前置检查（读侧断言，无资源需清理）：git-bundle 薄包 + 两包构建产物（② 的产物面）──
+  // ── 前置检查（读侧断言，无资源需清理）：单包 manifest + 两面构建产物（② 的产物面）──
   // 失败直接抛出（→ FAIL）：破损 checkout 不是兼容性结局，观测列的 KNOWN-UNSUPPORTED
   // 纯记录只覆盖宿主兼容面，不吞仓库破损。
-  const bundleDir = join(repoRoot, 'git-bundle')
-  const bundleManifestPath = join(bundleDir, 'package.json')
-  const hostLib = join(repoRoot, 'packages', 'host', 'lib', 'index.js')
-  const hostTypert = join(repoRoot, 'packages', 'host', 'lib', 'typert.host.js')
-  const clientLib = join(repoRoot, 'packages', 'client-ui', 'lib', 'client.js')
+  const pkgDir = join(repoRoot, 'packages', 'host')
+  const pkgManifestPath = join(pkgDir, 'package.json')
+  const hostLib = join(pkgDir, 'lib', 'index.js')
+  const hostTypert = join(pkgDir, 'lib', 'typert.host.js')
+  const clientLib = join(pkgDir, 'lib', 'client.js')
   assert(target.cli !== null && target.cliArgs !== null && target.cliCwd !== null,
     `verify target CLI unresolved (kind=${target.kind}) — npm column install step missing?`)
-  assert(existsSync(bundleManifestPath), 'git-bundle thin package missing — it ships in the repo, this is a broken checkout')
+  assert(existsSync(pkgManifestPath), 'dsh-gitkit manifest missing — broken checkout')
   assert(existsSync(hostLib), `host lib missing: ${hostLib} — run \`pnpm run build\` first`)
   assert(existsSync(hostTypert), `generated host typert artifact missing: ${hostTypert} — run \`pnpm run build\` first`)
   assert(existsSync(clientLib), `client bundle missing: ${clientLib} — run \`pnpm run build\` first`)
-  const bundleManifest = JSON.parse(readFileSync(bundleManifestPath, 'utf8'))
-  assert(bundleManifest.name === 'dsh-gitkit-bundle', `git-bundle manifest name wrong: ${bundleManifest.name}`)
+  const pkgManifest = JSON.parse(readFileSync(pkgManifestPath, 'utf8'))
+  assert(pkgManifest.name === PKG_NAME, `package manifest name wrong: ${pkgManifest.name}`)
+  assert(pkgManifest.dsh?.bundle?.patch === './cordis.patch.yml' && pkgManifest.dsh?.client?.platform === 'web',
+    `package manifest must carry both faces (dsh.bundle.patch + dsh.client.platform=web): ${JSON.stringify(pkgManifest.dsh)}`)
+  assert(!existsSync(join(repoRoot, 'git-bundle')) && !existsSync(join(repoRoot, 'packages', 'client-ui')),
+    'retired git-bundle / packages/client-ui directories are present again (single-package merge incomplete)')
 
   let host = null
   let home = null
@@ -245,7 +258,7 @@ async function installFlow(repoRoot, phaseLabel) {
   let outcome = 'FAIL'
   let flowExit = EXIT_FAIL
   try {
-    phaseStep(`dsh target: ${target.label}; repo: ${repoRoot}; installing ${bundleManifest.name}@${bundleManifest.version}`)
+    phaseStep(`dsh target: ${target.label}; repo: ${repoRoot}; installing ${pkgManifest.name}@${pkgManifest.version}（host + client 同包）`)
 
     // status() 夹具：临时真仓库（真 git init + 一笔种子提交 ⇒ ready 快照分支字段可断言；
     // world 事实由本脚本的 git 命令铸造，RPC 只做只读消费）。
@@ -271,27 +284,33 @@ async function installFlow(repoRoot, phaseLabel) {
     const env = { ...process.env, DSH_HOME: home }
     const profileDir = join(home, 'profiles', PROFILE)
 
-    // ── 1. 单一安装入口：dsh plugin --profile <新> add file:<git-bundle 绝对路径> ──
-    const bundleSpec = `file:${bundleDir.replaceAll('\\', '/')}`
-    phaseStep(`installing: dsh plugin --profile ${PROFILE} add ${bundleSpec}`)
-    const install = await run(target.cli, [...target.cliArgs, 'plugin', '--profile', PROFILE, 'add', bundleSpec], {
+    // 单包合并：直接安装 packages/host（host + client 同包，包自带 dsh.bundle）。
+    const pkgSpec = `file:${pkgDir.replaceAll('\\', '/')}`
+    phaseStep(`installing: dsh plugin --profile ${PROFILE} add ${pkgSpec}`)
+    const install = await run(target.cli, [...target.cliArgs, 'plugin', '--profile', PROFILE, 'add', pkgSpec], {
       cwd: target.cliCwd, env, timeoutMs: INSTALL_TIMEOUT_MS,
     })
-    assert(install.code === 0, `git-bundle install failed (exit ${install.code}):\n${install.out.slice(-2000)}`)
-    phaseStep('installed git-bundle (exit 0)')
+    assert(install.code === 0, `${PKG_NAME} install failed (exit ${install.code}):\n${install.out.slice(-2000)}`)
+    phaseStep(`installed ${PKG_NAME} (exit 0)`)
 
-    // 安装事实：profile manifest 只记 git-bundle；node_modules（hoisted）里两包齐备。
+    // 安装事实：profile manifest 记 dsh-gitkit 为顶层依赖；node_modules（hoisted）里该包齐备，
+    // 且已退役的 dsh-gitkit-ui / dsh-gitkit-bundle 不得出现。
     const profilePackageJson = JSON.parse(readFileSync(join(profileDir, 'package.json'), 'utf8'))
     const deps = profilePackageJson.dependencies ?? {}
-    assert(deps['dsh-gitkit-bundle'] !== undefined,
-      `profile dependencies missing dsh-gitkit-bundle: ${JSON.stringify(deps)}`)
-    for (const name of ['dsh-gitkit', 'dsh-gitkit-ui']) {
-      assert(existsSync(join(profileDir, 'node_modules', ...name.split('/'), 'package.json')),
-        `hoisted node_modules missing ${name} — the thin package did not bring the two real packages in`)
+    assert(deps[PKG_NAME] !== undefined, `profile dependencies missing ${PKG_NAME}: ${JSON.stringify(deps)}`)
+    for (const retired of RETIRED_NAMES) {
+      assert(deps[retired] === undefined, `profile dependencies still carry the retired ${retired}: ${JSON.stringify(deps)}`)
+      assert(!existsSync(join(profileDir, 'node_modules', retired, 'package.json')),
+        `hoisted node_modules still contains the retired ${retired}`)
     }
+    assert(existsSync(join(profileDir, 'node_modules', PKG_NAME, 'package.json')),
+      `hoisted node_modules missing ${PKG_NAME}`)
     const bundles = profilePackageJson.dsh?.profile?.bundles
-    assert(Array.isArray(bundles) && bundles.includes('dsh-gitkit-bundle'),
-      `reconcile did not attach the git-bundle layer: ${JSON.stringify(profilePackageJson.dsh)}`)
+    assert(Array.isArray(bundles) && bundles.includes(PKG_NAME),
+      `reconcile did not attach the ${PKG_NAME} layer: ${JSON.stringify(profilePackageJson.dsh)}`)
+    for (const retired of RETIRED_NAMES) {
+      assert(!bundles.includes(retired), `profile bundles still list the retired ${retired}: ${JSON.stringify(bundles)}`)
+    }
     phaseStep(`profile recorded: dependencies=${JSON.stringify(Object.keys(deps))}, bundles=${JSON.stringify(bundles)}`)
 
     // web 宿主需要 dsh-web-app bundle 层（install init 只给 dsh-base，同 verify-load 处理）。
@@ -320,41 +339,38 @@ async function installFlow(repoRoot, phaseLabel) {
     writeFileSync(join(profileDir, 'cordis.patch.yml'), overrideRow)
     phaseStep('profile cordis.patch.yml: workspaceOverride row written')
 
-    // ── 2. --dump-config 断言 git/ui-git 两行（git-bundle 层标签之下）──
+    // ── 2. --dump-config 断言 host insert 行（包自带层标签之下）+ 无已退役行 ──
     const dump = await run(target.cli, [...target.cliArgs, '--profile', PROFILE, '--dump-config'], {
       cwd: target.cliCwd, env, timeoutMs: DUMP_TIMEOUT_MS,
     })
     assert(dump.code === 0, `--dump-config failed (exit ${dump.code}):\n${dump.out.slice(-2000)}`)
-    const layerAt = dump.out.indexOf('# == dsh-gitkit-bundle')
+    // dump-config 判据：host insert 行在场（id: dsh-plugin-git + name: dsh-gitkit），
+    // 已退役的 dsh-plugin-client-ui-git 行不得出现。name 行用行尾锚定正则兼容带/不带
+    // 引号两种 YAML 渲染（v0.1.0 实测 dev 树渲染为不带引号）；`\r?` 兼容 CRLF。
+    const hasGitRow = (text) => text.includes(`id: ${HOST_ENTRY_ID}`) && /name: ["']?dsh-gitkit["']?\r?$/m.test(text)
+    const hasRetiredRow = (text) => RETIRED_ENTRY_IDS.some((id) => text.includes(`id: ${id}`))
+    assert(dump.code === 0, `--dump-config failed (exit ${dump.code}):\n${dump.out.slice(-2000)}`)
+    assert(!hasRetiredRow(dump.out),
+      `dump-config still carries a retired insert row (${RETIRED_ENTRY_IDS.join(', ')}):\n${dump.out.slice(-1200)}`)
+    const layerAt = dump.out.indexOf(BUNDLE_LAYER_LABEL)
     if (target.strictLayerLabel) {
-      // dev-tree 列：保留严格层标签断言（与 v0.1.1 行为一致）。name 行改用行尾
-      // 锚定正则兼容两种渲染——dev 树 dump-config 的 YAML 重序列化自 v0.1.0
-      // 实测后把 `name: 'dsh-gitkit'` 渲染为不带引号的 `name: dsh-gitkit`（首轮
-      // verify:install 失败实证）；`$` 锚保精度（防 `dsh-gitkit-ui` 前缀串味
-      // 满足 git 行断言），`\r?` 兼容 CRLF。
-      assert(layerAt >= 0, `dump-config has no dsh-gitkit-bundle layer label:\n${dump.out.slice(-1200)}`)
-      const layerText = dump.out.slice(layerAt)
-      assert(layerText.includes('id: dsh-plugin-git') && /name: ["']?dsh-gitkit["']?\r?$/m.test(layerText),
-        `dump-config git-bundle layer lacks the git row:\n${layerText}`)
-      assert(layerText.includes('id: dsh-plugin-client-ui-git') && /name: ["']?dsh-gitkit-ui["']?\r?$/m.test(layerText),
-        `dump-config git-bundle layer lacks the ui-git row:\n${layerText}`)
-      phaseStep('dump-config OK: git / ui-git two insert rows under the dsh-gitkit-bundle layer')
+      // dev-tree 列：严格层标签断言——该行必须位于 `# == dsh-gitkit` 层之下
+      // （包自带 dsh.bundle，reconcile 自动挂层）。
+      assert(layerAt >= 0, `dump-config has no ${BUNDLE_LAYER_LABEL} layer label:\n${dump.out.slice(-1200)}`)
+      assert(hasGitRow(dump.out.slice(layerAt)),
+        `dump-config ${BUNDLE_LAYER_LABEL} layer lacks the host insert row:\n${dump.out.slice(layerAt)}`)
+      phaseStep(`dump-config OK: host insert row under the ${BUNDLE_LAYER_LABEL} layer; no retired rows`)
     } else {
-      // npm/bin 列：部分宿主版本 dump-config 不带 `# == dsh-gitkit-bundle` 层标签前缀
-      // ——降级为全文两行判据（id: dsh-plugin-git + id: dsh-plugin-client-ui-git）+ WARN。
+      // npm/bin 列：部分宿主版本 dump-config 不带层标签——降级为全文 id 行判据 + WARN。
       if (layerAt < 0) {
-        console.warn('[verify-install] WARN: dump-config has no dsh-gitkit-bundle layer label（npm/bin 列降级：全文两行判据）')
-        assert(dump.out.includes('id: dsh-plugin-git') && dump.out.includes('id: dsh-plugin-client-ui-git'),
-          `dump-config lacks both plugin id rows (degraded whole-text criterion):\n${dump.out.slice(-1200)}`)
+        console.warn(`[verify-install] WARN: dump-config has no ${BUNDLE_LAYER_LABEL} layer label（npm/bin 列降级：全文 id 行判据）`)
+        assert(hasGitRow(dump.out),
+          `dump-config lacks the host insert row (degraded whole-text criterion):\n${dump.out.slice(-1200)}`)
       } else {
-        const layerText = dump.out.slice(layerAt)
-        // name 行行尾锚定正则，带引号/不带引号两种渲染兼容（同 dev-tree 列注释）。
-        assert(layerText.includes('id: dsh-plugin-git') && /name: ["']?dsh-gitkit["']?\r?$/m.test(layerText),
-          `dump-config git-bundle layer lacks the git row:\n${layerText}`)
-        assert(layerText.includes('id: dsh-plugin-client-ui-git') && /name: ["']?dsh-gitkit-ui["']?\r?$/m.test(layerText),
-          `dump-config git-bundle layer lacks the ui-git row:\n${layerText}`)
+        assert(hasGitRow(dump.out.slice(layerAt)),
+          `dump-config ${BUNDLE_LAYER_LABEL} layer lacks the host insert row:\n${dump.out.slice(layerAt)}`)
       }
-      phaseStep('dump-config OK: git / ui-git rows present（层标签按列放宽）')
+      phaseStep('dump-config OK: host insert row present; no retired rows（层标签按列放宽）')
     }
 
     // ── 3. boot web ──
@@ -407,25 +423,31 @@ async function installFlow(repoRoot, phaseLabel) {
       phaseStep(`host load marker: ${fullMarker ? 'full' : 'degraded substring'} "GitService active": present`)
     }
 
-    // ── 4. client 服务 HTML 含两个包 ──
+    // ── 4. client 服务 HTML 含单包的 client 条目 ──
     const browserCookie = await tokenQueryCookie(base.origin, token, cookieCallOptions)
     const indexResponse = await fetch(base.origin, { headers: { cookie: browserCookie }, redirect: 'manual', signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
     assert(indexResponse.status === 200, `authenticated index returned ${indexResponse.status}`)
+    // 单包的 client 条目：id = 包名（client-modules manifest.ts「Entry name == package name」），
+    // inject 不得自引用；已退役的 dsh-gitkit-ui 条目与包名不得再出现。
     const indexHtml = await indexResponse.text()
-    assert(indexHtml.includes('dsh-gitkit') && indexHtml.includes('dsh-gitkit-ui'),
-      'served index HTML does not contain both package names')
+    assert(indexHtml.includes(PKG_NAME), 'served index HTML does not contain the package name')
+    for (const retired of RETIRED_NAMES) {
+      assert(!indexHtml.includes(retired), `served index HTML still mentions the retired ${retired}`)
+    }
     const boot = extractJsonAfter(indexHtml, '__DSH_BOOT__', extractOptions)
     const entries = boot.entries ?? []
-    const clientEntry = entries.find((entry) => entry.id === 'dsh-gitkit-ui')
+    const clientEntry = entries.find((entry) => entry.id === PKG_NAME)
     assert(clientEntry !== undefined,
-      `boot graph has no entry 'dsh-gitkit-ui'; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
-    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('dsh-gitkit'),
-      `client entry inject edges missing 'dsh-gitkit': ${JSON.stringify(clientEntry.inject)}`)
+      `boot graph has no entry '${PKG_NAME}'（单包合并后 client 条目 id = 包名）; ids: ${JSON.stringify(entries.map((e) => e.id))}`)
+    assert(Array.isArray(clientEntry.inject) && !clientEntry.inject.includes(PKG_NAME),
+      `client entry inject must not self-reference '${PKG_NAME}': ${JSON.stringify(clientEntry.inject)}`)
+    assert(Array.isArray(clientEntry.inject) && clientEntry.inject.includes('@deepseek-ai/dsh-client-ui-slots'),
+      `client entry inject edges missing '@deepseek-ai/dsh-client-ui-slots': ${JSON.stringify(clientEntry.inject)}`)
     const bundleResponse = await fetch(new URL(clientEntry.url, base.origin), { headers: { cookie: browserCookie }, signal: AbortSignal.timeout(RPC_TIMEOUT_MS) })
     assert(bundleResponse.status === 200, `client bundle fetch ${clientEntry.url} → ${bundleResponse.status}`)
     const bundleBody = await bundleResponse.text()
     assert(bundleBody.includes('__ModuleLoader__'), 'served client bundle lacks the closure-factory marker')
-    phaseStep(`served HTML contains both packages; client bundle served (${bundleBody.length} bytes, closure factory)`)
+    phaseStep(`served HTML carries the ${PKG_NAME} client entry; client bundle served (${bundleBody.length} bytes, closure factory)`)
 
     // ── 5. git/status RPC：workspaceOverride 夹具仓库的 ready 快照 ──
     const apiCookie = await exchangeTokenForCookie(base.origin, token, cookieCallOptions)

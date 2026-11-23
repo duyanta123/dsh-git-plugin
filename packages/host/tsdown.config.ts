@@ -43,5 +43,12 @@ export default defineConfig({
   // worker.ts:53）。package 模式（generate()）会对全工作区有面包都跑 validateExport，
   // 会误伤 vendored @deepseek-ai/dsh-typert-protocol（有 Events 扩充面但不发布
   // typert 产物，树内 protocol 亦然）。
-  plugins: [typertPlugin({ mode: 'workspace' })],
+  // 单包合并后本包 manifest 同时带 dsh.client（双面包）：analyzer.ts:562-568 对经
+  // 根 tsconfig.json 登记的双面包同时登记 host + client 两个 face，而 analyze()
+  // （:367-375）只要 client 面有登记就会去读根 `tsconfig.client.json`（本仓没有，
+  // :538 的存在性保护只覆盖登记阶段）。client 半（src/client）没有 Typert 面面
+  // （无 @Remote / bindTypertRemote / Context 扩充，只消费本包 `./remote`），所以把
+  // 生成相位显式收窄为 host —— 与合并前“client 面零登记 → 整段 continue”等价，
+  // 产物逐字节不变（见 docs/single-package-merge.workflow.yaml 验收 G2）。
+  plugins: [typertPlugin({ mode: 'workspace', faces: ['host'] })],
 })

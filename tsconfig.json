@@ -1,7 +1,7 @@
 {
   // 仓库级工程：只覆盖根 tests/（骨架完整性测试）与 vitest.config.ts。
-  // 包源码各自有 tsconfig（packages/host、packages/client-ui），由根 package.json
-  // 的 typecheck 脚本逐工程串行执行。
+  // 包源码的 tsconfig 都在 packages/host（tsconfig.json = Node host 面、tsconfig.client.json =
+  // Web client 面），由根 package.json 的 typecheck 脚本逐工程串行执行。
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true

@@ -1,9 +1,13 @@
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+/** 单包合并后退役的包目录（docs/single-package-merge.workflow.yaml）。 */
+const RETIRED_PACKAGE_DIRS = ['packages/client-ui', 'git-bundle']
 
 async function readJson(rel: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path.join(repoRoot, rel), 'utf8')) as Record<string, unknown>
@@ -18,54 +22,76 @@ function flattenKeys(obj: Record<string, unknown>): string[] {
 }
 
 describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）', () => {
-  it('双包名与 workspace 成员符合决议（spec §0.1 用户决议：dsh-gitkit + dsh-gitkit-ui）', async () => {
+  it('单包身份：只有 dsh-gitkit 一个发布包；退役的 client-ui / git-bundle 目录不得回潮', async () => {
+    // 决议（docs/single-package-merge.workflow.yaml）：host 与 client 两半同属一个 npm 包，
+    // 包名沿用 dsh-gitkit（已发布名），client 半经 exports["./client"] + dsh.client 编入。
     const host = await readJson('packages/host/package.json')
-    const client = await readJson('packages/client-ui/package.json')
     expect(host['name']).toBe('dsh-gitkit')
-    expect(client['name']).toBe('dsh-gitkit-ui')
     const ws = await readText('pnpm-workspace.yaml')
     expect(ws).toContain('packages/*')
+    for (const dir of RETIRED_PACKAGE_DIRS) {
+      expect(existsSync(path.join(repoRoot, dir)), `${dir} 已退役，不得重新出现`).toBe(false)
+    }
+    // 锁文件 importer 面 = 仓库内全部 workspace 成员（第三个是 vendored 的 typert-protocol）。
+    const lock = await readText('pnpm-lock.yaml')
+    const importers = lock.split(/\r?\n/u).filter((line) => /^ {2}packages\/[^:]+:\s*$/u.test(line))
+    expect(importers.map((line) => line.trim())).toEqual(['packages/host:', 'packages/typert-protocol:'])
+    expect(lock).not.toMatch(/packages\/client-ui|git-bundle/u)
   })
 
-  it('host 包 exports 暴露 ./types 与 typert 产物双导出（generator 契约形状，workspace.ts validateExport）', async () => {
+  it('host 面 exports：./types 与 typert 产物双导出（generator 契约形状，workspace.ts validateExport）', async () => {
     const host = await readJson('packages/host/package.json')
     const exportsMap = host['exports'] as Record<string, unknown>
+    expect(host['main']).toBe('./lib/index.js')
     expect(exportsMap['./types']).toBeDefined()
     // remote 地基阶段（④-A）：./typert = typert.loader 自动注册的 host 面 strict 描述符；
     // ./remote = client 半 codec 贡献。形状由 generator validateExport 强制（恒等比对）。
     expect(exportsMap['./typert']).toEqual({ types: './lib/typert.host.d.ts', default: './lib/typert.host.js' })
     expect(exportsMap['./remote']).toEqual({ types: './lib/typert.remote-client.d.ts', default: './lib/typert.remote-client.js' })
-    expect(host['dsh']).toEqual({ bundle: { patch: './cordis.patch.yml' } })
+    const dsh = host['dsh'] as Record<string, unknown>
+    expect(dsh['bundle']).toEqual({ patch: './cordis.patch.yml' })
     // files 必须显式封闭覆盖四个产物（validateExport 的 files.includes 检查）。
     const files = host['files'] as string[]
-    for (const artifact of ['lib/typert.host.js', 'lib/typert.host.d.ts', 'lib/typert.remote-client.js', 'lib/typert.remote-client.d.ts']) {
+    for (const artifact of [
+      'lib/typert.host.js',
+      'lib/typert.host.d.ts',
+      'lib/typert.remote-client.js',
+      'lib/typert.remote-client.d.ts',
+      'lib/typert.remote-client.d.ts.map',
+    ]) {
       expect(files).toContain(artifact)
     }
   })
 
-  it('client 包：声明了 dsh.client 就必须有 ./client 导出；platform=web；inject 含 host 包', async () => {
-    const client = await readJson('packages/client-ui/package.json')
-    const dsh = client['dsh'] as Record<string, unknown>
+  it('client 面（并入同包）：声明了 dsh.client 就必须有 ./client 导出；platform=web；inject 不含自身', async () => {
+    const host = await readJson('packages/host/package.json')
+    const dsh = host['dsh'] as Record<string, unknown>
     const dshClient = dsh['client'] as Record<string, unknown>
-    const exportsMap = client['exports'] as Record<string, unknown>
+    const exportsMap = host['exports'] as Record<string, unknown>
     expect(dshClient['platform']).toBe('web')
-    expect(exportsMap['./client']).toBeDefined()
+    expect(exportsMap['./client']).toEqual({ types: './lib/client/index.d.ts', default: './lib/client.js' })
     const inject = dshClient['inject'] as string[]
-    expect(inject).toContain('dsh-gitkit')
+    // 同包后自身条目无语义（client 半本就在 dsh-gitkit 内），保留会形成 boot 图自依赖边。
+    expect(inject).not.toContain('dsh-gitkit')
     expect(inject).toContain('@deepseek-ai/dsh-client-ui-slots')
     // D8：包名带 -right（spec 转引 host-capability-map.md:451）
     expect(inject).toContain('@deepseek-ai/dsh-client-ui-sidebar-right')
+    expect(inject.every((name) => name.startsWith('@deepseek-ai/'))).toBe(true)
+    const files = host['files'] as string[]
+    for (const artifact of ['lib/client.js', 'lib/client/**/*.d.ts']) {
+      expect(files, `files 缺 client 面产物 ${artifact}`).toContain(artifact)
+    }
   })
 
-  it('两包 cordis.patch.yml 的 insert 行 id/name 与包身份一致（reconcile 依赖，runbook §3.A/§3.D）', async () => {
-    const hostPatch = await readText('packages/host/cordis.patch.yml')
-    expect(hostPatch).toContain('- insert:')
-    expect(hostPatch).toContain('id: dsh-plugin-git')
-    expect(hostPatch).toContain("name: 'dsh-gitkit'")
-    const clientPatch = await readText('packages/client-ui/cordis.patch.yml')
-    expect(clientPatch).toContain('- insert:')
-    expect(clientPatch).toContain('id: dsh-plugin-client-ui-git')
-    expect(clientPatch).toContain("name: 'dsh-gitkit-ui'")
+  it('唯一一份 cordis.patch.yml 的 insert 行 id/name 与包身份一致（reconcile 依赖，runbook §3.A/§3.D）', async () => {
+    const patch = await readText('packages/host/cordis.patch.yml')
+    expect(patch).toContain('- insert:')
+    expect(patch).toContain('id: dsh-plugin-git')
+    expect(patch).toContain("name: 'dsh-gitkit'")
+    // 单包 = 单条 host 入口行；Web 面由 dsh.client 编入 boot，不再有独立 client 行。
+    expect(patch.match(/^\s*-\s*id:/gmu)).toHaveLength(1)
+    expect(patch).not.toMatch(/dsh-plugin-client-ui-git|dsh-gitkit-ui/u)
+    expect(existsSync(path.join(repoRoot, 'git-bundle/cordis.patch.yml'))).toBe(false)
   })
 
   it('locale 骨架：zh/en 键集一致（spec §④ 规则：新增键必须 zh/en 同步）', async () => {
@@ -115,8 +141,6 @@ describe('workspace skeleton（骨架完整性，防最小插件阶段倒退）'
     const manifests = [
       'package.json',
       'packages/host/package.json',
-      'packages/client-ui/package.json',
-      'git-bundle/package.json',
       'pnpm-workspace.yaml',
       'pnpm-lock.yaml',
     ]

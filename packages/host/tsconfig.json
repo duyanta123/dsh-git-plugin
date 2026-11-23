@@ -3,5 +3,10 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src", "tests"]
+  // Node host 面（服务源码 + host 测试）。client 半（src/client、tests/client）走
+  // tsconfig.client.json——两个编译面互不纳入：React/DOM 不进 Typert host face 程序
+  // （typert-generator 经 tsconfig.host.json → 本文件的 references 登记包并取文件集），
+  // host 的 Node 类型面也不进 client 程序。
+  "include": ["src", "tests"],
+  "exclude": ["src/client", "tests/client"]
 }

@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.client.json",
+  "compilerOptions": {
+    "noEmit": false,
+    // 只产声明：./client 的运行时产物是 scripts/build-client.mjs 的闭包工厂
+    // （lib/client.js），这里补 lib/client/index.d.ts 声明树供
+    // exports["./client"].types 解析。文件与目录共存：lib/client.js 是文件，
+    // lib/client/ 是声明目录。
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "outDir": "lib/client",
+    "rootDir": "src/client",
+    "sourceMap": false,
+    // 同 host tsconfig.build.json：声明构建回落 node_modules 解析，避免把
+    // workspace 源文件拉进程序触发 rootDir TS6059。
+    "paths": {}
+  },
+  "include": ["src/client"]
+}

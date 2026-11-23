@@ -8,7 +8,7 @@
  * 流程：
  *   ① `npm pack <name>@<version>` 从 registry 拉已发布 tarball（stdout 尾行解析 tgz 路径）；
  *   ② 包目录 `npm pack --ignore-scripts` 重打包（用 Build 步已产出的 lib/，跳过 prepack
- *      重复构建）。**本地运行必须先 `pnpm run build`**——两包均无 prepack/build 生命周期
+ *      重复构建）。**本地运行必须先 `pnpm run build`**——本包无 prepack/build 生命周期
  *      脚本，pack 打的是磁盘上现有 lib/（v0.3.0 教训：陈旧 lib 重打包产出旧注释产物，
  *      侦探假阳性）；
  *   ③ `tar -xzf` 解包两份；
@@ -39,10 +39,10 @@ import { resolveNpmCliJs } from './verify-target.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(here, '..')
-/** 发布包 → 仓库内包目录（release.yml 只发这两个；vendored typert-protocol 不属于本仓库）。 */
+/** 发布包 → 仓库内包目录（单包合并后 release.yml 只发 dsh-gitkit；host 与 client 两面同包；
+ *  vendored typert-protocol 不属于本仓库）。 */
 const PACKAGES = [
   ['dsh-gitkit', 'host'],
-  ['dsh-gitkit-ui', 'client-ui'],
 ]
 const PACK_TIMEOUT_MS = 600_000
 const TAR_TIMEOUT_MS = 120_000
@@ -158,17 +158,18 @@ function resolvePackedTarball(packOut, destDir) {
  * 更早的 CDN 复制延迟，本步从未真正执行过）：
  *   ① client bundle 内嵌 CSS 源文件绝对路径（lightningcss region 标签
  *      `//#region \0dsh-git-css:D:\...`）——runner 路径与本地路径逐字节必不同；
- *   ② pnpm publish 把 workspace: 协议依赖替换为实际版本（devDependencies.dsh-gitkit
- *      workspace:* → 0.3.0），而 npm pack 不替换——语义比较直接失配。
+ *   ② pnpm publish 把 workspace: 协议依赖替换为实际版本（当时 client 包的
+ *      devDependencies.dsh-gitkit workspace:* → 0.3.0），而 npm pack 不替换——语义比较直接失配
+ *      （单包合并后本包 manifest 已无 workspace: 依赖；归一逻辑保留为不变量守卫）。
  */
 function normalizeBuildArtifact(buffer) {
   const text = buffer.toString('utf8')
   if (!text.includes('dsh-git-css:')) return buffer
-  // region 路径截断到两侧共同锚点 `packages/client-ui/`——其后为同一 checkout 的同
-  // 相对路径，归一后逐字节可比。
+  // region 路径截断到两侧共同锚点 `packages/host/`（单包合并后 client 源码树落
+  // packages/host/src/client）——其后为同一 checkout 的同相对路径，归一后逐字节可比。
   const normalized = text.replace(
-    /dsh-git-css:[^\r\n]*?packages[\\/]client-ui[\\/]/g,
-    'dsh-git-css:<repo>/packages/client-ui/',
+    /dsh-git-css:[^\r\n]*?packages[\\/]host[\\/]/g,
+    'dsh-git-css:<repo>/packages/host/',
   )
   return Buffer.from(normalized, 'utf8')
 }
