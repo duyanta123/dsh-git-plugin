@@ -97,7 +97,7 @@ steps:
   - id: acceptance
     agent: tester
     depends: [contracts-compliance, gates-release-scripts, docs-migration]
-    status: in_progress
+    status: blocked
     task: >
       pnpm install --frozen-lockfile → pnpm run typecheck → pnpm test → pnpm run check:locale →
       pnpm run build → npm pack 内容检查 → pnpm run verify:load →
@@ -162,3 +162,4 @@ progress:
   - { step: contracts-compliance, at: "2026-11-23", note: "skeleton / licenses 重写为单包合同；NOTICE/PORTING 目标路径随迁；三件套两份同文；check:locale exit 0" }
   - { step: gates-release-scripts, at: "2026-11-23", note: "verify-load / verify-install / verify-release-tarball / release.yml / ci.yml 改单包；node --check 全过；真机实跑归 acceptance" }
   - { step: docs-migration, at: "2026-11-23", note: "README / AGENTS.md / CLAUDE.md / capability-spec v2.1 修订记录 / packages/host/README.md" }
+  - { step: acceptance, at: "2026-11-23", note: "已过：frozen-lockfile / typecheck / check:locale / build / npm pack 清单（128 文件）；pnpm test 71 文件 1147 用例全部有通过记录（67 文件 2-worker 轮次 + 3 文件单 worker 复跑）。阻塞：verify:load / verify:install 两相 / npm 列未跑——宿主机系统提交内存 88.7/90.3 GB，git 与 node 子进程 spawn ENOMEM，须腾出内存后补跑" }
