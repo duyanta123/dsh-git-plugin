@@ -1,7 +1,7 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-代码版本 **v0.3.0**（含 v0.2.0 全部内容——tag `v0.2.0` 已发布并实核；v0.3.0 = V3 五批功能面，**tag/npm 尚未发布**——发布动作属发布批，门禁实跑口径见 §6）。
+代码版本 **v0.3.0**（含 v0.2.0 全部内容；v0.3.0 = V3 五批功能面，tag `v0.3.0` 与 npm 0.3.0 已发布；门禁实跑口径见 §6）。单包合并后的首个版本尚未发布（见下）。
 **单包合并（2026-11-23）**：host 与 web 两半并入**同一个 npm 包 `dsh-gitkit`**，原 `dsh-gitkit-ui` 与安装薄包 `dsh-gitkit-bundle` 退役。
 npm 上已发布的 0.3.0 及更早版本仍是双包形态（`dsh-gitkit` + `dsh-gitkit-ui`）——单包版自 **0.4.0** 起发布，旧 `dsh-gitkit-ui` 届时被 deprecate 并指向 `dsh-gitkit`（见 §2）。
 仓库由一个发布包 + 一个 vendored 类型面包组成（pnpm workspace）：
@@ -182,8 +182,13 @@ CSS 源路径有归一豁免（`scripts/verify-release-tarball.mjs` 头注）；
 本地补跑侦探前必须先 `pnpm run build`（包无 prepack——陈旧 lib 会产出假阳性）。
 
 **旧包 `dsh-gitkit-ui` 的处置**：已发布的 0.0.0-stage / 0.1.1 / 0.2.0 / 0.3.0 **不下架、不删除**（npm 不允许
-重发同版本，删除会破坏既有 profile 的可重装性）；单包版首个版本发布后执行
-`npm deprecate dsh-gitkit-ui@* "dsh-gitkit-ui 已并入 dsh-gitkit（单包，自 0.4.0 起）——请改装 dsh-gitkit"`。
+重发同版本，删除会破坏既有 profile 的可重装性）；**正式版 0.4.0 验证通过后才弃用**——候选版期间 npm `latest`
+仍是依赖旧 UI 包的双包 0.3.0，提前弃用会对按 `latest` 安装的用户误报。届时执行：
+
+```bash
+npm deprecate "dsh-gitkit-ui@*" "已并入 dsh-gitkit。自 dsh-gitkit@0.4.0 起只需安装 dsh-gitkit；升级前请先从 profile 移除 dsh-gitkit-ui。历史版本仍可用于旧双包安装，但不再更新。"
+```
+
 npm 安装形态（适合不想被 file: 路径绑定的用户；registry 依赖只钉版本号）：
 
 ```bash
@@ -374,6 +379,20 @@ DSH_BIN=<dsh包根>/lib/bin.js node scripts/verify-install.mjs       # 现成可
 | check:locale | `pnpm run check:locale` | **exit 0**（376 键 zh 权威，en aligned；23 tsx 无裸串） |
 | verify:load | `node scripts/verify-load.mjs` | **RESULT: outcome=PASS**（dev-tree 列；五批断言面全跑——含 agentTools 两相位、checkpointDiff 负路径、automationStatus 形状；checkpointList 降级 WARN 为 §6.7 预登记口径非失败） |
 | verify:install | — | **未回填**（发布批动作——随 tag `v0.3.0` 流程执行 dev-tree 两相 + npm 列，§7.7-4） |
+
+**单包合并验收实跑（2026-11-24，本机；候选版 `0.4.0-rc.0` 的发布前门禁）**：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| install | `pnpm install --frozen-lockfile` | **exit 0**（lockfile 只剩 `packages/host`、`packages/typert-protocol` 两个 importer） |
+| typecheck | `pnpm run typecheck` | **exit 0**（typert 生成 + 三 tsc） |
+| test | `pnpm test` | **exit 0，1147 用例全过**（71 文件 = 32 host + 37 client + 2 root；默认 6 worker 一次通过，289 s） |
+| build | `pnpm run build` | **exit 0**（client bundle 754452 bytes；单包发布面 fail-closed 检查通过） |
+| check:locale | `pnpm run check:locale` | **exit 0**（376 键 zh 权威，en aligned；29 tsx 无裸串） |
+| pack | `npm pack --dry-run --ignore-scripts`（`packages/host`） | **128 文件**（lib 120 / locale 2 / 顶层 6），12 个必需条目在场，无 src/tests/node_modules/tsconfig |
+| verify:load | `pnpm run verify:load` | **RESULT: outcome=PASS**（dev-tree 列；单次 `file:` 安装即得 host + client，boot 图 client 条目 inject 8 项且不含自身；checkpointList / automationStatus 降级 WARN 为预登记口径非失败） |
+| verify:install | `pnpm run verify:install` | **dev-tree 列两相 PASS**（working-copy + clean-clone；dump-config 插入行位于 `# == dsh-gitkit` 层下，无退役行） |
+| verify:install（npm 列） | `$env:DSH_SPEC='@deepseek-ai/dsh@0.2.1-rc.5'; node scripts/verify-install.mjs` | **npm 列两相 PASS**（未设 `DSH_VERIFY_INSTALL_SKIP_CLONE` / `DSH_VERIFY_ALLOW_SKIP`；该宿主版本的 dump-config 不带层标签，按列降级为全文 id 行判据） |
 
 ## 7. 许可
 

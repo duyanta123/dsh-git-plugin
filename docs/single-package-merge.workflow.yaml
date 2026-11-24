@@ -97,7 +97,7 @@ steps:
   - id: acceptance
     agent: tester
     depends: [contracts-compliance, gates-release-scripts, docs-migration]
-    status: blocked
+    status: done
     task: >
       pnpm install --frozen-lockfile → pnpm run typecheck → pnpm test → pnpm run check:locale →
       pnpm run build → npm pack 内容检查 → pnpm run verify:load →
@@ -163,3 +163,4 @@ progress:
   - { step: gates-release-scripts, at: "2026-11-23", note: "verify-load / verify-install / verify-release-tarball / release.yml / ci.yml 改单包；node --check 全过；真机实跑归 acceptance" }
   - { step: docs-migration, at: "2026-11-23", note: "README / AGENTS.md / CLAUDE.md / capability-spec v2.1 修订记录 / packages/host/README.md" }
   - { step: acceptance, at: "2026-11-23", note: "已过：frozen-lockfile / typecheck / check:locale / build / npm pack 清单（128 文件）；pnpm test 71 文件 1147 用例全部有通过记录（67 文件 2-worker 轮次 + 3 文件单 worker 复跑）。阻塞：verify:load / verify:install 两相 / npm 列未跑——宿主机系统提交内存 88.7/90.3 GB，git 与 node 子进程 spawn ENOMEM，须腾出内存后补跑" }
+  - { step: acceptance, at: "2026-11-24", note: "重启后补跑全绿：pnpm test 默认并发 71 文件 1147 用例 exit 0（289 s）；verify:load PASS（dev-tree 列，boot 图 client 条目 inject 8 项不含自身）；verify:install dev-tree 两相 PASS；npm 列 @deepseek-ai/dsh@0.2.1-rc.5 两相 PASS（未设 SKIP_CLONE / ALLOW_SKIP）。验收项全部完成，转 commit 步" }
