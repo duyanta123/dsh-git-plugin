@@ -1,7 +1,7 @@
 # dsh-git-plugin
 
 dsh（DeepSeek Harness）的 **Git 插件** —— 让 dsh 会话「看清工作区改动 + 提交 + 推送 + 看提交图」。
-代码版本 **v0.3.0**（含 v0.2.0 全部内容；v0.3.0 = V3 五批功能面，tag `v0.3.0` 与 npm 0.3.0 已发布；门禁实跑口径见 §6）。单包合并后的首个版本尚未发布（见下）。
+代码版本 **v0.4.0-rc.0**（单包合并候选版：host 与 web 两半并入同一个 npm 包，发布到 npm `next`；npm `latest` 在正式版 0.4.0 发布前仍是双包形态的 0.3.0。含 v0.2.0 / v0.3.0 全部内容——v0.3.0 = V3 五批功能面；门禁实跑口径见 §6）。
 **单包合并（2026-11-23）**：host 与 web 两半并入**同一个 npm 包 `dsh-gitkit`**，原 `dsh-gitkit-ui` 与安装薄包 `dsh-gitkit-bundle` 退役。
 npm 上已发布的 0.3.0 及更早版本仍是双包形态（`dsh-gitkit` + `dsh-gitkit-ui`）——单包版自 **0.4.0** 起发布，旧 `dsh-gitkit-ui` 届时被 deprecate 并指向 `dsh-gitkit`（见 §2）。
 仓库由一个发布包 + 一个 vendored 类型面包组成（pnpm workspace）：

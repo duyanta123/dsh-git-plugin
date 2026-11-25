@@ -1,10 +1,10 @@
 {
   "name": "dsh-git-plugin",
-  "version": "0.3.0",
+  "version": "0.4.0-rc.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "dsh Git 插件 monorepo v0.3.0（单包 dsh-gitkit：Node host 服务 + Web client 界面同包发布），接口权威见 docs/capability-spec.md",
+  "description": "dsh Git 插件 monorepo v0.4.0-rc.0（单包 dsh-gitkit：Node host 服务 + Web client 界面同包发布），接口权威见 docs/capability-spec.md",
   "scripts": {
     "typecheck": "pnpm run build:host && tsc -p tsconfig.json && tsc -p packages/host/tsconfig.json && tsc -p packages/host/tsconfig.client.json",
     "build": "pnpm run build:host && pnpm run build:client",
