@@ -1,6 +1,6 @@
 {
   "name": "dsh-gitkit",
-  "version": "0.4.0-rc.0",
+  "version": "0.4.0",
   "description": "dsh Git 插件（DeepSeek Harness）——单包双面：Node 侧 RPC 服务（status/diff/stage/commit/push/log/...）+ Web 侧界面（header 入口 / 变更审查 tab / 提交图 tab）；接口权威 = docs/capability-spec.md §①§③",
   "type": "module",
   "license": "Apache-2.0",
